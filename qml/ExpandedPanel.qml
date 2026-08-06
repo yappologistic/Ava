@@ -44,6 +44,7 @@ Item {
     // the left third, while the middle stays visually quiet.
     Item {
         id: mediaPane
+        visible: !controller.timerPanelOpen
         x: 18
         y: 22
         width: 292
@@ -206,6 +207,7 @@ Item {
     // the source. Hovering this cluster crossfades to utility actions.
     Item {
         id: clockPane
+        visible: !controller.timerPanelOpen
         x: 390
         y: 17
         width: 175
