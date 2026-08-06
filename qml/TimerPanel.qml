@@ -19,7 +19,7 @@ Item {
                                                    : visualTimerProgress
     readonly property color timerOrange: "#ff9f0a"
     readonly property color timerOrangePressed: "#e98700"
-    readonly property int tickSpacing: 16
+    readonly property int tickSpacing: 13
     readonly property int maximumMinutes: 60
     readonly property bool setupActive: !controller.timerActive && !controller.timerRinging
     readonly property bool runningActive: controller.timerActive
@@ -108,7 +108,7 @@ Item {
                         id: minuteMark
                         required property int index
                         readonly property real distance: Math.abs(index - ruler.contentX / root.tickSpacing)
-                        x: ruler.width / 2 + index * root.tickSpacing - 8
+                        x: ruler.width / 2 + index * root.tickSpacing - width / 2
                         width: 16
                         height: ruler.height
 
@@ -196,9 +196,9 @@ Item {
             id: startButton
             x: 24
             y: 77
-            width: 136
-            height: 42
-            radius: 21
+            width: 128
+            height: 39
+            radius: height / 2
             color: startTap.pressed ? "#492b0b" : (startHover.hovered ? "#3d250c" : "#311e0a")
             scale: startTap.pressed ? 0.965 : (startHover.hovered ? 1.018 : 1)
             Accessible.name: "Start " + root.selectedMinutes + " minute timer"
@@ -232,9 +232,9 @@ Item {
             text: root.selectedMinutes + ":00"
             color: root.timerOrange
             fontFamily: root.uiFont
-            fontPixelSize: 39
+            fontPixelSize: 37
             fontWeight: Font.Light
-            letterSpacing: -1.7
+            letterSpacing: -1.5
             reducedMotion: root.reducedMotion
             rollDirection: 1
             transform: Translate { id: selectedTimeShift }

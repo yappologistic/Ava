@@ -35,11 +35,33 @@ Item {
     property bool fileShelfRetained: false
     property real tilingCommitProgress: 0
     readonly property date currentDate: displayedCalendarDate
-    readonly property int currentDayIndex: currentDate.getDay()
+    readonly property int currentDayIndex: 3
+    readonly property int calendarCellWidth: 31
+    readonly property int calendarCellGap: 2
+    readonly property int calendarSelectionWidth: 29
+    readonly property int calendarSelectionHeight: 25
 
-    function weekDate(index) {
+    function calendarDateAt(index) {
         return new Date(currentDate.getFullYear(), currentDate.getMonth(),
-                        currentDate.getDate() - currentDayIndex + index)
+                        currentDate.getDate() + index - currentDayIndex)
+    }
+
+    function calendarLabelAlpha(index) {
+        const distance = Math.abs(index - currentDayIndex)
+        if (distance === 1)
+            return 0.58
+        if (distance === 2)
+            return 0.34
+        return 0.16
+    }
+
+    function calendarDateAlpha(index) {
+        const distance = Math.abs(index - currentDayIndex)
+        if (distance === 1)
+            return 0.82
+        if (distance === 2)
+            return 0.56
+        return 0.28
     }
 
     function formatMediaTime(progress) {
@@ -379,7 +401,7 @@ Item {
 
             Row {
                 x: 99
-                y: 60
+                y: 56
                 spacing: 8
 
                 IslandButton {
@@ -430,7 +452,7 @@ Item {
             Item {
                 id: seekSurface
                 x: 104
-                y: 91
+                y: 80
                 width: 174
                 height: 17
                 enabled: controller.mediaSeekable
@@ -587,7 +609,7 @@ Item {
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
         scale: enabled ? 1 : 0.94
-        x: 390
+        x: 360
         y: 17
         width: 175
         height: 106
@@ -597,39 +619,24 @@ Item {
         }
         Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
         Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
-        Accessible.name: controller.timeText + " " + controller.meridiemText
+        Accessible.name: controller.timeText
                          + ". " + (controller.networkName.length > 0
                                    ? controller.networkName + ". " : "")
                          + controller.networkStatus
                          + (controller.batteryAvailable ? ". " + controller.powerText : "")
                          + (tilingManager.enabled ? ". " + tilingManager.statusText : "")
 
-        Row {
-            id: clockRow
+        RollingDigits {
+            id: expandedClockDigits
             anchors.horizontalCenter: parent.horizontalCenter
-            spacing: 3
-
-            RollingDigits {
-                id: expandedClockDigits
-                text: controller.timeText
-                color: root.colors.text
-                fontFamily: root.uiFont
-                fontPixelSize: 25
-                fontWeight: Font.DemiBold
-                letterSpacing: -1
-                reducedMotion: root.reducedMotion
-                rollDirection: 1
-            }
-            MorphingLabel {
-                anchors.bottom: expandedClockDigits.bottom
-                anchors.bottomMargin: 4
-                text: controller.meridiemText
-                color: root.colors.secondary
-                fontFamily: root.uiFont
-                fontPixelSize: 9
-                fontWeight: Font.DemiBold
-                reducedMotion: root.reducedMotion
-            }
+            text: controller.timeText
+            color: root.colors.text
+            fontFamily: root.uiFont
+            fontPixelSize: 23
+            fontWeight: Font.Medium
+            letterSpacing: -0.5
+            reducedMotion: root.reducedMotion
+            rollDirection: 1
         }
 
         Item {
@@ -646,38 +653,11 @@ Item {
             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
             Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
 
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: Qt.formatDate(root.currentDate, "ddd").toUpperCase()
-                color: root.colors.secondary
-                font.family: root.uiFont
-                font.pixelSize: 8
-                font.weight: Font.DemiBold
-                font.letterSpacing: 1.1
-            }
-
-            Rectangle {
-                id: todayHighlight
-                x: (parent.width - 146) / 2 + root.currentDayIndex * 21 + 1.5
-                y: 32
-                width: 17
-                height: 17
-                radius: 9
-                color: root.colors.text
-
-                Behavior on x {
-                    NumberAnimation {
-                        duration: root.reducedMotion ? 0 : MotionTokens.content
-                        easing.type: MotionTokens.easeOut
-                    }
-                }
-            }
-
             Row {
                 id: calendarDays
-                y: 19
+                y: 3
                 anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 1
+                spacing: root.calendarCellGap
 
                 Repeater {
                     model: 7
@@ -685,9 +665,9 @@ Item {
                     Item {
                         id: dayCell
                         required property int index
-                        readonly property date calendarDate: root.weekDate(index)
-                        width: 20
-                        height: 39
+                        readonly property date calendarDate: root.calendarDateAt(index)
+                        width: root.calendarCellWidth
+                        height: 44
                         opacity: calendarView.opacity > 0.5 ? 1 : 0
                         scale: calendarView.opacity > 0.5 ? 1 : 0.94
 
@@ -711,29 +691,44 @@ Item {
 
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            text: Qt.formatDate(dayCell.calendarDate, "ddd").charAt(0).toUpperCase()
+                            text: dayCell.index === root.currentDayIndex
+                                  ? Qt.formatDate(dayCell.calendarDate, "ddd").toUpperCase()
+                                  : Qt.formatDate(dayCell.calendarDate, "ddd").charAt(0).toUpperCase()
                             color: dayCell.index === root.currentDayIndex
-                                   ? root.colors.secondary : root.colors.tertiary
+                                   ? Qt.rgba(root.colors.text.r,
+                                             root.colors.text.g,
+                                             root.colors.text.b, 0.78)
+                                   : Qt.rgba(root.colors.tertiary.r,
+                                             root.colors.tertiary.g,
+                                             root.colors.tertiary.b,
+                                             root.calendarLabelAlpha(dayCell.index))
                             font.family: root.uiFont
-                            font.pixelSize: 7
+                            font.pixelSize: dayCell.index === root.currentDayIndex ? 11 : 10
                             font.weight: Font.DemiBold
+                            font.letterSpacing: dayCell.index === root.currentDayIndex ? 0.4 : 0
                         }
                         Rectangle {
                             anchors.horizontalCenter: parent.horizontalCenter
                             y: 13
-                            width: 17
-                            height: 17
-                            radius: 9
-                            color: "transparent"
+                            width: root.calendarSelectionWidth
+                            height: root.calendarSelectionHeight
+                            radius: 6
+                            color: dayCell.index === root.currentDayIndex
+                                   ? root.colors.calendarSelection
+                                   : "transparent"
 
                             Text {
                                 anchors.centerIn: parent
                                 text: dayCell.calendarDate.getDate()
                                 color: dayCell.index === root.currentDayIndex
-                                       ? "#050505" : root.colors.secondary
+                                       ? root.colors.calendarAccent
+                                       : Qt.rgba(root.colors.tertiary.r,
+                                                 root.colors.tertiary.g,
+                                                 root.colors.tertiary.b,
+                                                 root.calendarDateAlpha(dayCell.index))
                                 font.family: root.uiFont
-                                font.pixelSize: 7
-                                font.weight: Font.DemiBold
+                                font.pixelSize: dayCell.index === root.currentDayIndex ? 15 : 13
+                                font.weight: Font.Medium
                                 font.features: { "tnum": 1 }
                             }
                         }
