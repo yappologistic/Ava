@@ -14,8 +14,10 @@
 #include <QVector>
 #include <QtGlobal>
 
+#include <algorithm>
 #include <atomic>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <iterator>
 #include <mutex>
@@ -27,6 +29,7 @@
 #include <audioclient.h>
 #include <endpointvolume.h>
 #include <mmdeviceapi.h>
+#include <mmsystem.h>
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <tlhelp32.h>
@@ -46,6 +49,124 @@ namespace ApplicationModel = winrt::Windows::ApplicationModel;
 namespace MediaControl = winrt::Windows::Media::Control;
 namespace Connectivity = winrt::Windows::Networking::Connectivity;
 namespace StorageStreams = winrt::Windows::Storage::Streams;
+
+// Timer alarm: an FM-bell cycle synthesised at startup and looped by the wave
+// device, so no sound file ships with the app. Tune it in tune-lab.html and
+// paste the regenerated buildAlarmCycle() over this one.
+constexpr int kAlarmRate = 44100;
+constexpr double kPi = 3.14159265358979323846;
+
+QByteArray buildAlarmCycle()
+{
+    struct Note { double start; double freq; };
+    static constexpr Note notes[] = {
+        { 0.7800, 587.33 },
+        { 1.0400, 587.33 },
+        { 1.3000, 783.99 },
+        { 1.8200, 493.88 },
+        { 2.8600, 587.33 },
+        { 3.1200, 587.33 },
+        { 3.3800, 783.99 },
+        { 3.9000, 493.88 },
+    };
+
+    constexpr double cycleSeconds = 5.3600;
+    constexpr double attack   = 0.0010;
+    constexpr double decay    = 0.0300;
+    constexpr double modRatio = 1.5900;
+    constexpr double modIndex = 0.0000;
+    constexpr double modDecay = 0.0700;
+    constexpr double gain     = 0.4520;
+
+    const int frames = int(kAlarmRate * cycleSeconds);
+    QByteArray pcm(frames * 2, '\0');
+    auto *out = reinterpret_cast<qint16 *>(pcm.data());
+
+    for (const Note &n : notes) {
+        const int start = int(n.start * kAlarmRate);
+        for (int i = start; i < frames; ++i) {
+            const double t = double(i - start) / kAlarmRate;
+            const double env = std::exp(-t / decay) * std::min(1.0, t / attack);
+            if (t > attack && env < 0.0005) {
+                break;
+            }
+            const double mod = modIndex * std::exp(-t / modDecay)
+                             * std::sin(2.0 * kPi * n.freq * modRatio * t);
+            const double s = gain * env * std::sin(2.0 * kPi * n.freq * t + mod);
+            out[i] = qint16(qBound(-32768, out[i] + int(s * 32767.0), 32767));
+        }
+    }
+    return pcm;
+}
+
+// ponytail: one process-wide voice, matching the single island window.
+struct AlarmVoice
+{
+    HWAVEOUT device = nullptr;
+    WAVEHDR header{};
+    QByteArray cycle;
+
+    ~AlarmVoice()
+    {
+        if (!device) {
+            return;
+        }
+        waveOutReset(device);
+        waveOutUnprepareHeader(device, &header, sizeof(header));
+        waveOutClose(device);
+    }
+
+    bool open()
+    {
+        if (device) {
+            return true;
+        }
+        cycle = buildAlarmCycle();
+
+        WAVEFORMATEX format{};
+        format.wFormatTag = WAVE_FORMAT_PCM;
+        format.nChannels = 1;
+        format.nSamplesPerSec = kAlarmRate;
+        format.wBitsPerSample = 16;
+        format.nBlockAlign = format.nChannels * format.wBitsPerSample / 8;
+        format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign;
+        if (waveOutOpen(&device, WAVE_MAPPER, &format, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) {
+            device = nullptr;
+            return false;
+        }
+
+        header = {};
+        header.lpData = cycle.data();
+        header.dwBufferLength = DWORD(cycle.size());
+        header.dwLoops = 0xFFFFFFFF;
+        header.dwFlags = WHDR_BEGINLOOP | WHDR_ENDLOOP;
+        if (waveOutPrepareHeader(device, &header, sizeof(header)) != MMSYSERR_NOERROR) {
+            waveOutClose(device);
+            device = nullptr;
+            return false;
+        }
+        return true;
+    }
+
+    void start()
+    {
+        if (!open()) {
+            MessageBeep(MB_ICONEXCLAMATION);
+            return;
+        }
+        waveOutReset(device);
+        waveOutWrite(device, &header, sizeof(header));
+    }
+
+    void stop()
+    {
+        if (device) {
+            waveOutReset(device);
+        }
+    }
+};
+
+AlarmVoice g_alarm;
 
 template <typename AsyncOperation>
 void observeMediaCommand(const AsyncOperation &operation,
@@ -485,9 +606,6 @@ IslandController::IslandController(QObject *parent)
     m_audioMeterTimer.setTimerType(Qt::PreciseTimer);
     m_audioMeterTimer.setInterval(50);
     connect(&m_audioMeterTimer, &QTimer::timeout, this, &IslandController::updateAudioPeak);
-    m_alarmTimer.setTimerType(Qt::CoarseTimer);
-    m_alarmTimer.setInterval(1100);
-    connect(&m_alarmTimer, &QTimer::timeout, this, &IslandController::soundTimerAlert);
     updateClock();
     refreshSystemState();
     QTimer::singleShot(0, this, &IslandController::refreshMedia);
@@ -555,7 +673,7 @@ void IslandController::closeTimer()
 void IslandController::startTimer(int durationSeconds)
 {
     durationSeconds = qBound(1, durationSeconds, 24 * 60 * 60);
-    m_alarmTimer.stop();
+    stopTimerAlert();
     m_timerDurationSeconds = durationSeconds;
     m_timerPausedRemainingMs = static_cast<qint64>(durationSeconds) * 1000;
     m_timerDeadlineMs = QDateTime::currentMSecsSinceEpoch() + m_timerPausedRemainingMs;
@@ -611,7 +729,7 @@ void IslandController::cancelTimer()
         return;
     }
     m_countdownTimer.stop();
-    m_alarmTimer.stop();
+    stopTimerAlert();
     m_timerActive = false;
     m_timerPaused = false;
     m_timerRinging = false;
@@ -933,15 +1051,21 @@ void IslandController::finishTimer()
     m_timerProgress = 0.0;
     m_timerPanelOpen = true;
     setExpanded(true);
-    soundTimerAlert();
-    m_alarmTimer.start();
+    startTimerAlert();
     emit timerChanged();
 }
 
-void IslandController::soundTimerAlert()
+void IslandController::startTimerAlert()
 {
 #ifdef Q_OS_WIN
-    MessageBeep(MB_ICONEXCLAMATION);
+    g_alarm.start();
+#endif
+}
+
+void IslandController::stopTimerAlert()
+{
+#ifdef Q_OS_WIN
+    g_alarm.stop();
 #endif
 }
 
