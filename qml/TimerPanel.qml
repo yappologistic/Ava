@@ -13,7 +13,7 @@ Item {
     property int selectedMinutes: 15
     readonly property color timerOrange: "#ff9f0a"
     readonly property color timerOrangePressed: "#e98700"
-    readonly property int tickSpacing: 17
+    readonly property int tickSpacing: 16
     readonly property int maximumMinutes: 60
 
     function snapRuler() {
