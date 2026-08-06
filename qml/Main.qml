@@ -337,14 +337,14 @@ Window {
                     iconOnly: true
                     glyph: controller.pinned ? "\uE77A" : "\uE718"
                     selected: controller.pinned
-                    toolTipText: controller.pinned ? "Unpin island" : "Keep island open"
+                    accessibleName: controller.pinned ? "Unpin island" : "Keep island open"
                     onClicked: controller.togglePinned()
                 }
 
                 IslandButton {
                     iconOnly: true
                     glyph: "\uE711"
-                    toolTipText: "Collapse"
+                    accessibleName: "Collapse"
                     onClicked: {
                         controller.setPinned(false)
                         controller.setExpanded(false)
@@ -435,21 +435,21 @@ Window {
                             iconOnly: true
                             glyph: "\uE892"
                             enabled: controller.mediaCanPrevious
-                            toolTipText: "Previous track"
+                            accessibleName: "Previous track"
                             onClicked: controller.previousTrack()
                         }
                         IslandButton {
                             iconOnly: true
                             glyph: controller.mediaPlaying ? "\uE769" : "\uE768"
                             accented: true
-                            toolTipText: controller.mediaPlaying ? "Pause" : "Play"
+                            accessibleName: controller.mediaPlaying ? "Pause" : "Play"
                             onClicked: controller.togglePlayback()
                         }
                         IslandButton {
                             iconOnly: true
                             glyph: "\uE893"
                             enabled: controller.mediaCanNext
-                            toolTipText: "Next track"
+                            accessibleName: "Next track"
                             onClicked: controller.nextTrack()
                         }
                     }
@@ -619,7 +619,7 @@ Window {
                         iconOnly: true
                         glyph: controller.muted ? "\uE74F" : "\uE767"
                         selected: controller.muted
-                        toolTipText: controller.muted ? "Unmute" : "Mute"
+                        accessibleName: controller.muted ? "Unmute" : "Mute"
                         onClicked: controller.toggleMute()
                     }
 
@@ -714,7 +714,7 @@ Window {
                     visible: controller.droppedFileCount > 0
                     iconOnly: true
                     glyph: "\uE711"
-                    toolTipText: "Clear file shelf"
+                    accessibleName: "Clear file shelf"
                     onClicked: controller.clearDroppedFiles()
                 }
             }

@@ -14,7 +14,7 @@ Button {
     property bool quiet: false
     property bool bare: false
     property int fixedWidth: 0
-    property string toolTipText: ""
+    property string accessibleName: ""
     property color accentColor: "#5ac8fa"
 
     implicitWidth: fixedWidth > 0 ? fixedWidth : (iconOnly ? 32 : Math.max(72, labelRow.implicitWidth + 22))
@@ -25,7 +25,7 @@ Button {
     opacity: enabled ? 1 : 0.32
     scale: down ? 0.92 : (hovered ? 1.035 : 1.0)
 
-    Accessible.name: text.length > 0 ? text : toolTipText
+    Accessible.name: text.length > 0 ? text : accessibleName
     Accessible.role: Accessible.Button
 
     Behavior on scale {
@@ -99,8 +99,4 @@ Button {
             }
         }
     }
-
-    ToolTip.visible: control.hovered && toolTipText.length > 0
-    ToolTip.text: toolTipText
-    ToolTip.delay: 500
 }

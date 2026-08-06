@@ -132,7 +132,7 @@ Item {
                     iconSource: Qt.resolvedUrl("../assets/icons/previous-light.svg")
                     iconSize: 12
                     enabled: controller.mediaCanPrevious
-                    toolTipText: "Previous track"
+                    accessibleName: "Previous track"
                     onClicked: controller.previousTrack()
                 }
                 IslandButton {
@@ -144,7 +144,7 @@ Item {
                                 ? Qt.resolvedUrl("../assets/icons/pause-light.svg")
                                 : Qt.resolvedUrl("../assets/icons/play-light.svg")
                     iconSize: 13
-                    toolTipText: controller.mediaPlaying ? "Pause" : "Play"
+                    accessibleName: controller.mediaPlaying ? "Pause" : "Play"
                     onClicked: controller.togglePlayback()
                 }
                 IslandButton {
@@ -155,7 +155,7 @@ Item {
                     iconSource: Qt.resolvedUrl("../assets/icons/next-light.svg")
                     iconSize: 12
                     enabled: controller.mediaCanNext
-                    toolTipText: "Next track"
+                    accessibleName: "Next track"
                     onClicked: controller.nextTrack()
                 }
             }
@@ -209,6 +209,11 @@ Item {
         y: 17
         width: 175
         height: 106
+        Accessible.name: controller.timeText + " " + controller.meridiemText
+                         + ". " + (controller.networkName.length > 0
+                                   ? controller.networkName + ". " : "")
+                         + controller.networkStatus
+                         + (controller.batteryAvailable ? ". " + controller.powerText : "")
 
         Row {
             id: clockRow
@@ -333,7 +338,7 @@ Item {
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/speaker-muted-dark.svg")
                     iconSize: 16
                     selected: controller.muted
-                    toolTipText: (controller.muted ? "Unmute" : "Mute") + " · " + controller.volume + "%"
+                    accessibleName: (controller.muted ? "Unmute" : "Mute") + ", " + controller.volume + "%"
                     onClicked: controller.toggleMute()
                 }
                 IslandButton {
@@ -345,7 +350,7 @@ Item {
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/pin-off-dark.svg")
                     iconSize: 15
                     selected: controller.pinned
-                    toolTipText: controller.pinned ? "Unpin island" : "Keep island open"
+                    accessibleName: controller.pinned ? "Unpin island" : "Keep island open"
                     onClicked: controller.togglePinned()
                 }
                 IslandButton {
@@ -355,7 +360,7 @@ Item {
                     bare: true
                     iconSource: Qt.resolvedUrl("../assets/icons/dismiss-light.svg")
                     iconSize: 15
-                    toolTipText: "Collapse"
+                    accessibleName: "Collapse"
                     onClicked: {
                         controller.setPinned(false)
                         controller.setExpanded(false)
@@ -363,11 +368,5 @@ Item {
                 }
             }
         }
-
-        ToolTip.visible: clockHover.hovered && !actionHover.hovered
-        ToolTip.text: (controller.networkName.length > 0 ? controller.networkName + " · " : "")
-                      + controller.networkStatus + (controller.batteryAvailable ? " · " + controller.powerText : "")
-        ToolTip.delay: 650
-        HoverHandler { id: clockHover }
     }
 }
