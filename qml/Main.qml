@@ -441,18 +441,22 @@ Window {
                             readonly property real audioLevel:
                                 controller.audioPeakLevels.length > index
                                 ? controller.audioPeakLevels[index] : 0
-                            width: 2
-                            height: 13
-                            radius: 1
+                            readonly property real meterGain:
+                                [1.16, 0.88, 1.30, 0.94, 1.20][index]
+                            readonly property real expressiveLevel:
+                                Math.min(1, audioLevel * meterGain)
+                            width: 3
+                            height: 15
+                            radius: 1.5
                             color: controller.mediaArtworkAccent.length > 0
                                    ? controller.mediaArtworkAccent : colors.green
                             transformOrigin: Item.Center
                             scale: controller.mediaPlaying
-                                   ? 0.22 + Math.pow(audioLevel, 0.62) * 0.78 : 0.22
+                                   ? 0.08 + Math.pow(expressiveLevel, 0.66) * 0.92 : 0.08
 
                             Behavior on scale {
                                 NumberAnimation {
-                                    duration: controller.reducedMotion ? 0 : 135 + index * 17
+                                    duration: controller.reducedMotion ? 0 : 165 + index * 15
                                     easing.type: Easing.OutCubic
                                 }
                             }
