@@ -157,11 +157,11 @@ int main(int argc, char *argv[])
     QSurfaceFormat::setDefaultFormat(surfaceFormat);
 
     QGuiApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("Dynamic Island"));
-    app.setApplicationDisplayName(QStringLiteral("Dynamic Island"));
-    app.setOrganizationName(QStringLiteral("MyLand"));
+    app.setApplicationName(QStringLiteral("Ava"));
+    app.setApplicationDisplayName(QStringLiteral("Ava"));
+    app.setOrganizationName(QStringLiteral("Ava"));
     const int geistFontId = QFontDatabase::addApplicationFont(
-        QStringLiteral(":/qt/qml/DynamicIsland/assets/fonts/Geist[wght].ttf"));
+        QStringLiteral(":/qt/qml/Ava/assets/fonts/Geist[wght].ttf"));
     if (geistFontId >= 0) {
         const QStringList fontFamilies = QFontDatabase::applicationFontFamilies(geistFontId);
         if (!fontFamilies.isEmpty()) {
@@ -173,7 +173,7 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("A live-activity island for Windows 11"));
+    parser.setApplicationDescription(QStringLiteral("Ava, a live-activity island for Windows 11"));
     parser.addHelpOption();
     parser.addVersionOption();
     const QCommandLineOption expandedOption(QStringLiteral("expanded"),
@@ -244,7 +244,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(
         QStringLiteral("qaMode"),
         parser.isSet(screenshotOption) || parser.isSet(motionReportOption));
-    engine.loadFromModule(QStringLiteral("DynamicIsland"), QStringLiteral("Main"));
+    engine.loadFromModule(QStringLiteral("Ava"), QStringLiteral("Main"));
 
     if (engine.rootObjects().isEmpty()) {
         return -1;

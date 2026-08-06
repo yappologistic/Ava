@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(DynamicIsland VERSION 0.1 LANGUAGES CXX)
+project(Ava VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,7 +12,7 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
-qt_add_executable(DynamicIsland
+qt_add_executable(Ava
     src/main.cpp
     src/islandcontroller.cpp
     src/islandcontroller.h
@@ -20,8 +20,8 @@ qt_add_executable(DynamicIsland
     src/windowtilingmanager.h
 )
 
-qt_add_qml_module(DynamicIsland
-    URI DynamicIsland
+qt_add_qml_module(Ava
+    URI Ava
     VERSION 1.0
     QML_FILES
         qml/Main.qml
@@ -50,7 +50,7 @@ qt_add_qml_module(DynamicIsland
         assets/fonts/OFL-Geist.txt
 )
 
-target_link_libraries(DynamicIsland
+target_link_libraries(Ava
     PRIVATE
         Qt6::Core
         Qt6::Gui
@@ -60,13 +60,13 @@ target_link_libraries(DynamicIsland
 )
 
 if (WIN32)
-    target_link_libraries(DynamicIsland PRIVATE user32 dwmapi ole32 windowsapp)
-    set_target_properties(DynamicIsland PROPERTIES
+    target_link_libraries(Ava PRIVATE user32 dwmapi ole32 windowsapp)
+    set_target_properties(Ava PROPERTIES
         WIN32_EXECUTABLE TRUE
     )
 endif()
 
-install(TARGETS DynamicIsland
+install(TARGETS Ava
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
