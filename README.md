@@ -41,6 +41,8 @@ Tiling and restoration use a short smoothstep transition, atomic multi-window pl
 
 Every window placement is captured before the engine moves it. Disabling tiling, pressing `Win+Alt+T` again, or closing Dynamic Island restores surviving windows to their original normal, maximized, or minimized placement.
 
+The global shortcut uses the standard Windows hotkey service with a debounced low-level keyboard fallback for systems that register the chord but fail to deliver `WM_HOTKEY` to the island window.
+
 Exclusive DirectX fullscreen can bypass the normal Desktop Window Manager composition path, so no conventional desktop overlay can guarantee visibility above every exclusive-mode game.
 
 ## Build on Windows

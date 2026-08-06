@@ -32,8 +32,11 @@ constexpr int kMinimumTileHeightDip = 140;
 constexpr int kAnimationDurationMs = 165;
 constexpr int kAnimationIntervalMs = 8;
 constexpr UINT kMoveSizeEventMessage = WM_APP + 0x359;
+constexpr UINT kKeyboardShortcutMessage = WM_APP + 0x35A;
+constexpr ULONGLONG kShortcutDebounceMs = 120;
 
 HWND gMoveSizeEventSink = nullptr;
+bool gShortcutKeyDown = false;
 
 struct FrameInsets
 {
@@ -68,6 +71,32 @@ void CALLBACK moveSizeWinEvent(HWINEVENTHOOK,
                      static_cast<WPARAM>(event),
                      reinterpret_cast<LPARAM>(window));
     }
+}
+
+LRESULT CALLBACK keyboardHook(int code, WPARAM message, LPARAM data)
+{
+    if (code == HC_ACTION && gMoveSizeEventSink) {
+        const auto *key = reinterpret_cast<KBDLLHOOKSTRUCT *>(data);
+        if (key && key->vkCode == 'T') {
+            if (message == WM_KEYUP || message == WM_SYSKEYUP) {
+                gShortcutKeyDown = false;
+            } else if ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
+                       && !gShortcutKeyDown) {
+                const bool windowsDown = (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0
+                    || (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+                const bool altDown = (key->flags & LLKHF_ALTDOWN) != 0
+                    || (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+                if (windowsDown && altDown) {
+                    gShortcutKeyDown = true;
+                    PostMessageW(gMoveSizeEventSink,
+                                 kKeyboardShortcutMessage,
+                                 0,
+                                 0);
+                }
+            }
+        }
+    }
+    return CallNextHookEx(nullptr, code, message, data);
 }
 
 int scaleDip(int value, UINT dpi)
@@ -387,7 +416,9 @@ struct WindowTilingManager::NativeState
     HWND islandWindow = nullptr;
     HWND interactionWindow = nullptr;
     HWINEVENTHOOK moveSizeHook = nullptr;
+    HHOOK keyboardHook = nullptr;
     bool hotkeyRegistered = false;
+    ULONGLONG lastShortcutToggle = 0;
     QVector<HWND> windowOrder;
     QVector<AnimationItem> animationItems;
     QHash<quintptr, WINDOWPLACEMENT> originalPlacements;
@@ -440,6 +471,10 @@ WindowTilingManager::~WindowTilingManager()
         UnhookWinEvent(m_native->moveSizeHook);
         m_native->moveSizeHook = nullptr;
     }
+    if (m_native->keyboardHook) {
+        UnhookWindowsHookEx(m_native->keyboardHook);
+        m_native->keyboardHook = nullptr;
+    }
     if (gMoveSizeEventSink == m_native->islandWindow) {
         gMoveSizeEventSink = nullptr;
     }
@@ -480,9 +515,14 @@ void WindowTilingManager::setIslandWindow(quintptr nativeHandle)
         UnhookWinEvent(m_native->moveSizeHook);
         m_native->moveSizeHook = nullptr;
     }
+    if (m_native->keyboardHook) {
+        UnhookWindowsHookEx(m_native->keyboardHook);
+        m_native->keyboardHook = nullptr;
+    }
     if (gMoveSizeEventSink == m_native->islandWindow) {
         gMoveSizeEventSink = nullptr;
     }
+    gShortcutKeyDown = false;
     m_native->islandWindow = nextWindow;
     if (m_native->islandWindow) {
         gMoveSizeEventSink = m_native->islandWindow;
@@ -499,6 +539,10 @@ void WindowTilingManager::setIslandWindow(quintptr nativeHandle)
                                                  0,
                                                  WINEVENT_OUTOFCONTEXT
                                                      | WINEVENT_SKIPOWNPROCESS);
+        m_native->keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL,
+                                                   keyboardHook,
+                                                   GetModuleHandleW(nullptr),
+                                                   0);
     }
 #else
     Q_UNUSED(nativeHandle)
@@ -538,9 +582,14 @@ bool WindowTilingManager::nativeEventFilter(const QByteArray &,
         }
         return true;
     }
-    if (nativeMessage->message == WM_HOTKEY
-        && nativeMessage->wParam == kToggleHotkeyId) {
-        toggleEnabled();
+    if (nativeMessage->message == kKeyboardShortcutMessage
+        || (nativeMessage->message == WM_HOTKEY
+            && nativeMessage->wParam == kToggleHotkeyId)) {
+        const ULONGLONG now = GetTickCount64();
+        if (now - m_native->lastShortcutToggle >= kShortcutDebounceMs) {
+            m_native->lastShortcutToggle = now;
+            toggleEnabled();
+        }
         if (result) {
             *result = 0;
         }
