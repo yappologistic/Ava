@@ -40,6 +40,16 @@ Item {
     readonly property int calendarCellGap: 2
     readonly property int calendarSelectionWidth: 29
     readonly property int calendarSelectionHeight: 25
+    readonly property bool calendarUsesMediaAccent: controller.mediaPlaying
+                                                        && controller.mediaArtworkAccent.length > 0
+    readonly property color calendarActiveAccent: calendarUsesMediaAccent
+                                                    ? controller.mediaArtworkAccent
+                                                    : colors.calendarAccent
+    readonly property color calendarActiveSelection: calendarUsesMediaAccent
+                                                       ? Qt.rgba(calendarActiveAccent.r,
+                                                                 calendarActiveAccent.g,
+                                                                 calendarActiveAccent.b, 0.24)
+                                                       : colors.calendarSelection
 
     function calendarDateAt(index) {
         return new Date(currentDate.getFullYear(), currentDate.getMonth(),
@@ -714,14 +724,20 @@ Item {
                             height: root.calendarSelectionHeight
                             radius: 6
                             color: dayCell.index === root.currentDayIndex
-                                   ? root.colors.calendarSelection
+                                   ? root.calendarActiveSelection
                                    : "transparent"
+
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: root.reducedMotion ? 0 : MotionTokens.content
+                                }
+                            }
 
                             Text {
                                 anchors.centerIn: parent
                                 text: dayCell.calendarDate.getDate()
                                 color: dayCell.index === root.currentDayIndex
-                                       ? root.colors.calendarAccent
+                                       ? root.calendarActiveAccent
                                        : Qt.rgba(root.colors.tertiary.r,
                                                  root.colors.tertiary.g,
                                                  root.colors.tertiary.b,
@@ -730,6 +746,12 @@ Item {
                                 font.pixelSize: dayCell.index === root.currentDayIndex ? 15 : 13
                                 font.weight: Font.Medium
                                 font.features: { "tnum": 1 }
+
+                                Behavior on color {
+                                    ColorAnimation {
+                                        duration: root.reducedMotion ? 0 : MotionTokens.content
+                                    }
+                                }
                             }
                         }
                     }
