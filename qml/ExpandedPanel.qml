@@ -247,9 +247,9 @@ Item {
             y: 48
             width: parent.width
             height: 62
-            opacity: actionHover.hovered || tilingManager.enabled
+            opacity: actionHover.hovered || tilingManager.adjusting
                      || root.tilingFeedbackActive ? 0 : 1
-            scale: actionHover.hovered || tilingManager.enabled
+            scale: actionHover.hovered || tilingManager.adjusting
                    || root.tilingFeedbackActive ? 0.96 : 1
 
             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
@@ -319,9 +319,9 @@ Item {
             y: 48
             width: parent.width
             height: 62
-            opacity: (tilingManager.enabled || root.tilingFeedbackActive)
+            opacity: (tilingManager.adjusting || root.tilingFeedbackActive)
                      && !actionHover.hovered ? 1 : 0
-            scale: (tilingManager.enabled || root.tilingFeedbackActive)
+            scale: (tilingManager.adjusting || root.tilingFeedbackActive)
                    && !actionHover.hovered ? 1 : 0.96
 
             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
