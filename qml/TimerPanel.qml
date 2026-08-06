@@ -192,80 +192,88 @@ Item {
         Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 170; easing.type: Easing.OutCubic } }
         Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 220; easing.type: Easing.OutCubic } }
 
-        Item {
-            x: 24
-            y: 16
-            width: 58
-            height: 58
-
-            Canvas {
-                id: progressCanvas
-                anchors.fill: parent
-
-                Connections {
-                    target: controller
-                    function onTimerChanged() { progressCanvas.requestPaint() }
-                }
-
-                onPaint: {
-                    const context = getContext("2d")
-                    context.reset()
-                    context.lineCap = "round"
-                    context.lineWidth = 4
-                    context.strokeStyle = "#2a210f"
-                    context.beginPath()
-                    context.arc(width / 2, height / 2, 24, 0, Math.PI * 2)
-                    context.stroke()
-                    context.strokeStyle = root.timerOrange
-                    context.beginPath()
-                    context.arc(width / 2, height / 2, 24, -Math.PI / 2,
-                                -Math.PI / 2 + Math.PI * 2 * controller.timerProgress)
-                    context.stroke()
-                }
-            }
-
-            Image {
-                anchors.centerIn: parent
-                width: 20
-                height: 20
-                source: Qt.resolvedUrl("../assets/icons/timer-orange.svg")
-                sourceSize.width: 40
-                sourceSize.height: 40
-                fillMode: Image.PreserveAspectFit
-                smooth: true
-                mipmap: true
-            }
-        }
-
-        Column {
-            x: 99
+        Row {
+            anchors.horizontalCenter: parent.horizontalCenter
             y: 14
-            spacing: 1
+            spacing: 17
 
-            Text {
-                text: controller.timerPaused ? "TIMER PAUSED" : "TIMER"
-                color: root.timerOrange
-                font.family: root.uiFont
-                font.pixelSize: 9
-                font.weight: Font.DemiBold
-                font.letterSpacing: 1.1
+            Item {
+                width: 58
+                height: 60
+
+                Item {
+                    y: 2
+                    width: 58
+                    height: 58
+
+                    Canvas {
+                        id: progressCanvas
+                        anchors.fill: parent
+
+                        Connections {
+                            target: controller
+                            function onTimerChanged() { progressCanvas.requestPaint() }
+                        }
+
+                        onPaint: {
+                            const context = getContext("2d")
+                            context.reset()
+                            context.lineCap = "round"
+                            context.lineWidth = 4
+                            context.strokeStyle = "#2a210f"
+                            context.beginPath()
+                            context.arc(width / 2, height / 2, 24, 0, Math.PI * 2)
+                            context.stroke()
+                            context.strokeStyle = root.timerOrange
+                            context.beginPath()
+                            context.arc(width / 2, height / 2, 24, -Math.PI / 2,
+                                        -Math.PI / 2 + Math.PI * 2 * controller.timerProgress)
+                            context.stroke()
+                        }
+                    }
+
+                    Image {
+                        anchors.centerIn: parent
+                        width: 20
+                        height: 20
+                        source: Qt.resolvedUrl("../assets/icons/timer-orange.svg")
+                        sourceSize.width: 40
+                        sourceSize.height: 40
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                        mipmap: true
+                    }
+                }
             }
-            Text {
-                id: countdownText
-                text: controller.timerRemainingText
-                color: "#f5f5f7"
-                font.family: root.uiFont
-                font.pixelSize: 35
-                font.weight: Font.Light
-                font.letterSpacing: -1.5
-                font.features: { "tnum": 1 }
-                transformOrigin: Item.Left
 
-                onTextChanged: countdownPulse.restart()
-                SequentialAnimation {
-                    id: countdownPulse
-                    NumberAnimation { target: countdownText; property: "scale"; to: 0.985; duration: root.reducedMotion ? 0 : 45; easing.type: Easing.OutQuad }
-                    NumberAnimation { target: countdownText; property: "scale"; to: 1; duration: root.reducedMotion ? 0 : 105; easing.type: Easing.OutCubic }
+            Column {
+                spacing: 1
+
+                Text {
+                    text: controller.timerPaused ? "TIMER PAUSED" : "TIMER"
+                    color: root.timerOrange
+                    font.family: root.uiFont
+                    font.pixelSize: 9
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: 1.1
+                }
+                Text {
+                    id: countdownText
+                    text: controller.timerRemainingText
+                    color: "#f5f5f7"
+                    font.family: root.uiFont
+                    font.pixelSize: 35
+                    font.weight: Font.Light
+                    font.letterSpacing: -1.5
+                    font.features: { "tnum": 1 }
+                    transformOrigin: Item.Left
+
+                    onTextChanged: countdownPulse.restart()
+                    SequentialAnimation {
+                        id: countdownPulse
+                        NumberAnimation { target: countdownText; property: "scale"; to: 0.985; duration: root.reducedMotion ? 0 : 45; easing.type: Easing.OutQuad }
+                        NumberAnimation { target: countdownText; property: "scale"; to: 1; duration: root.reducedMotion ? 0 : 105; easing.type: Easing.OutCubic }
+                    }
                 }
             }
         }
