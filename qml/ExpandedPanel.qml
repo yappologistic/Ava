@@ -109,15 +109,38 @@ Item {
                     font.family: root.uiFont
                     font.pixelSize: 8
                 }
-                Text {
+                Item {
                     width: parent.width
-                    text: controller.mediaSource
+                    height: 11
                     visible: controller.mediaArtist.length > 0 && controller.mediaSource.length > 0
-                    color: root.colors.tertiary
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-                    font.family: root.uiFont
-                    font.pixelSize: 8
+
+                    Image {
+                        id: mediaAppIcon
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 9
+                        height: 9
+                        visible: controller.mediaAppIconUrl.length > 0
+                        source: controller.mediaAppIconUrl
+                        fillMode: Image.PreserveAspectFit
+                        asynchronous: true
+                        cache: true
+                        smooth: true
+                        mipmap: true
+                    }
+
+                    Text {
+                        anchors.left: mediaAppIcon.visible ? mediaAppIcon.right : parent.left
+                        anchors.leftMargin: mediaAppIcon.visible ? 4 : 0
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: controller.mediaSource
+                        color: root.colors.tertiary
+                        elide: Text.ElideRight
+                        maximumLineCount: 1
+                        font.family: root.uiFont
+                        font.pixelSize: 8
+                    }
                 }
             }
 

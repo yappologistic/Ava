@@ -33,6 +33,7 @@ class IslandController final : public QObject
     Q_PROPERTY(QString mediaTitle READ mediaTitle NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaArtist READ mediaArtist NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaSource READ mediaSource NOTIFY mediaChanged)
+    Q_PROPERTY(QString mediaAppIconUrl READ mediaAppIconUrl NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaArtworkUrl READ mediaArtworkUrl NOTIFY mediaChanged)
     Q_PROPERTY(bool mediaPlaying READ mediaPlaying NOTIFY mediaChanged)
     Q_PROPERTY(bool mediaCanPrevious READ mediaCanPrevious NOTIFY mediaChanged)
@@ -78,6 +79,7 @@ public:
     QString mediaTitle() const { return m_mediaTitle; }
     QString mediaArtist() const { return m_mediaArtist; }
     QString mediaSource() const { return m_mediaSource; }
+    QString mediaAppIconUrl() const { return m_mediaAppIconUrl; }
     QString mediaArtworkUrl() const { return m_mediaArtworkUrl; }
     bool mediaPlaying() const { return m_mediaPlaying; }
     bool mediaCanPrevious() const { return m_mediaCanPrevious; }
@@ -176,6 +178,8 @@ private:
     QString m_mediaTitle;
     QString m_mediaArtist;
     QString m_mediaSource;
+    QString m_mediaAppIconUrl;
+    QString m_mediaIconSource;
     QString m_mediaArtworkUrl;
     QString m_mediaIdentity;
     bool m_mediaPlaying = false;

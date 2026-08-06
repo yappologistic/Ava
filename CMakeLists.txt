@@ -60,7 +60,7 @@ target_link_libraries(Ava
 )
 
 if (WIN32)
-    target_link_libraries(Ava PRIVATE user32 dwmapi ole32 windowsapp)
+    target_link_libraries(Ava PRIVATE user32 shell32 dwmapi ole32 windowsapp)
     set_target_properties(Ava PROPERTIES
         WIN32_EXECUTABLE TRUE
     )

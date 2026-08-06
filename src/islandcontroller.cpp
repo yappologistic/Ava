@@ -13,6 +13,8 @@
 #include <QtGlobal>
 
 #include <atomic>
+#include <cstring>
+#include <iterator>
 #include <mutex>
 
 #ifdef Q_OS_WIN
@@ -22,7 +24,11 @@
 #include <audioclient.h>
 #include <endpointvolume.h>
 #include <mmdeviceapi.h>
+#include <shellapi.h>
+#include <shobjidl.h>
+#include <tlhelp32.h>
 #include <wrl/client.h>
+#include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Media.Control.h>
 #include <winrt/Windows.Networking.Connectivity.h>
@@ -33,6 +39,7 @@ namespace {
 
 #ifdef Q_OS_WIN
 using Microsoft::WRL::ComPtr;
+namespace ApplicationModel = winrt::Windows::ApplicationModel;
 namespace MediaControl = winrt::Windows::Media::Control;
 namespace Connectivity = winrt::Windows::Networking::Connectivity;
 namespace StorageStreams = winrt::Windows::Storage::Streams;
@@ -46,6 +53,227 @@ struct __declspec(uuid("905a0fef-bc53-11df-8c49-001e4fc686da")) IBufferByteAcces
 QString toQString(const winrt::hstring &value)
 {
     return QString::fromWCharArray(value.c_str(), static_cast<qsizetype>(value.size()));
+}
+
+QImage imageFromStreamReference(const StorageStreams::RandomAccessStreamReference &reference)
+{
+    if (!reference) {
+        return {};
+    }
+
+    const auto stream = reference.OpenReadAsync().get();
+    const auto size = static_cast<uint32_t>(qMin<uint64_t>(stream.Size(), 8 * 1024 * 1024));
+    if (size == 0) {
+        return {};
+    }
+
+    StorageStreams::Buffer buffer(size);
+    const StorageStreams::IBuffer readBuffer = stream.ReadAsync(
+        buffer, size, StorageStreams::InputStreamOptions::None).get();
+    unsigned char *bytes = nullptr;
+    const auto byteAccess = readBuffer.as<IBufferByteAccess>();
+    if (FAILED(byteAccess->Buffer(&bytes)) || !bytes) {
+        return {};
+    }
+
+    QImage image;
+    image.loadFromData(bytes, static_cast<int>(readBuffer.Length()));
+    return image;
+}
+
+QImage imageFromHIcon(HICON icon, int extent = 64)
+{
+    if (!icon || extent <= 0) {
+        return {};
+    }
+
+    BITMAPINFO bitmapInfo{};
+    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmapInfo.bmiHeader.biWidth = extent;
+    bitmapInfo.bmiHeader.biHeight = -extent;
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+    void *pixels = nullptr;
+    HDC screenDc = GetDC(nullptr);
+    HBITMAP bitmap = CreateDIBSection(screenDc, &bitmapInfo, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    HDC memoryDc = bitmap ? CreateCompatibleDC(screenDc) : nullptr;
+    if (!bitmap || !memoryDc || !pixels) {
+        if (memoryDc) {
+            DeleteDC(memoryDc);
+        }
+        if (bitmap) {
+            DeleteObject(bitmap);
+        }
+        ReleaseDC(nullptr, screenDc);
+        return {};
+    }
+
+    std::memset(pixels, 0, static_cast<size_t>(extent * extent * 4));
+    const HGDIOBJ previous = SelectObject(memoryDc, bitmap);
+    const BOOL drawn = DrawIconEx(memoryDc, 0, 0, icon, extent, extent, 0, nullptr, DI_NORMAL);
+    SelectObject(memoryDc, previous);
+
+    QImage image;
+    if (drawn) {
+        image = QImage(static_cast<uchar *>(pixels), extent, extent,
+                       QImage::Format_ARGB32_Premultiplied).copy();
+    }
+    DeleteDC(memoryDc);
+    DeleteObject(bitmap);
+    ReleaseDC(nullptr, screenDc);
+    return image;
+}
+
+QImage imageFromAppsFolder(const QString &sourceAppId)
+{
+    ComPtr<IShellItem> shellItem;
+    const QString parsingName = QStringLiteral("shell:AppsFolder\\") + sourceAppId;
+    if (FAILED(SHCreateItemFromParsingName(
+            reinterpret_cast<LPCWSTR>(parsingName.utf16()), nullptr,
+            IID_PPV_ARGS(&shellItem)))) {
+        return {};
+    }
+
+    ComPtr<IShellItemImageFactory> imageFactory;
+    if (FAILED(shellItem.As(&imageFactory))) {
+        return {};
+    }
+
+    HBITMAP bitmap = nullptr;
+    if (FAILED(imageFactory->GetImage(SIZE{64, 64},
+                                      SIIGBF_BIGGERSIZEOK | SIIGBF_ICONONLY,
+                                      &bitmap)) || !bitmap) {
+        return {};
+    }
+
+    BITMAP bitmapData{};
+    QImage image;
+    if (GetObjectW(bitmap, sizeof(bitmapData), &bitmapData) != 0
+        && bitmapData.bmWidth > 0 && bitmapData.bmHeight > 0) {
+        BITMAPINFO bitmapInfo{};
+        bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bitmapInfo.bmiHeader.biWidth = bitmapData.bmWidth;
+        bitmapInfo.bmiHeader.biHeight = -bitmapData.bmHeight;
+        bitmapInfo.bmiHeader.biPlanes = 1;
+        bitmapInfo.bmiHeader.biBitCount = 32;
+        bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+        QImage extracted(bitmapData.bmWidth, bitmapData.bmHeight, QImage::Format_ARGB32);
+        HDC screenDc = GetDC(nullptr);
+        if (GetDIBits(screenDc, bitmap, 0, static_cast<UINT>(bitmapData.bmHeight),
+                      extracted.bits(), &bitmapInfo, DIB_RGB_COLORS) != 0) {
+            image = extracted;
+        }
+        ReleaseDC(nullptr, screenDc);
+    }
+    DeleteObject(bitmap);
+    return image;
+}
+
+QString processExecutableForSource(const QString &sourceAppId)
+{
+    const QString source = sourceAppId.toLower();
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return {};
+    }
+
+    DWORD bestProcessId = 0;
+    int bestScore = 0;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            const QString executableName = QString::fromWCharArray(entry.szExeFile);
+            const QString executable = executableName.toLower();
+            const QString baseName = QFileInfo(executableName).completeBaseName().toLower();
+            int score = 0;
+            if (source == executable || source == baseName) {
+                score = 100;
+            } else if (!baseName.isEmpty() && source.endsWith(QLatin1Char('.') + baseName)) {
+                score = 90;
+            } else if (baseName.size() >= 4 && source.contains(baseName)) {
+                score = 60;
+            }
+            if (score > bestScore) {
+                bestScore = score;
+                bestProcessId = entry.th32ProcessID;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+
+    if (bestProcessId == 0) {
+        return {};
+    }
+
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, bestProcessId);
+    if (!process) {
+        return {};
+    }
+    wchar_t path[32768]{};
+    DWORD pathLength = static_cast<DWORD>(std::size(path));
+    const BOOL queried = QueryFullProcessImageNameW(process, 0, path, &pathLength);
+    CloseHandle(process);
+    return queried ? QString::fromWCharArray(path, static_cast<qsizetype>(pathLength)) : QString();
+}
+
+QImage imageFromExecutable(const QString &executablePath)
+{
+    if (executablePath.isEmpty()) {
+        return {};
+    }
+    SHFILEINFOW fileInfo{};
+    if (SHGetFileInfoW(reinterpret_cast<LPCWSTR>(executablePath.utf16()), 0,
+                       &fileInfo, sizeof(fileInfo), SHGFI_ICON | SHGFI_LARGEICON) == 0
+        || !fileInfo.hIcon) {
+        return {};
+    }
+    const QImage image = imageFromHIcon(fileInfo.hIcon);
+    DestroyIcon(fileInfo.hIcon);
+    return image;
+}
+
+QString resolveMediaAppIcon(const QString &sourceAppId)
+{
+    if (sourceAppId.isEmpty()) {
+        return {};
+    }
+
+    const QString cacheDirectory = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    const QString sourceHash = QString::fromLatin1(
+        QCryptographicHash::hash(sourceAppId.toUtf8(), QCryptographicHash::Sha256)
+            .toHex().left(24));
+    const QString iconPath = cacheDirectory
+        + QStringLiteral("/media-app-icon-v1-%1.png").arg(sourceHash);
+    if (QFileInfo::exists(iconPath)) {
+        return QUrl::fromLocalFile(iconPath).toString();
+    }
+
+    QImage image;
+    try {
+        const auto appInfo = ApplicationModel::AppInfo::GetFromAppUserModelId(
+            winrt::hstring(sourceAppId.toStdWString()));
+        if (appInfo) {
+            image = imageFromStreamReference(
+                appInfo.DisplayInfo().GetLogo(winrt::Windows::Foundation::Size{64.0f, 64.0f}));
+        }
+    } catch (...) {
+    }
+    if (image.isNull()) {
+        image = imageFromAppsFolder(sourceAppId);
+    }
+    if (image.isNull()) {
+        image = imageFromExecutable(processExecutableForSource(sourceAppId));
+    }
+    if (image.isNull()) {
+        return {};
+    }
+
+    QDir().mkpath(cacheDirectory);
+    return image.save(iconPath) ? QUrl::fromLocalFile(iconPath).toString() : QString();
 }
 
 bool readDefaultAudioEndpoint(int *volume, bool *muted)
@@ -506,6 +734,7 @@ void IslandController::refreshMedia()
         QString title;
         QString artist;
         QString source;
+        QString appIconUrl;
         QString artworkUrl;
         QString identity;
         bool playing = false;
@@ -518,10 +747,13 @@ void IslandController::refreshMedia()
 
     const auto platform = m_platform;
     const QString previousIdentity = m_mediaIdentity;
+    const QString previousIconSource = m_mediaIconSource;
+    const QString previousAppIconUrl = m_mediaAppIconUrl;
     const QString previousArtworkUrl = m_mediaArtworkUrl;
     const QPointer<IslandController> self(this);
 
-    QThreadPool::globalInstance()->start([platform, previousIdentity, previousArtworkUrl, self]() {
+    QThreadPool::globalInstance()->start([platform, previousIdentity, previousIconSource,
+                                          previousAppIconUrl, previousArtworkUrl, self]() {
         MediaSnapshot snapshot;
         bool apartmentInitialized = false;
         try {
@@ -588,6 +820,10 @@ void IslandController::refreshMedia()
                 snapshot.identity = snapshot.title + QLatin1Char('\n') + snapshot.artist
                                     + QLatin1Char('\n') + snapshot.source;
 
+                snapshot.appIconUrl = snapshot.source == previousIconSource
+                    ? previousAppIconUrl
+                    : resolveMediaAppIcon(snapshot.source);
+
                 if (snapshot.identity == previousIdentity) {
                     snapshot.artworkUrl = previousArtworkUrl;
                 } else if (const auto thumbnail = properties.Thumbnail()) {
@@ -645,6 +881,7 @@ void IslandController::refreshMedia()
                 || self->m_mediaTitle != snapshot.title
                 || self->m_mediaArtist != snapshot.artist
                 || self->m_mediaSource != snapshot.source
+                || self->m_mediaAppIconUrl != snapshot.appIconUrl
                 || self->m_mediaArtworkUrl != snapshot.artworkUrl
                 || self->m_mediaPlaying != snapshot.playing
                 || self->m_mediaCanPrevious != snapshot.canPrevious
@@ -657,6 +894,8 @@ void IslandController::refreshMedia()
             self->m_mediaTitle = snapshot.title;
             self->m_mediaArtist = snapshot.artist;
             self->m_mediaSource = snapshot.source;
+            self->m_mediaAppIconUrl = snapshot.appIconUrl;
+            self->m_mediaIconSource = snapshot.source;
             self->m_mediaArtworkUrl = snapshot.artworkUrl;
             self->m_mediaIdentity = snapshot.identity;
             self->m_mediaPlaying = snapshot.playing;
