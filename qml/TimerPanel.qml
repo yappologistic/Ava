@@ -271,8 +271,7 @@ Item {
         }
 
         Row {
-            anchors.right: parent.right
-            anchors.rightMargin: 20
+            anchors.horizontalCenter: parent.horizontalCenter
             y: 78
             spacing: 8
 
