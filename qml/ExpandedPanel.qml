@@ -31,6 +31,9 @@ Item {
     property string displayedCalendarToken: ""
     property int observedLayoutRevision: 0
     property int observedShortcutRevision: 0
+    property int displayedFileCount: 0
+    property bool fileShelfRetained: false
+    property real tilingCommitProgress: 0
     readonly property date currentDate: displayedCalendarDate
     readonly property int currentDayIndex: currentDate.getDay()
 
@@ -65,6 +68,7 @@ Item {
         displayedCalendarDate = new Date()
         observedLayoutRevision = tilingManager.layoutRevision
         observedShortcutRevision = tilingManager.shortcutRevision
+        displayedFileCount = controller.droppedFileCount
         mediaMotionReady = true
     }
 
@@ -106,8 +110,36 @@ Item {
             }
         }
         function onDroppedFilesChanged() {
-            if (!root.reducedMotion && controller.droppedFileCount > 0)
-                fileShelfLanding.restart()
+            if (controller.droppedFileCount === 0 && root.displayedFileCount > 0) {
+                root.fileShelfRetained = true
+                if (root.reducedMotion) {
+                    root.displayedFileCount = 0
+                    root.fileShelfRetained = false
+                } else {
+                    fileShelfRemoval.restart()
+                }
+            } else {
+                root.displayedFileCount = controller.droppedFileCount
+                root.fileShelfRetained = false
+                if (!root.reducedMotion && controller.droppedFileCount > 0)
+                    fileShelfLanding.restart()
+            }
+        }
+        function onMediaSeekFinished(accepted, requestedProgress) {
+            if (root.reducedMotion)
+                return
+            if (accepted)
+                seekConfirmation.restart()
+            else
+                seekRejection.restart()
+        }
+        function onMediaCommandRejected(command) {
+            if (command === "previous")
+                previousButton.reject()
+            else if (command === "next")
+                nextButton.reject()
+            else if (command === "playback")
+                playbackButton.reject()
         }
     }
 
@@ -118,12 +150,15 @@ Item {
                 tilingStatusPulse.restart()
         }
         function onInteractionChanged() {
-            const meaningfulChange = root.observedLayoutRevision !== tilingManager.layoutRevision
+            const layoutChanged = root.observedLayoutRevision !== tilingManager.layoutRevision
+            const meaningfulChange = layoutChanged
                     || root.observedShortcutRevision !== tilingManager.shortcutRevision
             root.observedLayoutRevision = tilingManager.layoutRevision
             root.observedShortcutRevision = tilingManager.shortcutRevision
             if (meaningfulChange && !root.reducedMotion && tilingStatusView.opacity > 0)
                 tilingStatusPulse.restart()
+            if (layoutChanged && !root.reducedMotion)
+                tilingCommit.restart()
         }
     }
 
@@ -348,6 +383,7 @@ Item {
                 spacing: 8
 
                 IslandButton {
+                    id: previousButton
                     width: 23
                     height: 23
                     iconOnly: true
@@ -362,6 +398,7 @@ Item {
                     }
                 }
                 IslandButton {
+                    id: playbackButton
                     width: 24
                     height: 24
                     iconOnly: true
@@ -374,6 +411,7 @@ Item {
                     onClicked: controller.togglePlayback()
                 }
                 IslandButton {
+                    id: nextButton
                     width: 23
                     height: 23
                     iconOnly: true
@@ -396,6 +434,7 @@ Item {
                 width: 174
                 height: 17
                 enabled: controller.mediaSeekable
+                transform: Translate { id: seekFeedbackShift }
 
                 Rectangle {
                     id: seekTrack
@@ -434,7 +473,21 @@ Item {
                     height: width
                     radius: width / 2
                     color: root.colors.text
+                    scale: 1
                     Behavior on width { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
+                }
+
+                SequentialAnimation {
+                    id: seekConfirmation
+                    NumberAnimation { target: seekThumb; property: "scale"; from: 1; to: 0.72; duration: MotionTokens.press; easing.type: Easing.InCubic }
+                    NumberAnimation { target: seekThumb; property: "scale"; to: 1; duration: MotionTokens.directSettle; easing.type: MotionTokens.settle }
+                }
+
+                SequentialAnimation {
+                    id: seekRejection
+                    NumberAnimation { target: seekFeedbackShift; property: "x"; from: 0; to: -2; duration: 45 }
+                    NumberAnimation { target: seekFeedbackShift; property: "x"; to: 2; duration: 65 }
+                    NumberAnimation { target: seekFeedbackShift; property: "x"; to: 0; duration: 70; easing.type: Easing.OutCubic }
                 }
 
                 Rectangle {
@@ -567,14 +620,15 @@ Item {
                 reducedMotion: root.reducedMotion
                 rollDirection: 1
             }
-            Text {
+            MorphingLabel {
                 anchors.bottom: expandedClockDigits.bottom
                 anchors.bottomMargin: 4
                 text: controller.meridiemText
                 color: root.colors.secondary
-                font.family: root.uiFont
-                font.pixelSize: 9
-                font.weight: Font.DemiBold
+                fontFamily: root.uiFont
+                fontPixelSize: 9
+                fontWeight: Font.DemiBold
+                reducedMotion: root.reducedMotion
             }
         }
 
@@ -728,14 +782,18 @@ Item {
                 Item {
                     width: 38
                     height: 28
+                    scale: 1 + root.tilingCommitProgress * 0.045
 
                     Rectangle {
                         anchors.fill: parent
                         radius: 6
                         color: "transparent"
                         border.width: 1
-                        border.color: tilingManager.previewSlot >= 0
-                                      ? root.colors.text : root.colors.divider
+                        border.color: root.tilingCommitProgress > 0
+                                      || tilingManager.interactionConstrained
+                                      ? root.colors.accent
+                                      : (tilingManager.previewSlot >= 0
+                                         ? root.colors.text : root.colors.divider)
                         Behavior on border.color { ColorAnimation { duration: MotionTokens.hover } }
                     }
                     Rectangle {
@@ -780,13 +838,35 @@ Item {
                         x: Math.max(2, Math.min(parent.width - 3,
                             tilingManager.interactionProgress * parent.width))
                         y: 2
-                        width: 2
+                        width: tilingManager.interactionConstrained ? 3 : 2
                         height: parent.height - 4
                         radius: 1
                         color: root.colors.accent
                         Behavior on x {
                             enabled: !root.reducedMotion
                             NumberAnimation { duration: 45; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on width { NumberAnimation { duration: MotionTokens.hover } }
+
+                        Rectangle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.top: parent.top
+                            anchors.topMargin: tilingManager.interactionConstrained ? -1 : 0
+                            width: tilingManager.interactionConstrained ? 7 : 4
+                            height: 2
+                            radius: 1
+                            color: parent.color
+                            Behavior on width { NumberAnimation { duration: MotionTokens.hover } }
+                        }
+                        Rectangle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.bottom: parent.bottom
+                            anchors.bottomMargin: tilingManager.interactionConstrained ? -1 : 0
+                            width: tilingManager.interactionConstrained ? 7 : 4
+                            height: 2
+                            radius: 1
+                            color: parent.color
+                            Behavior on width { NumberAnimation { duration: MotionTokens.hover } }
                         }
                     }
                 }
@@ -805,7 +885,8 @@ Item {
                     }
                     Text {
                         text: tilingManager.adjusting
-                              ? tilingManager.interactionKind
+                              ? (tilingManager.interactionConstrained
+                                 ? "MIN SIZE" : tilingManager.interactionKind)
                               : (!tilingManager.enabled
                               ? "OFF"
                               : (tilingManager.tiledWindowCount === 0
@@ -813,7 +894,9 @@ Item {
                               : (tilingManager.tiledWindowCount === 1
                                  ? "1 WINDOW"
                                  : tilingManager.tiledWindowCount + " WINDOWS")))
-                        color: root.colors.tertiary
+                        color: tilingManager.interactionConstrained
+                               ? root.colors.accent : root.colors.tertiary
+                        Behavior on color { ColorAnimation { duration: MotionTokens.hover } }
                         font.family: root.uiFont
                         font.pixelSize: 8
                         font.weight: Font.DemiBold
@@ -837,6 +920,25 @@ Item {
                     property: "scale"
                     to: 1
                     duration: MotionTokens.hover
+                    easing.type: MotionTokens.easeOut
+                }
+            }
+
+            SequentialAnimation {
+                id: tilingCommit
+                NumberAnimation {
+                    target: root
+                    property: "tilingCommitProgress"
+                    from: 0
+                    to: 1
+                    duration: MotionTokens.press
+                    easing.type: MotionTokens.easeOut
+                }
+                NumberAnimation {
+                    target: root
+                    property: "tilingCommitProgress"
+                    to: 0
+                    duration: MotionTokens.directSettle
                     easing.type: MotionTokens.easeOut
                 }
             }
@@ -908,6 +1010,7 @@ Item {
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/pin-off-dark.svg")
                     iconSize: 15
                     selected: controller.pinned
+                    rotatesOnSelection: true
                     accessibleName: controller.pinned ? "Unpin island" : "Keep island open"
                     onClicked: controller.togglePinned()
                 }
@@ -930,7 +1033,8 @@ Item {
 
     Rectangle {
         id: fileShelfChip
-        visible: !controller.timerPanelOpen && controller.droppedFileCount > 0
+        visible: !controller.timerPanelOpen
+                 && (controller.droppedFileCount > 0 || root.fileShelfRetained)
         x: 318
         y: 75
         width: 62
@@ -938,31 +1042,80 @@ Item {
         radius: 14
         color: fileShelfHover.hovered ? "#252527" : root.colors.raised
         scale: fileShelfTap.pressed ? 0.97 : (fileShelfHover.hovered ? 1.018 : 1)
-        Accessible.name: controller.droppedFileCount + " files in shelf. Show latest file"
+        Accessible.name: root.displayedFileCount + " files in shelf. Show latest file"
         Accessible.role: Accessible.Button
 
         HoverHandler { id: fileShelfHover }
-        TapHandler { id: fileShelfTap; onTapped: controller.revealLastDroppedFile() }
+        TapHandler {
+            id: fileShelfTap
+            onTapped: {
+                if (!root.reducedMotion)
+                    fileShelfReveal.restart()
+                controller.revealLastDroppedFile()
+            }
+        }
 
         Row {
             anchors.centerIn: parent
+            anchors.horizontalCenterOffset: fileShelfHover.hovered ? -5 : 0
             spacing: 5
+            Behavior on anchors.horizontalCenterOffset {
+                NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover; easing.type: MotionTokens.easeOut }
+            }
             Text {
                 text: "\uE8B7"
                 color: root.colors.accent
                 font.family: root.iconFont
                 font.pixelSize: 12
             }
-            Text {
+            RollingDigits {
                 anchors.verticalCenter: parent.children[0].verticalCenter
-                text: controller.droppedFileCount
+                text: String(root.displayedFileCount)
                 color: root.colors.text
-                font.family: root.uiFont
-                font.pixelSize: 9
-                font.weight: Font.DemiBold
-                font.features: { "tnum": 1 }
+                fontFamily: root.uiFont
+                fontPixelSize: 9
+                fontWeight: Font.DemiBold
+                reducedMotion: root.reducedMotion
+                rollDirection: controller.droppedFileCount < root.displayedFileCount ? -1 : 1
             }
         }
+
+        Text {
+            anchors.right: parent.right
+            anchors.rightMargin: 9
+            anchors.verticalCenter: parent.verticalCenter
+            text: "\u00d7"
+            color: root.colors.secondary
+            opacity: fileShelfHover.hovered ? 1 : 0
+            scale: fileShelfHover.hovered ? 1 : 0.7
+            font.family: root.uiFont
+            font.pixelSize: 13
+            font.weight: Font.Medium
+            Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
+            Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover; easing.type: MotionTokens.settle } }
+
+            MouseArea {
+                anchors.centerIn: parent
+                width: 22
+                height: 24
+                enabled: fileShelfHover.hovered
+                cursorShape: Qt.PointingHandCursor
+                onClicked: fileShelfClearCommit.restart()
+            }
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width * fileRevealProgress.value
+            height: parent.height
+            radius: parent.radius
+            color: root.colors.accent
+            opacity: 0.13
+            clip: true
+        }
+
+        QtObject { id: fileRevealProgress; property real value: 0 }
 
         Behavior on color { ColorAnimation { duration: MotionTokens.hover } }
         Behavior on scale { NumberAnimation { duration: MotionTokens.hover; easing.type: MotionTokens.easeOut } }
@@ -971,6 +1124,34 @@ Item {
             id: fileShelfLanding
             NumberAnimation { target: fileShelfChip; property: "scale"; from: 0.88; to: 1.06; duration: MotionTokens.press; easing.type: MotionTokens.easeOut }
             NumberAnimation { target: fileShelfChip; property: "scale"; to: 1; duration: MotionTokens.directSettle; easing.type: MotionTokens.settle }
+        }
+
+        SequentialAnimation {
+            id: fileShelfReveal
+            NumberAnimation { target: fileRevealProgress; property: "value"; from: 0; to: 1; duration: MotionTokens.content; easing.type: MotionTokens.easeOut }
+            NumberAnimation { target: fileRevealProgress; property: "value"; to: 0; duration: MotionTokens.state; easing.type: Easing.InCubic }
+        }
+
+        SequentialAnimation {
+            id: fileShelfClearCommit
+            NumberAnimation { target: fileShelfChip; property: "scale"; to: 0.94; duration: root.reducedMotion ? 0 : MotionTokens.press; easing.type: Easing.InCubic }
+            ScriptAction { script: controller.clearDroppedFiles() }
+        }
+
+        SequentialAnimation {
+            id: fileShelfRemoval
+            ParallelAnimation {
+                NumberAnimation { target: fileShelfChip; property: "opacity"; to: 0; duration: MotionTokens.state; easing.type: Easing.InCubic }
+                NumberAnimation { target: fileShelfChip; property: "scale"; to: 0.72; duration: MotionTokens.state; easing.type: Easing.InCubic }
+            }
+            ScriptAction {
+                script: {
+                    root.displayedFileCount = 0
+                    root.fileShelfRetained = false
+                    fileShelfChip.opacity = 1
+                    fileShelfChip.scale = 1
+                }
+            }
         }
     }
 

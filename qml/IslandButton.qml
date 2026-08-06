@@ -19,7 +19,14 @@ Button {
     property color accentColor: "#5ac8fa"
     property bool reducedMotion: controller.reducedMotion
     property bool motionReady: false
+    property bool rotatesOnSelection: false
+    property real focusProgress: visualFocus ? 1 : 0
     readonly property string visualToken: glyph + "|" + iconSource + "|" + invertedIconSource
+
+    function reject() {
+        if (!reducedMotion)
+            rejection.restart()
+    }
 
     implicitWidth: fixedWidth > 0 ? fixedWidth : (iconOnly ? 32 : Math.max(72, labelRow.implicitWidth + 22))
     implicitHeight: 32
@@ -42,10 +49,20 @@ Button {
     Behavior on opacity {
         NumberAnimation { duration: control.reducedMotion ? 0 : MotionTokens.hover }
     }
+    Behavior on focusProgress {
+        NumberAnimation {
+            duration: control.reducedMotion ? 0 : MotionTokens.hover
+            easing.type: MotionTokens.easeOut
+        }
+    }
 
     onVisualTokenChanged: {
         if (motionReady && !reducedMotion)
             iconSwap.restart()
+    }
+    onSelectedChanged: {
+        if (motionReady && rotatesOnSelection && !reducedMotion)
+            selectionRotation.restart()
     }
     Component.onCompleted: motionReady = true
 
@@ -69,6 +86,17 @@ Button {
 
         Behavior on color { ColorAnimation { duration: 120 } }
         Behavior on border.color { ColorAnimation { duration: 120 } }
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -2
+            radius: parent.radius + 2
+            color: "transparent"
+            border.width: 1
+            border.color: control.accentColor
+            opacity: control.focusProgress
+            scale: 0.94 + control.focusProgress * 0.06
+        }
     }
 
     contentItem: Item {
@@ -79,6 +107,7 @@ Button {
             id: labelRow
             anchors.centerIn: parent
             spacing: control.glyph.length > 0 && control.text.length > 0 ? 7 : 0
+            transform: Translate { id: feedbackShift }
 
             ParallelAnimation {
                 id: iconSwap
@@ -152,5 +181,31 @@ Button {
                 verticalAlignment: Text.AlignVCenter
             }
         }
+    }
+
+    SequentialAnimation {
+        id: selectionRotation
+        NumberAnimation {
+            target: labelRow
+            property: "rotation"
+            from: control.selected ? -10 : 10
+            to: control.selected ? 12 : -12
+            duration: MotionTokens.press
+            easing.type: Easing.OutCubic
+        }
+        NumberAnimation {
+            target: labelRow
+            property: "rotation"
+            to: 0
+            duration: MotionTokens.directSettle
+            easing.type: MotionTokens.settle
+        }
+    }
+
+    SequentialAnimation {
+        id: rejection
+        NumberAnimation { target: feedbackShift; property: "x"; from: 0; to: -2; duration: 45; easing.type: Easing.OutCubic }
+        NumberAnimation { target: feedbackShift; property: "x"; to: 2; duration: 65; easing.type: Easing.InOutCubic }
+        NumberAnimation { target: feedbackShift; property: "x"; to: 0; duration: 70; easing.type: Easing.OutCubic }
     }
 }

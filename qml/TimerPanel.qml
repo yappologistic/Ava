@@ -12,6 +12,11 @@ Item {
     property bool reducedMotion: false
     property int selectedMinutes: 15
     property real visualTimerProgress: controller.timerProgress
+    property real cancelProgressOverride: -1
+    property int lastObservedRemaining: controller.timerRemainingSeconds
+    readonly property real effectiveTimerProgress: cancelProgressOverride >= 0
+                                                   ? cancelProgressOverride
+                                                   : visualTimerProgress
     readonly property color timerOrange: "#ff9f0a"
     readonly property color timerOrangePressed: "#e98700"
     readonly property int tickSpacing: 16
@@ -35,6 +40,18 @@ Item {
         snapAnimation.from = ruler.contentX
         snapAnimation.to = minute * tickSpacing
         snapAnimation.start()
+    }
+
+    Connections {
+        target: controller
+        function onTimerChanged() {
+            const remaining = controller.timerRemainingSeconds
+            if (controller.timerActive && remaining <= 10 && remaining > 0
+                    && remaining !== root.lastObservedRemaining
+                    && !root.reducedMotion)
+                finalSecondSettle.restart()
+            root.lastObservedRemaining = remaining
+        }
     }
 
     Item {
@@ -283,21 +300,25 @@ Item {
                         Connections {
                             target: root
                             function onVisualTimerProgressChanged() { progressCanvas.requestPaint() }
+                            function onCancelProgressOverrideChanged() { progressCanvas.requestPaint() }
                         }
 
                         onPaint: {
                             const context = getContext("2d")
                             context.reset()
                             context.lineCap = "round"
-                            context.lineWidth = 4
+                            context.lineWidth = controller.timerRemainingSeconds <= 10
+                                                && controller.timerRemainingSeconds > 0 ? 5 : 4
                             context.strokeStyle = "#2a210f"
                             context.beginPath()
                             context.arc(width / 2, height / 2, 24, 0, Math.PI * 2)
                             context.stroke()
-                            context.strokeStyle = root.timerOrange
+                            context.strokeStyle = controller.timerRemainingSeconds <= 10
+                                                  && controller.timerRemainingSeconds > 0
+                                                  ? "#ffb43b" : root.timerOrange
                             context.beginPath()
                             context.arc(width / 2, height / 2, 24, -Math.PI / 2,
-                                        -Math.PI / 2 + Math.PI * 2 * root.visualTimerProgress)
+                                        -Math.PI / 2 + Math.PI * 2 * root.effectiveTimerProgress)
                             context.stroke()
                         }
                         opacity: controller.timerPaused ? 0.58 : 1
@@ -341,6 +362,12 @@ Item {
             }
         }
 
+        SequentialAnimation {
+            id: finalSecondSettle
+            NumberAnimation { target: countdownText; property: "scale"; from: 1; to: 1.025; duration: MotionTokens.press; easing.type: MotionTokens.easeOut }
+            NumberAnimation { target: countdownText; property: "scale"; to: 1; duration: MotionTokens.hover; easing.type: MotionTokens.easeOut }
+        }
+
         Row {
             anchors.horizontalCenter: parent.horizontalCenter
             y: 78
@@ -357,11 +384,8 @@ Item {
                 HoverHandler { id: cancelHover }
                 TapHandler {
                     id: cancelTap
-                    onTapped: {
-                        controller.cancelTimer()
-                        controller.closeTimer()
-                        controller.setExpanded(false)
-                    }
+                    enabled: !cancelTimerAnimation.running
+                    onTapped: cancelTimerAnimation.restart()
                 }
                 Text {
                     anchors.centerIn: parent
@@ -486,6 +510,28 @@ Item {
                 to: 1
                 duration: MotionTokens.directSettle
                 easing.type: MotionTokens.settle
+            }
+        }
+
+        SequentialAnimation {
+            id: cancelTimerAnimation
+            ScriptAction { script: root.cancelProgressOverride = root.visualTimerProgress }
+            ParallelAnimation {
+                NumberAnimation { target: root; property: "cancelProgressOverride"; to: 0; duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: Easing.InCubic }
+                NumberAnimation { target: countdownText; property: "opacity"; to: 0; duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: Easing.InCubic }
+                NumberAnimation { target: countdownText; property: "scale"; to: 0.88; duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: Easing.InCubic }
+                NumberAnimation { target: timerGlyphHost; property: "scale"; to: 0.78; duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: Easing.InCubic }
+            }
+            ScriptAction {
+                script: {
+                    controller.cancelTimer()
+                    controller.closeTimer()
+                    controller.setExpanded(false)
+                    root.cancelProgressOverride = -1
+                    countdownText.opacity = 1
+                    countdownText.scale = 1
+                    timerGlyphHost.scale = 1
+                }
             }
         }
     }
