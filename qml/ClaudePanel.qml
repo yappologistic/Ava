@@ -298,16 +298,10 @@ Item {
 
             IslandButton {
                 visible: root.doneRequest
-                text: "Keep going"
-                fixedWidth: 96
+                text: "Reply"
+                fixedWidth: 78
                 accented: true
                 glowColor: root.allowGlow
-                onClicked: claude.sendReply("Keep going with the task.")
-            }
-            IslandButton {
-                visible: root.doneRequest
-                text: "Reply"
-                fixedWidth: 72
                 onClicked: claude.beginReply()
             }
             IslandButton {
