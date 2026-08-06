@@ -160,10 +160,10 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Ava"));
     app.setApplicationDisplayName(QStringLiteral("Ava"));
     app.setOrganizationName(QStringLiteral("Ava"));
-    const int geistFontId = QFontDatabase::addApplicationFont(
-        QStringLiteral(":/qt/qml/Ava/assets/fonts/Geist[wght].ttf"));
-    if (geistFontId >= 0) {
-        const QStringList fontFamilies = QFontDatabase::applicationFontFamilies(geistFontId);
+    const int interFontId = QFontDatabase::addApplicationFont(
+        QStringLiteral(":/qt/qml/Ava/assets/fonts/Inter[opsz,wght].ttf"));
+    if (interFontId >= 0) {
+        const QStringList fontFamilies = QFontDatabase::applicationFontFamilies(interFontId);
         if (!fontFamilies.isEmpty()) {
             QFont appFont(fontFamilies.constFirst());
             appFont.setPointSizeF(10.0);

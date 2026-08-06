@@ -6,7 +6,7 @@ There is no demo or placeholder state. Ava reads and controls real Windows servi
 
 ## Features
 
-- Compact always-on-top clock using the bundled Geist typeface.
+- Compact always-on-top clock using the bundled Inter typeface.
 - Apple-inspired timer with a snapping minute ruler, compact countdown, progress ring, pause/resume, cancel, add-one-minute, and a real Windows completion alert.
 - Live media title, artist, artwork, playback state, timeline, and transport controls through Global System Media Transport Controls.
 - Windows Core Audio volume and mute controls.
@@ -78,10 +78,10 @@ Generated screenshots, videos, reports, logs, build products, and IDE files are 
 - `qml/TimerPanel.qml`: timer setup, running, paused, and completed states.
 - `qml/NotchSurface.qml`: reverse-curve top junctions and continuous lower corners.
 - `qml/IslandButton.qml`: shared button visuals, accessibility, and microinteractions.
-- `assets/fonts/`: bundled Geist variable font and SIL Open Font License.
+- `assets/fonts/`: bundled Inter variable font and SIL Open Font License.
 - `assets/icons/`: timer artwork and selected Microsoft Fluent UI System Icons.
 
 ## Third-party assets
 
-- Geist is distributed under the SIL Open Font License 1.1. See `assets/fonts/OFL-Geist.txt`.
+- Inter is distributed under the SIL Open Font License 1.1. See `assets/fonts/OFL-Inter.txt`.
 - Microsoft Fluent UI System Icons are distributed under the MIT License. See `assets/icons/LICENSE`.
