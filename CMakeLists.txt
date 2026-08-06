@@ -46,8 +46,8 @@ qt_add_qml_module(DynamicIsland
         assets/icons/timer-light.svg
         assets/icons/timer-dark.svg
         assets/icons/timer-orange.svg
-        assets/fonts/SNPro[wght].ttf
-        assets/fonts/OFL-SNPro.txt
+        assets/fonts/Geist[wght].ttf
+        assets/fonts/OFL-Geist.txt
 )
 
 target_link_libraries(DynamicIsland
