@@ -19,13 +19,17 @@ Window {
     readonly property int expandedHeight: 128
     readonly property int dragWidth: Math.min(420, expandedWidth)
     readonly property int dragHeight: 116
+    readonly property int mediaPeekWidth: 230
     readonly property int canvasWidth: expandedWidth + 40
     readonly property int canvasHeight: expandedHeight + 10
     readonly property bool dragActive: dropTarget.containsDrag
     readonly property int islandTargetWidth: dragActive ? dragWidth
-                                                        : (controller.expanded ? expandedWidth : compactWidth)
+        : (controller.expanded ? expandedWidth + Math.round(ringingPulse * 8)
+                               : (mediaPeekActive && controller.mediaAvailable
+                                  && !controller.timerActive && !controller.timerRinging
+                                  ? mediaPeekWidth : compactWidth))
     readonly property int islandTargetHeight: dragActive ? dragHeight
-                                                         : (controller.expanded ? expandedHeight : compactHeight)
+        : (controller.expanded ? expandedHeight + Math.round(ringingPulse * 3) : compactHeight)
 
     property real islandVisualWidth: compactWidth
     property real islandVisualHeight: compactHeight
@@ -33,6 +37,10 @@ Window {
     property real islandHeightVelocity: 0
     property bool motionReady: false
     property bool tilingFeedbackActive: false
+    property bool mediaPeekActive: false
+    property string lastMediaKey: ""
+    property bool lastTimerRinging: false
+    property real ringingPulse: 0
 
     // A lightly underdamped, axis-staggered response measured against the reference.
     // Height leads while opening; width leads while closing. Angular frequency keeps
@@ -147,6 +155,53 @@ Window {
         function onReducedMotionChanged() {
             if (controller.reducedMotion)
                 window.snapMorphToTarget()
+        }
+        function onMediaChanged() {
+            const mediaKey = controller.mediaTitle + "\n" + controller.mediaArtist
+            if (controller.mediaAvailable && controller.mediaPlaying
+                    && mediaKey.length > 1 && mediaKey !== window.lastMediaKey
+                    && !controller.timerActive && !controller.timerRinging && !qaMode) {
+                window.mediaPeekActive = true
+                mediaPeekTimer.restart()
+            }
+            window.lastMediaKey = mediaKey
+        }
+        function onTimerChanged() {
+            if (controller.timerRinging && !window.lastTimerRinging
+                    && !controller.reducedMotion) {
+                timerCompletionPulse.restart()
+            } else if (!controller.timerRinging) {
+                timerCompletionPulse.stop()
+                window.ringingPulse = 0
+            }
+            window.lastTimerRinging = controller.timerRinging
+        }
+    }
+
+    Timer {
+        id: mediaPeekTimer
+        interval: 2400
+        repeat: false
+        onTriggered: window.mediaPeekActive = false
+    }
+
+    SequentialAnimation {
+        id: timerCompletionPulse
+        loops: 2
+        PauseAnimation { duration: 110 }
+        NumberAnimation {
+            target: window
+            property: "ringingPulse"
+            to: 1
+            duration: 140
+            easing.type: MotionTokens.easeOut
+        }
+        NumberAnimation {
+            target: window
+            property: "ringingPulse"
+            to: 0
+            duration: 210
+            easing.type: Easing.InOutCubic
         }
     }
 
@@ -291,6 +346,7 @@ Window {
                 anchors.verticalCenterOffset: -1
                 spacing: 4
                 visible: !controller.timerActive && !controller.timerRinging
+                         && !window.mediaPeekActive
 
                 Text {
                     text: controller.timeText
@@ -307,6 +363,100 @@ Window {
                     font.family: window.uiFont
                     font.pixelSize: 9
                     font.weight: Font.DemiBold
+                }
+            }
+
+            Row {
+                id: compactMediaPeek
+                anchors.centerIn: parent
+                anchors.verticalCenterOffset: -1
+                spacing: 7
+                visible: window.mediaPeekActive && controller.mediaAvailable
+                         && !controller.timerActive && !controller.timerRinging
+                opacity: visible ? 1 : 0
+                scale: visible ? 1 : 0.96
+
+                Behavior on opacity {
+                    NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state }
+                }
+                Behavior on scale {
+                    NumberAnimation {
+                        duration: controller.reducedMotion ? 0 : MotionTokens.content
+                        easing.type: MotionTokens.easeOut
+                    }
+                }
+
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 27
+                    height: 27
+                    radius: 7
+                    color: colors.raised
+                    clip: true
+
+                    Image {
+                        anchors.fill: parent
+                        source: controller.mediaArtworkUrl
+                        visible: controller.mediaArtworkUrl.length > 0
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        cache: false
+                        smooth: true
+                        mipmap: true
+                    }
+                    Text {
+                        anchors.centerIn: parent
+                        visible: controller.mediaArtworkUrl.length === 0
+                        text: "\uE8D6"
+                        color: colors.secondary
+                        font.family: window.iconFont
+                        font.pixelSize: 12
+                    }
+                }
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 145
+                    text: controller.mediaTitle
+                    color: colors.text
+                    elide: Text.ElideRight
+                    maximumLineCount: 1
+                    font.family: window.uiFont
+                    font.pixelSize: 10
+                    font.weight: Font.DemiBold
+                }
+
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 2
+
+                    Repeater {
+                        model: 4
+                        Rectangle {
+                            required property int index
+                            width: 2
+                            height: 13
+                            radius: 1
+                            color: colors.green
+                            transformOrigin: Item.Center
+
+                            SequentialAnimation on scale {
+                                running: compactMediaPeek.visible && controller.mediaPlaying
+                                         && !controller.reducedMotion
+                                loops: Animation.Infinite
+                                NumberAnimation {
+                                    to: 0.30 + index * 0.08
+                                    duration: 155 + index * 24
+                                    easing.type: Easing.InOutSine
+                                }
+                                NumberAnimation {
+                                    to: 1
+                                    duration: 190 + (3 - index) * 22
+                                    easing.type: Easing.InOutSine
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

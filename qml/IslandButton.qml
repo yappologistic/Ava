@@ -17,6 +17,9 @@ Button {
     property string accessibleName: ""
     property string uiFont: "Inter"
     property color accentColor: "#5ac8fa"
+    property bool reducedMotion: controller.reducedMotion
+    property bool motionReady: false
+    readonly property string visualToken: glyph + "|" + iconSource + "|" + invertedIconSource
 
     implicitWidth: fixedWidth > 0 ? fixedWidth : (iconOnly ? 32 : Math.max(72, labelRow.implicitWidth + 22))
     implicitHeight: 32
@@ -24,14 +27,27 @@ Button {
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : 0.32
-    scale: down ? 0.92 : (hovered ? 1.035 : 1.0)
+    scale: down ? 0.90 : (hovered ? 1.022 : 1.0)
 
     Accessible.name: text.length > 0 ? text : accessibleName
     Accessible.role: Accessible.Button
 
     Behavior on scale {
-        NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+        NumberAnimation {
+            duration: control.reducedMotion ? 0
+                                            : (control.down ? MotionTokens.press : MotionTokens.hover)
+            easing.type: MotionTokens.easeOut
+        }
     }
+    Behavior on opacity {
+        NumberAnimation { duration: control.reducedMotion ? 0 : MotionTokens.hover }
+    }
+
+    onVisualTokenChanged: {
+        if (motionReady && !reducedMotion)
+            iconSwap.restart()
+    }
+    Component.onCompleted: motionReady = true
 
     background: Rectangle {
         radius: control.iconOnly ? height / 2 : 9
@@ -63,6 +79,43 @@ Button {
             id: labelRow
             anchors.centerIn: parent
             spacing: control.glyph.length > 0 && control.text.length > 0 ? 7 : 0
+
+            ParallelAnimation {
+                id: iconSwap
+
+                SequentialAnimation {
+                    NumberAnimation {
+                        target: labelRow
+                        property: "scale"
+                        from: 1
+                        to: 0.76
+                        duration: MotionTokens.press
+                        easing.type: Easing.InCubic
+                    }
+                    NumberAnimation {
+                        target: labelRow
+                        property: "scale"
+                        to: 1
+                        duration: MotionTokens.hover
+                        easing.type: MotionTokens.settle
+                    }
+                }
+                SequentialAnimation {
+                    NumberAnimation {
+                        target: labelRow
+                        property: "opacity"
+                        from: 1
+                        to: 0.42
+                        duration: MotionTokens.press
+                    }
+                    NumberAnimation {
+                        target: labelRow
+                        property: "opacity"
+                        to: 1
+                        duration: MotionTokens.hover
+                    }
+                }
+            }
 
             Text {
                 visible: control.iconSource.toString().length === 0 && control.glyph.length > 0

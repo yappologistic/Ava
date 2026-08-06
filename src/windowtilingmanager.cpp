@@ -29,7 +29,7 @@ constexpr int kCompactIslandHeightDip = 39;
 constexpr int kIslandWindowGapDip = 18;
 constexpr int kMinimumTileWidthDip = 220;
 constexpr int kMinimumTileHeightDip = 140;
-constexpr int kAnimationDurationMs = 165;
+constexpr int kAnimationDurationMs = 150;
 constexpr int kAnimationIntervalMs = 8;
 constexpr UINT kMoveSizeEventMessage = WM_APP + 0x359;
 constexpr UINT kKeyboardShortcutMessage = WM_APP + 0x35A;
@@ -1102,10 +1102,11 @@ void WindowTilingManager::advanceAnimation()
                                                 / static_cast<qreal>(kAnimationDurationMs),
                                             0.0,
                                             1.0);
-    // Smoothstep keeps the 165 ms response fast while eliminating the large
-    // first-frame jump of an ease-out cubic. Both endpoint velocities are zero.
-    const qreal progress = linearProgress * linearProgress
-        * (3.0 - 2.0 * linearProgress);
+    // Quintic smootherstep keeps position, velocity, and acceleration continuous
+    // at both ends. At an 8 ms sampling interval this remains fluid on 120 Hz
+    // displays while completing quickly enough to feel attached to the gesture.
+    const qreal progress = linearProgress * linearProgress * linearProgress
+        * (linearProgress * (linearProgress * 6.0 - 15.0) + 10.0);
 
     struct FrameStep
     {
