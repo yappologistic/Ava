@@ -465,6 +465,7 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
         }
         const QPoint point(cursor.x, cursor.y);
         int nextSlot = -1;
+        bool nextConstrained = false;
         if (m_native->interactionIsMove) {
             const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
             int slot = 0;
@@ -487,6 +488,15 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
         double nextProgress = m_interactionProgress;
         if (GetMonitorInfoW(monitor, &info)) {
             const QRect current = visibleFrame(window);
+            if (!m_native->interactionIsMove) {
+                const UINT dpi = monitorDpi(monitor, window);
+                const QSize minimum = minimumVisibleSize(
+                    window,
+                    dpi,
+                    m_native->learnedMinimums.value(reinterpret_cast<quintptr>(window)));
+                nextConstrained = current.width() <= minimum.width() + 3
+                    || current.height() <= minimum.height() + 3;
+            }
             const int widthDelta = qAbs(current.width() - m_native->interactionStartFrame.width());
             const int heightDelta = qAbs(current.height() - m_native->interactionStartFrame.height());
             if (widthDelta >= heightDelta) {
@@ -497,9 +507,12 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
                 nextProgress = qBound(0.08, (cursor.y - info.rcWork.top) / double(available), 0.92);
             }
         }
-        if (nextSlot != m_previewSlot || qAbs(nextProgress - m_interactionProgress) > 0.002) {
+        if (nextSlot != m_previewSlot
+            || nextConstrained != m_interactionConstrained
+            || qAbs(nextProgress - m_interactionProgress) > 0.002) {
             m_previewSlot = nextSlot;
             m_interactionProgress = nextProgress;
+            m_interactionConstrained = nextConstrained;
             emit interactionChanged();
         }
 #endif
@@ -686,6 +699,7 @@ void WindowTilingManager::setEnabled(bool enabled)
         m_adjusting = false;
         m_interactionKind.clear();
         m_previewSlot = -1;
+        m_interactionConstrained = false;
         emit interactionChanged();
         restoreWindows();
     }
@@ -750,6 +764,7 @@ void WindowTilingManager::beginWindowInteraction(quintptr nativeHandle)
         ? QStringLiteral("MOVING") : QStringLiteral("RESIZING");
     m_previewSlot = -1;
     m_interactionProgress = 0.5;
+    m_interactionConstrained = false;
     m_interactionTimer.start();
     emit interactionChanged();
     if (!m_adjusting) {
@@ -778,6 +793,7 @@ void WindowTilingManager::endWindowInteraction(quintptr nativeHandle)
     m_interactionTimer.stop();
     m_interactionKind.clear();
     m_previewSlot = -1;
+    m_interactionConstrained = false;
     emit interactionChanged();
     if (m_adjusting) {
         m_adjusting = false;

@@ -47,6 +47,29 @@ namespace MediaControl = winrt::Windows::Media::Control;
 namespace Connectivity = winrt::Windows::Networking::Connectivity;
 namespace StorageStreams = winrt::Windows::Storage::Streams;
 
+template <typename AsyncOperation>
+void observeMediaCommand(const AsyncOperation &operation,
+                         const QPointer<IslandController> &controller,
+                         const QString &command)
+{
+    operation.Completed([controller, command](const auto &completed,
+                                               winrt::Windows::Foundation::AsyncStatus status) {
+        bool accepted = false;
+        try {
+            accepted = status == winrt::Windows::Foundation::AsyncStatus::Completed
+                && completed.GetResults();
+        } catch (...) {
+        }
+        if (!accepted && controller) {
+            QMetaObject::invokeMethod(controller, [controller, command]() {
+                if (controller) {
+                    emit controller->mediaCommandRejected(command);
+                }
+            }, Qt::QueuedConnection);
+        }
+    });
+}
+
 struct __declspec(uuid("905a0fef-bc53-11df-8c49-001e4fc686da")) IBufferByteAccess
     : IUnknown
 {
@@ -616,9 +639,14 @@ void IslandController::togglePlayback()
             session = m_platform->mediaSession;
         }
         if (session) {
-            session.TryTogglePlayPauseAsync();
+            observeMediaCommand(session.TryTogglePlayPauseAsync(),
+                                QPointer<IslandController>(this),
+                                QStringLiteral("playback"));
+        } else {
+            emit mediaCommandRejected(QStringLiteral("playback"));
         }
     } catch (...) {
+        emit mediaCommandRejected(QStringLiteral("playback"));
     }
 #endif
 }
@@ -633,9 +661,14 @@ void IslandController::previousTrack()
             session = m_platform->mediaSession;
         }
         if (session) {
-            session.TrySkipPreviousAsync();
+            observeMediaCommand(session.TrySkipPreviousAsync(),
+                                QPointer<IslandController>(this),
+                                QStringLiteral("previous"));
+        } else {
+            emit mediaCommandRejected(QStringLiteral("previous"));
         }
     } catch (...) {
+        emit mediaCommandRejected(QStringLiteral("previous"));
     }
 #endif
 }
@@ -650,9 +683,14 @@ void IslandController::nextTrack()
             session = m_platform->mediaSession;
         }
         if (session) {
-            session.TrySkipNextAsync();
+            observeMediaCommand(session.TrySkipNextAsync(),
+                                QPointer<IslandController>(this),
+                                QStringLiteral("next"));
+        } else {
+            emit mediaCommandRejected(QStringLiteral("next"));
         }
     } catch (...) {
+        emit mediaCommandRejected(QStringLiteral("next"));
     }
 #endif
 }
@@ -668,21 +706,49 @@ void IslandController::seekMedia(double progress)
             session = m_platform->mediaSession;
         }
         if (!session) {
+            emit mediaSeekFinished(false, progress);
+            emit mediaCommandRejected(QStringLiteral("seek"));
             return;
         }
         const auto controls = session.GetPlaybackInfo().Controls();
         if (!controls.IsPlaybackPositionEnabled()) {
+            emit mediaSeekFinished(false, progress);
+            emit mediaCommandRejected(QStringLiteral("seek"));
             return;
         }
         const auto timeline = session.GetTimelineProperties();
         const auto start = timeline.StartTime().count();
         const auto duration = timeline.EndTime().count() - start;
         if (duration <= 0) {
+            emit mediaSeekFinished(false, progress);
+            emit mediaCommandRejected(QStringLiteral("seek"));
             return;
         }
         const auto target = start + static_cast<int64_t>(duration * progress);
-        session.TryChangePlaybackPositionAsync(target);
+        const auto operation = session.TryChangePlaybackPositionAsync(target);
+        const QPointer<IslandController> self(this);
+        operation.Completed([self, progress](const auto &completed,
+                                             winrt::Windows::Foundation::AsyncStatus status) {
+            bool accepted = false;
+            try {
+                accepted = status == winrt::Windows::Foundation::AsyncStatus::Completed
+                    && completed.GetResults();
+            } catch (...) {
+            }
+            if (self) {
+                QMetaObject::invokeMethod(self, [self, accepted, progress]() {
+                    if (self) {
+                        emit self->mediaSeekFinished(accepted, progress);
+                        if (!accepted) {
+                            emit self->mediaCommandRejected(QStringLiteral("seek"));
+                        }
+                    }
+                }, Qt::QueuedConnection);
+            }
+        });
     } catch (...) {
+        emit mediaSeekFinished(false, progress);
+        emit mediaCommandRejected(QStringLiteral("seek"));
     }
 #else
     Q_UNUSED(progress)

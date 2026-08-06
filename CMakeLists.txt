@@ -31,6 +31,7 @@ qt_add_qml_module(Ava
         qml/MotionTokens.qml
         qml/NotchSurface.qml
         qml/RollingDigits.qml
+        qml/MorphingLabel.qml
     RESOURCES
         assets/icons/play-dark.svg
         assets/icons/pause-dark.svg

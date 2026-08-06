@@ -23,13 +23,19 @@ Window {
     readonly property int canvasWidth: expandedWidth + 40
     readonly property int canvasHeight: expandedHeight + 10
     readonly property bool dragActive: dropTarget.containsDrag
+    property bool shellExpandedVisual: controller.expanded
+    property real hoverTension: islandHover.hovered && !controller.expanded
+                                && !dragActive ? 1 : 0
     readonly property int islandTargetWidth: dragActive ? dragWidth
-        : (controller.expanded ? expandedWidth + Math.round(ringingPulse * 8)
+        : (shellExpandedVisual ? expandedWidth + Math.round(ringingPulse * 8)
+                                + Math.round(pinPulse * 4)
                                : (mediaPeekActive && controller.mediaAvailable
                                   && !controller.timerActive && !controller.timerRinging
-                                  ? mediaPeekWidth : compactWidth))
+                                  ? mediaPeekWidth
+                                  : compactWidth + Math.round(hoverTension * 4)))
     readonly property int islandTargetHeight: dragActive ? dragHeight
-        : (controller.expanded ? expandedHeight + Math.round(ringingPulse * 3) : compactHeight)
+        : (shellExpandedVisual ? expandedHeight + Math.round(ringingPulse * 3)
+                               : compactHeight + Math.round(hoverTension))
 
     property real islandVisualWidth: compactWidth
     property real islandVisualHeight: compactHeight
@@ -41,6 +47,7 @@ Window {
     property string lastMediaKey: ""
     property bool lastTimerRinging: false
     property real ringingPulse: 0
+    property real pinPulse: 0
     property int lastDroppedFileCount: 0
     property real dropTraceProgress: 0
     readonly property string compactActivity: controller.timerActive || controller.timerRinging
@@ -65,10 +72,18 @@ Window {
         (surfaceHeight - compactHeight) / (expandedHeight - compactHeight)))
     readonly property real dynamicCornerRadius: 17 + 11 * Math.sqrt(morphProgress)
     readonly property real dynamicEarWidth: 9 + 7 * Math.sqrt(morphProgress)
+                                             + hoverTension * 2
     readonly property real dynamicEarDepth: 9 + 9 * Math.sqrt(morphProgress)
     readonly property real islandCaptureWidth: islandVisualWidth + dynamicEarWidth * 2
     readonly property real islandCaptureHeight: islandVisualHeight + 8
     readonly property bool nativeInputMaskEnabled: !qaMode
+
+    Behavior on hoverTension {
+        NumberAnimation {
+            duration: controller.reducedMotion ? 0 : MotionTokens.directSettle
+            easing.type: MotionTokens.easeOut
+        }
+    }
 
     width: canvasWidth
     height: canvasHeight
@@ -162,6 +177,20 @@ Window {
             if (controller.reducedMotion)
                 window.snapMorphToTarget()
         }
+        function onExpandedChanged() {
+            if (controller.expanded) {
+                delayedShellClose.stop()
+                window.shellExpandedVisual = true
+            } else if (controller.reducedMotion) {
+                window.shellExpandedVisual = false
+            } else {
+                delayedShellClose.restart()
+            }
+        }
+        function onPinnedChanged() {
+            if (!controller.reducedMotion)
+                pinShellSettle.restart()
+        }
         function onMediaChanged() {
             const mediaKey = controller.mediaTitle + "\n" + controller.mediaArtist
             if (controller.mediaAvailable && controller.mediaPlaying
@@ -189,12 +218,19 @@ Window {
             window.lastDroppedFileCount = controller.droppedFileCount
         }
         function onForegroundFullscreenChanged() {
-            if (controller.foregroundFullscreen) {
+            if (controller.foregroundFullscreen && !qaMode) {
                 window.mediaPeekActive = false
                 if (!controller.timerRinging)
                     controller.setExpanded(false)
             }
         }
+    }
+
+    Timer {
+        id: delayedShellClose
+        interval: 55
+        repeat: false
+        onTriggered: window.shellExpandedVisual = false
     }
 
     Timer {
@@ -241,6 +277,25 @@ Window {
             to: 0
             duration: MotionTokens.state
             easing.type: Easing.InCubic
+        }
+    }
+
+    SequentialAnimation {
+        id: pinShellSettle
+        NumberAnimation {
+            target: window
+            property: "pinPulse"
+            from: 0
+            to: 1
+            duration: MotionTokens.press
+            easing.type: MotionTokens.easeOut
+        }
+        NumberAnimation {
+            target: window
+            property: "pinPulse"
+            to: 0
+            duration: MotionTokens.directSettle
+            easing.type: MotionTokens.easeOut
         }
     }
 
@@ -419,14 +474,15 @@ Window {
                     reducedMotion: controller.reducedMotion
                     rollDirection: 1
                 }
-                Text {
+                MorphingLabel {
                     anchors.verticalCenter: compactClockDigits.verticalCenter
                     anchors.verticalCenterOffset: 3
                     text: controller.meridiemText
                     color: colors.secondary
-                    font.family: window.uiFont
-                    font.pixelSize: 9
-                    font.weight: Font.DemiBold
+                    fontFamily: window.uiFont
+                    fontPixelSize: 9
+                    fontWeight: Font.DemiBold
+                    reducedMotion: controller.reducedMotion
                 }
             }
 
@@ -511,12 +567,13 @@ Window {
                             color: controller.mediaArtworkAccent.length > 0
                                    ? controller.mediaArtworkAccent : colors.green
                             transformOrigin: Item.Center
-                            scale: controller.mediaPlaying
+                            scale: controller.mediaPlaying && !controller.muted
                                    ? 0.08 + Math.pow(expressiveLevel, 0.66) * 0.92 : 0.08
 
                             Behavior on scale {
                                 NumberAnimation {
-                                    duration: controller.reducedMotion ? 0 : 165 + index * 15
+                                    duration: controller.reducedMotion ? 0
+                                              : 150 + Math.abs(index - 2) * 24
                                     easing.type: Easing.OutCubic
                                 }
                             }

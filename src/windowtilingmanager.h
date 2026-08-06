@@ -25,6 +25,7 @@ class WindowTilingManager final : public QObject, public QAbstractNativeEventFil
     Q_PROPERTY(int previewSlot READ previewSlot NOTIFY interactionChanged)
     Q_PROPERTY(int layoutRevision READ layoutRevision NOTIFY interactionChanged)
     Q_PROPERTY(int shortcutRevision READ shortcutRevision NOTIFY interactionChanged)
+    Q_PROPERTY(bool interactionConstrained READ interactionConstrained NOTIFY interactionChanged)
 
 public:
     explicit WindowTilingManager(QObject *parent = nullptr);
@@ -40,6 +41,7 @@ public:
     int previewSlot() const { return m_previewSlot; }
     int layoutRevision() const { return m_layoutRevision; }
     int shortcutRevision() const { return m_shortcutRevision; }
+    bool interactionConstrained() const { return m_interactionConstrained; }
 
     void setIslandWindow(quintptr nativeHandle);
     void setProcessAllowList(const QSet<quint32> &processIds);
@@ -83,4 +85,5 @@ private:
     int m_previewSlot = -1;
     int m_layoutRevision = 0;
     int m_shortcutRevision = 0;
+    bool m_interactionConstrained = false;
 };

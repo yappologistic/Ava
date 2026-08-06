@@ -141,6 +141,8 @@ signals:
     void clockChanged();
     void timerChanged();
     void mediaChanged();
+    void mediaSeekFinished(bool accepted, double requestedProgress);
+    void mediaCommandRejected(const QString &command);
     void audioPeakChanged();
     void systemChanged();
     void droppedFilesChanged();
