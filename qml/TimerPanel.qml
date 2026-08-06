@@ -26,11 +26,6 @@ Item {
         snapAnimation.start()
     }
 
-    Rectangle {
-        anchors.fill: parent
-        color: "#000000"
-    }
-
     Item {
         id: setupView
         anchors.fill: parent
@@ -120,7 +115,7 @@ Item {
         }
 
         Item {
-            x: parent.width / 2 - 8
+            anchors.horizontalCenter: ruler.horizontalCenter
             y: 57
             width: 14
             height: 10
