@@ -39,7 +39,9 @@ class IslandController final : public QObject
     Q_PROPERTY(bool mediaPlaying READ mediaPlaying NOTIFY mediaChanged)
     Q_PROPERTY(bool mediaCanPrevious READ mediaCanPrevious NOTIFY mediaChanged)
     Q_PROPERTY(bool mediaCanNext READ mediaCanNext NOTIFY mediaChanged)
+    Q_PROPERTY(bool mediaSeekable READ mediaSeekable NOTIFY mediaChanged)
     Q_PROPERTY(double mediaProgress READ mediaProgress NOTIFY mediaChanged)
+    Q_PROPERTY(qint64 mediaDurationMilliseconds READ mediaDurationMilliseconds NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaPositionText READ mediaPositionText NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaDurationText READ mediaDurationText NOTIFY mediaChanged)
     Q_PROPERTY(QVariantList audioPeakLevels READ audioPeakLevels NOTIFY audioPeakChanged)
@@ -51,6 +53,7 @@ class IslandController final : public QObject
     Q_PROPERTY(QString powerText READ powerText NOTIFY systemChanged)
     Q_PROPERTY(int volume READ volume NOTIFY systemChanged)
     Q_PROPERTY(bool muted READ muted NOTIFY systemChanged)
+    Q_PROPERTY(bool foregroundFullscreen READ foregroundFullscreen NOTIFY foregroundFullscreenChanged)
 
     Q_PROPERTY(int droppedFileCount READ droppedFileCount NOTIFY droppedFilesChanged)
     Q_PROPERTY(QString lastDroppedFile READ lastDroppedFile NOTIFY droppedFilesChanged)
@@ -87,7 +90,9 @@ public:
     bool mediaPlaying() const { return m_mediaPlaying; }
     bool mediaCanPrevious() const { return m_mediaCanPrevious; }
     bool mediaCanNext() const { return m_mediaCanNext; }
+    bool mediaSeekable() const { return m_mediaSeekable; }
     double mediaProgress() const { return m_mediaProgress; }
+    qint64 mediaDurationMilliseconds() const { return m_mediaDurationMilliseconds; }
     QString mediaPositionText() const { return m_mediaPositionText; }
     QString mediaDurationText() const { return m_mediaDurationText; }
     QVariantList audioPeakLevels() const { return m_audioPeakLevels; }
@@ -99,6 +104,7 @@ public:
     QString powerText() const { return m_powerText; }
     int volume() const { return m_volume; }
     bool muted() const { return m_muted; }
+    bool foregroundFullscreen() const { return m_foregroundFullscreen; }
 
     int droppedFileCount() const { return m_droppedFiles.size(); }
     QString lastDroppedFile() const;
@@ -120,6 +126,7 @@ public slots:
     void togglePlayback();
     void previousTrack();
     void nextTrack();
+    void seekMedia(double progress);
     void setVolume(int volume);
     void toggleMute();
 
@@ -137,6 +144,7 @@ signals:
     void audioPeakChanged();
     void systemChanged();
     void droppedFilesChanged();
+    void foregroundFullscreenChanged();
 
 private slots:
     void tick();
@@ -150,6 +158,7 @@ private:
     void updateClock();
     void refreshMedia();
     void refreshSystemState();
+    void refreshForegroundFullscreen();
     QString formatDuration(qint64 totalMilliseconds) const;
     QString formatTimerDuration(qint64 totalMilliseconds) const;
     void finishTimer();
@@ -193,7 +202,9 @@ private:
     bool m_mediaPlaying = false;
     bool m_mediaCanPrevious = false;
     bool m_mediaCanNext = false;
+    bool m_mediaSeekable = false;
     double m_mediaProgress = 0.0;
+    qint64 m_mediaDurationMilliseconds = 0;
     QString m_mediaPositionText = QStringLiteral("0:00");
     QString m_mediaDurationText = QStringLiteral("0:00");
     QVariantList m_audioPeakLevels{0.0, 0.0, 0.0, 0.0, 0.0};
@@ -205,6 +216,7 @@ private:
     QString m_powerText;
     int m_volume = 0;
     bool m_muted = false;
+    bool m_foregroundFullscreen = false;
 
     QStringList m_droppedFiles;
 };

@@ -657,6 +657,38 @@ void IslandController::nextTrack()
 #endif
 }
 
+void IslandController::seekMedia(double progress)
+{
+#ifdef Q_OS_WIN
+    progress = qBound(0.0, progress, 1.0);
+    try {
+        MediaControl::GlobalSystemMediaTransportControlsSession session{nullptr};
+        {
+            std::scoped_lock lock(m_platform->mediaMutex);
+            session = m_platform->mediaSession;
+        }
+        if (!session) {
+            return;
+        }
+        const auto controls = session.GetPlaybackInfo().Controls();
+        if (!controls.IsPlaybackPositionEnabled()) {
+            return;
+        }
+        const auto timeline = session.GetTimelineProperties();
+        const auto start = timeline.StartTime().count();
+        const auto duration = timeline.EndTime().count() - start;
+        if (duration <= 0) {
+            return;
+        }
+        const auto target = start + static_cast<int64_t>(duration * progress);
+        session.TryChangePlaybackPositionAsync(target);
+    } catch (...) {
+    }
+#else
+    Q_UNUSED(progress)
+#endif
+}
+
 void IslandController::setVolume(int volume)
 {
 #ifdef Q_OS_WIN
@@ -716,11 +748,44 @@ void IslandController::revealLastDroppedFile()
 void IslandController::tick()
 {
     updateClock();
+    refreshForegroundFullscreen();
     refreshMedia();
     if (++m_slowRefreshCounter >= 3) {
         m_slowRefreshCounter = 0;
         refreshSystemState();
     }
+}
+
+void IslandController::refreshForegroundFullscreen()
+{
+#ifdef Q_OS_WIN
+    bool fullscreen = false;
+    const HWND foreground = GetForegroundWindow();
+    if (foreground && IsWindowVisible(foreground) && !IsIconic(foreground)) {
+        wchar_t className[128]{};
+        GetClassNameW(foreground, className, static_cast<int>(std::size(className)));
+        const QString windowClass = QString::fromWCharArray(className);
+        if (windowClass != QStringLiteral("Shell_TrayWnd")
+            && windowClass != QStringLiteral("Progman")
+            && windowClass != QStringLiteral("WorkerW")) {
+            RECT frame{};
+            const HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO monitorInfo{};
+            monitorInfo.cbSize = sizeof(monitorInfo);
+            if (GetWindowRect(foreground, &frame) && GetMonitorInfoW(monitor, &monitorInfo)) {
+                constexpr int tolerance = 2;
+                fullscreen = frame.left <= monitorInfo.rcMonitor.left + tolerance
+                    && frame.top <= monitorInfo.rcMonitor.top + tolerance
+                    && frame.right >= monitorInfo.rcMonitor.right - tolerance
+                    && frame.bottom >= monitorInfo.rcMonitor.bottom - tolerance;
+            }
+        }
+    }
+    if (m_foregroundFullscreen != fullscreen) {
+        m_foregroundFullscreen = fullscreen;
+        emit foregroundFullscreenChanged();
+    }
+#endif
 }
 
 void IslandController::updateClock()
@@ -911,7 +976,9 @@ void IslandController::refreshMedia()
         bool playing = false;
         bool canPrevious = false;
         bool canNext = false;
+        bool seekable = false;
         double progress = 0.0;
+        qint64 durationMilliseconds = 0;
         QString positionText = QStringLiteral("0:00");
         QString durationText = QStringLiteral("0:00");
     };
@@ -963,11 +1030,13 @@ void IslandController::refreshMedia()
                     == MediaControl::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
                 snapshot.canPrevious = controls.IsPreviousEnabled();
                 snapshot.canNext = controls.IsNextEnabled();
+                snapshot.seekable = controls.IsPlaybackPositionEnabled();
 
                 const qint64 positionMs = timeline.Position().count() / 10000;
                 const qint64 startMs = timeline.StartTime().count() / 10000;
                 const qint64 endMs = timeline.EndTime().count() / 10000;
                 const qint64 durationMs = qMax<qint64>(0, endMs - startMs);
+                snapshot.durationMilliseconds = durationMs;
                 snapshot.progress = durationMs > 0
                     ? qBound(0.0, static_cast<double>(positionMs - startMs)
                                       / static_cast<double>(durationMs), 1.0)
@@ -1062,7 +1131,9 @@ void IslandController::refreshMedia()
                 || self->m_mediaPlaying != snapshot.playing
                 || self->m_mediaCanPrevious != snapshot.canPrevious
                 || self->m_mediaCanNext != snapshot.canNext
+                || self->m_mediaSeekable != snapshot.seekable
                 || !qFuzzyCompare(self->m_mediaProgress + 1.0, snapshot.progress + 1.0)
+                || self->m_mediaDurationMilliseconds != snapshot.durationMilliseconds
                 || self->m_mediaPositionText != snapshot.positionText
                 || self->m_mediaDurationText != snapshot.durationText;
 
@@ -1078,7 +1149,9 @@ void IslandController::refreshMedia()
             self->m_mediaPlaying = snapshot.playing;
             self->m_mediaCanPrevious = snapshot.canPrevious;
             self->m_mediaCanNext = snapshot.canNext;
+            self->m_mediaSeekable = snapshot.seekable;
             self->m_mediaProgress = snapshot.progress;
+            self->m_mediaDurationMilliseconds = snapshot.durationMilliseconds;
             self->m_mediaPositionText = snapshot.positionText;
             self->m_mediaDurationText = snapshot.durationText;
             if (changed) {

@@ -41,6 +41,12 @@ Window {
     property string lastMediaKey: ""
     property bool lastTimerRinging: false
     property real ringingPulse: 0
+    property int lastDroppedFileCount: 0
+    property real dropTraceProgress: 0
+    readonly property string compactActivity: controller.timerActive || controller.timerRinging
+                                              ? "timer"
+                                              : (window.mediaPeekActive && controller.mediaAvailable
+                                                 ? "media" : "clock")
 
     // A lightly underdamped, axis-staggered response measured against the reference.
     // Height leads while opening; width leads while closing. Angular frequency keeps
@@ -176,6 +182,19 @@ Window {
             }
             window.lastTimerRinging = controller.timerRinging
         }
+        function onDroppedFilesChanged() {
+            if (controller.droppedFileCount > window.lastDroppedFileCount
+                    && !controller.reducedMotion)
+                dropCompletionTrace.restart()
+            window.lastDroppedFileCount = controller.droppedFileCount
+        }
+        function onForegroundFullscreenChanged() {
+            if (controller.foregroundFullscreen) {
+                window.mediaPeekActive = false
+                if (!controller.timerRinging)
+                    controller.setExpanded(false)
+            }
+        }
     }
 
     Timer {
@@ -202,6 +221,26 @@ Window {
             to: 0
             duration: 210
             easing.type: Easing.InOutCubic
+        }
+    }
+
+    SequentialAnimation {
+        id: dropCompletionTrace
+        NumberAnimation {
+            target: window
+            property: "dropTraceProgress"
+            from: 0
+            to: 1
+            duration: MotionTokens.reveal
+            easing.type: MotionTokens.easeOut
+        }
+        PauseAnimation { duration: 80 }
+        NumberAnimation {
+            target: window
+            property: "dropTraceProgress"
+            to: 0
+            duration: MotionTokens.state
+            easing.type: Easing.InCubic
         }
     }
 
@@ -240,6 +279,7 @@ Window {
         interval: 280
         repeat: false
         running: islandHover.hovered && !controller.expanded && !window.dragActive
+                 && !controller.foregroundFullscreen
         onTriggered: controller.setExpanded(true)
     }
 
@@ -278,6 +318,17 @@ Window {
             bottomRadius: window.dynamicCornerRadius
             earWidth: window.dynamicEarWidth
             earDepth: window.dynamicEarDepth
+        }
+
+        Rectangle {
+            z: 3
+            anchors.horizontalCenter: parent.horizontalCenter
+            y: Math.max(0, window.surfaceHeight - 2)
+            width: Math.max(0, (parent.width - 28) * window.dropTraceProgress)
+            height: 2
+            radius: 1
+            color: colors.accent
+            opacity: window.dropTraceProgress > 0 ? 0.92 : 0
         }
 
         MouseArea {
@@ -341,12 +392,21 @@ Window {
             }
 
             Row {
+                id: compactClock
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.verticalCenterOffset: -1
                 spacing: 4
-                visible: !controller.timerActive && !controller.timerRinging
-                         && !window.mediaPeekActive
+                enabled: window.compactActivity === "clock"
+                visible: opacity > 0.001
+                opacity: enabled ? 1 : 0
+                scale: enabled ? 1 : 0.9
+                transform: Translate {
+                    y: compactClock.enabled ? 0 : -4
+                    Behavior on y { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
+                }
+                Behavior on opacity { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state } }
+                Behavior on scale { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
 
                 RollingDigits {
                     id: compactClockDigits
@@ -375,10 +435,10 @@ Window {
                 anchors.centerIn: parent
                 anchors.verticalCenterOffset: -1
                 spacing: 7
-                visible: window.mediaPeekActive && controller.mediaAvailable
-                         && !controller.timerActive && !controller.timerRinging
-                opacity: visible ? 1 : 0
-                scale: visible ? 1 : 0.96
+                enabled: window.compactActivity === "media"
+                visible: opacity > 0.001
+                opacity: enabled ? 1 : 0
+                scale: enabled ? 1 : 0.90
 
                 Behavior on opacity {
                     NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state }
@@ -472,10 +532,20 @@ Window {
             }
 
             Row {
+                id: compactTimer
                 anchors.centerIn: parent
                 anchors.verticalCenterOffset: -1
                 spacing: 7
-                visible: controller.timerActive || controller.timerRinging
+                enabled: window.compactActivity === "timer"
+                visible: opacity > 0.001
+                opacity: enabled ? 1 : 0
+                scale: enabled ? 1 : 0.90
+                transform: Translate {
+                    y: compactTimer.enabled ? 0 : 4
+                    Behavior on y { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
+                }
+                Behavior on opacity { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state } }
+                Behavior on scale { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
 
                 Image {
                     anchors.verticalCenter: parent.verticalCenter
@@ -517,13 +587,7 @@ Window {
                     color: colors.timer
                     opacity: controller.timerPaused ? 0.38 : 1
 
-                    SequentialAnimation on opacity {
-                        running: controller.timerActive && !controller.timerPaused
-                                 && !controller.expanded && !controller.reducedMotion
-                        loops: Animation.Infinite
-                        NumberAnimation { to: 0.35; duration: 650; easing.type: Easing.InOutSine }
-                        NumberAnimation { to: 1; duration: 650; easing.type: Easing.InOutSine }
-                    }
+                    Behavior on opacity { NumberAnimation { duration: MotionTokens.state } }
                 }
             }
         }

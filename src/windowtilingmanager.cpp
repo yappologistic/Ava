@@ -450,6 +450,61 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
             this,
             &WindowTilingManager::advanceAnimation);
 
+    m_interactionTimer.setInterval(kAnimationIntervalMs);
+    m_interactionTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_interactionTimer, &QTimer::timeout, this, [this]() {
+#ifdef Q_OS_WIN
+        const HWND window = m_native->interactionWindow;
+        if (!window) {
+            m_interactionTimer.stop();
+            return;
+        }
+        POINT cursor{};
+        if (!GetCursorPos(&cursor)) {
+            return;
+        }
+        const QPoint point(cursor.x, cursor.y);
+        int nextSlot = -1;
+        if (m_native->interactionIsMove) {
+            const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+            int slot = 0;
+            for (HWND candidate : std::as_const(m_native->windowOrder)) {
+                if (MonitorFromWindow(candidate, MONITOR_DEFAULTTONEAREST) != monitor) {
+                    continue;
+                }
+                if (m_native->targetVisibleFrames.value(
+                        reinterpret_cast<quintptr>(candidate)).contains(point)) {
+                    nextSlot = slot;
+                    break;
+                }
+                ++slot;
+            }
+        }
+
+        const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO info{};
+        info.cbSize = sizeof(info);
+        double nextProgress = m_interactionProgress;
+        if (GetMonitorInfoW(monitor, &info)) {
+            const QRect current = visibleFrame(window);
+            const int widthDelta = qAbs(current.width() - m_native->interactionStartFrame.width());
+            const int heightDelta = qAbs(current.height() - m_native->interactionStartFrame.height());
+            if (widthDelta >= heightDelta) {
+                const int available = qMax(1, info.rcWork.right - info.rcWork.left);
+                nextProgress = qBound(0.08, (cursor.x - info.rcWork.left) / double(available), 0.92);
+            } else {
+                const int available = qMax(1, info.rcWork.bottom - info.rcWork.top);
+                nextProgress = qBound(0.08, (cursor.y - info.rcWork.top) / double(available), 0.92);
+            }
+        }
+        if (nextSlot != m_previewSlot || qAbs(nextProgress - m_interactionProgress) > 0.002) {
+            m_previewSlot = nextSlot;
+            m_interactionProgress = nextProgress;
+            emit interactionChanged();
+        }
+#endif
+    });
+
     if (QCoreApplication::instance()) {
         QCoreApplication::instance()->installNativeEventFilter(this);
     }
@@ -588,6 +643,8 @@ bool WindowTilingManager::nativeEventFilter(const QByteArray &,
         const ULONGLONG now = GetTickCount64();
         if (now - m_native->lastShortcutToggle >= kShortcutDebounceMs) {
             m_native->lastShortcutToggle = now;
+            ++m_shortcutRevision;
+            emit interactionChanged();
             toggleEnabled();
         }
         if (result) {
@@ -625,7 +682,11 @@ void WindowTilingManager::setEnabled(bool enabled)
         m_animationTimer.stop();
         m_native->animationItems.clear();
         m_native->interactionWindow = nullptr;
+        m_interactionTimer.stop();
         m_adjusting = false;
+        m_interactionKind.clear();
+        m_previewSlot = -1;
+        emit interactionChanged();
         restoreWindows();
     }
     emit enabledChanged();
@@ -685,6 +746,12 @@ void WindowTilingManager::beginWindowInteraction(quintptr nativeHandle)
                                                     hitPoint)
             == HTCAPTION;
     }
+    m_interactionKind = m_native->interactionIsMove
+        ? QStringLiteral("MOVING") : QStringLiteral("RESIZING");
+    m_previewSlot = -1;
+    m_interactionProgress = 0.5;
+    m_interactionTimer.start();
+    emit interactionChanged();
     if (!m_adjusting) {
         m_adjusting = true;
         emit stateChanged();
@@ -708,6 +775,10 @@ void WindowTilingManager::endWindowInteraction(quintptr nativeHandle)
     m_native->interactionWindow = nullptr;
     m_native->interactionStartFrame = {};
     m_native->interactionIsMove = false;
+    m_interactionTimer.stop();
+    m_interactionKind.clear();
+    m_previewSlot = -1;
+    emit interactionChanged();
     if (m_adjusting) {
         m_adjusting = false;
         emit stateChanged();
@@ -722,10 +793,16 @@ void WindowTilingManager::endWindowInteraction(quintptr nativeHandle)
         const QPoint dropPoint = GetCursorPos(&cursor)
             ? QPoint(cursor.x, cursor.y)
             : currentFrame.center();
-        swapWindowAtPoint(nativeHandle, dropPoint);
+        if (swapWindowAtPoint(nativeHandle, dropPoint)) {
+            ++m_layoutRevision;
+            emit interactionChanged();
+        }
     } else {
         if (sizeChanged) {
-            adoptUserResize(nativeHandle, currentFrame);
+            if (adoptUserResize(nativeHandle, currentFrame)) {
+                ++m_layoutRevision;
+                emit interactionChanged();
+            }
         }
     }
     reconcileWindows();

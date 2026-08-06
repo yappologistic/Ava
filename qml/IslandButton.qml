@@ -27,7 +27,7 @@ Button {
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : 0.32
-    scale: down ? 0.90 : (hovered ? 1.022 : 1.0)
+    scale: down ? 0.97 : (hovered ? 1.018 : 1.0)
 
     Accessible.name: text.length > 0 ? text : accessibleName
     Accessible.role: Accessible.Button
