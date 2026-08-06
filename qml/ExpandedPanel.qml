@@ -424,6 +424,16 @@ Item {
                     height: 30
                     iconOnly: true
                     quiet: true
+                    glyph: "\uE121"
+                    selected: controller.timerPanelOpen
+                    accessibleName: "Open timer"
+                    onClicked: controller.openTimer()
+                }
+                IslandButton {
+                    width: 30
+                    height: 30
+                    iconOnly: true
+                    quiet: true
                     iconSource: Qt.resolvedUrl("../assets/icons/grid-light.svg")
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/grid-dark.svg")
                     iconSize: 16
@@ -472,5 +482,15 @@ Item {
                 }
             }
         }
+    }
+
+    TimerPanel {
+        z: 20
+        anchors.fill: parent
+        visible: controller.timerPanelOpen
+        colors: root.colors
+        uiFont: root.uiFont
+        iconFont: root.iconFont
+        reducedMotion: root.reducedMotion
     }
 }

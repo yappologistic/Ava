@@ -71,6 +71,7 @@ Window {
         readonly property color tertiary: "#6e6e73"
         readonly property color accent: "#5ac8fa"
         readonly property color green: "#63e6a5"
+        readonly property color timer: "#ff9f0a"
     }
 
     function snapMorphToTarget() {
@@ -289,6 +290,7 @@ Window {
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.verticalCenterOffset: -1
                 spacing: 4
+                visible: !controller.timerActive && !controller.timerRinging
 
                 Text {
                     text: controller.timeText
@@ -305,6 +307,47 @@ Window {
                     font.family: window.uiFont
                     font.pixelSize: 9
                     font.weight: Font.DemiBold
+                }
+            }
+
+            Row {
+                anchors.centerIn: parent
+                anchors.verticalCenterOffset: -1
+                spacing: 7
+                visible: controller.timerActive || controller.timerRinging
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "\uE121"
+                    color: colors.timer
+                    font.family: window.iconFont
+                    font.pixelSize: 14
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: controller.timerRinging ? "Time's up" : controller.timerRemainingText
+                    color: controller.timerRinging ? colors.timer : colors.text
+                    font.family: window.uiFont
+                    font.pixelSize: controller.timerRinging ? 13 : 16
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: -0.2
+                    font.features: { "tnum": 1 }
+                }
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 5
+                    height: 5
+                    radius: 3
+                    color: colors.timer
+                    opacity: controller.timerPaused ? 0.38 : 1
+
+                    SequentialAnimation on opacity {
+                        running: controller.timerActive && !controller.timerPaused
+                                 && !controller.expanded && !controller.reducedMotion
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.35; duration: 650; easing.type: Easing.InOutSine }
+                        NumberAnimation { to: 1; duration: 650; easing.type: Easing.InOutSine }
+                    }
                 }
             }
         }

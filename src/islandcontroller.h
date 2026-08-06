@@ -20,6 +20,15 @@ class IslandController final : public QObject
     Q_PROPERTY(QString compactDateText READ compactDateText NOTIFY clockChanged)
     Q_PROPERTY(QString dateText READ dateText NOTIFY clockChanged)
 
+    Q_PROPERTY(bool timerPanelOpen READ timerPanelOpen NOTIFY timerChanged)
+    Q_PROPERTY(bool timerActive READ timerActive NOTIFY timerChanged)
+    Q_PROPERTY(bool timerPaused READ timerPaused NOTIFY timerChanged)
+    Q_PROPERTY(bool timerRinging READ timerRinging NOTIFY timerChanged)
+    Q_PROPERTY(int timerDurationSeconds READ timerDurationSeconds NOTIFY timerChanged)
+    Q_PROPERTY(int timerRemainingSeconds READ timerRemainingSeconds NOTIFY timerChanged)
+    Q_PROPERTY(QString timerRemainingText READ timerRemainingText NOTIFY timerChanged)
+    Q_PROPERTY(double timerProgress READ timerProgress NOTIFY timerChanged)
+
     Q_PROPERTY(bool mediaAvailable READ mediaAvailable NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaTitle READ mediaTitle NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaArtist READ mediaArtist NOTIFY mediaChanged)
@@ -56,6 +65,15 @@ public:
     QString compactDateText() const { return m_compactDateText; }
     QString dateText() const { return m_dateText; }
 
+    bool timerPanelOpen() const { return m_timerPanelOpen; }
+    bool timerActive() const { return m_timerActive; }
+    bool timerPaused() const { return m_timerPaused; }
+    bool timerRinging() const { return m_timerRinging; }
+    int timerDurationSeconds() const { return m_timerDurationSeconds; }
+    int timerRemainingSeconds() const { return m_timerRemainingSeconds; }
+    QString timerRemainingText() const { return m_timerRemainingText; }
+    double timerProgress() const { return m_timerProgress; }
+
     bool mediaAvailable() const { return m_mediaAvailable; }
     QString mediaTitle() const { return m_mediaTitle; }
     QString mediaArtist() const { return m_mediaArtist; }
@@ -85,6 +103,14 @@ public slots:
     void setPinned(bool pinned);
     void togglePinned();
 
+    void openTimer();
+    void closeTimer();
+    void startTimer(int durationSeconds);
+    void toggleTimerPaused();
+    void addTimerMinute();
+    void cancelTimer();
+    void dismissTimer();
+
     void togglePlayback();
     void previousTrack();
     void nextTrack();
@@ -100,12 +126,15 @@ signals:
     void pinnedChanged();
     void reducedMotionChanged();
     void clockChanged();
+    void timerChanged();
     void mediaChanged();
     void systemChanged();
     void droppedFilesChanged();
 
 private slots:
     void tick();
+    void updateTimer();
+    void soundTimerAlert();
 
 private:
     struct PlatformState;
@@ -114,9 +143,13 @@ private:
     void refreshMedia();
     void refreshSystemState();
     QString formatDuration(qint64 totalMilliseconds) const;
+    QString formatTimerDuration(qint64 totalMilliseconds) const;
+    void finishTimer();
 
     std::shared_ptr<PlatformState> m_platform;
     QTimer m_timer;
+    QTimer m_countdownTimer;
+    QTimer m_alarmTimer;
     int m_slowRefreshCounter = 0;
 
     bool m_expanded = false;
@@ -127,6 +160,17 @@ private:
     QString m_meridiemText;
     QString m_compactDateText;
     QString m_dateText;
+
+    bool m_timerPanelOpen = false;
+    bool m_timerActive = false;
+    bool m_timerPaused = false;
+    bool m_timerRinging = false;
+    int m_timerDurationSeconds = 0;
+    int m_timerRemainingSeconds = 0;
+    qint64 m_timerDeadlineMs = 0;
+    qint64 m_timerPausedRemainingMs = 0;
+    QString m_timerRemainingText = QStringLiteral("0:00");
+    double m_timerProgress = 0.0;
 
     bool m_mediaAvailable = false;
     QString m_mediaTitle;

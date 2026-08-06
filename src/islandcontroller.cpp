@@ -140,6 +140,12 @@ IslandController::IslandController(QObject *parent)
 #endif
 
     connect(&m_timer, &QTimer::timeout, this, &IslandController::tick);
+    m_countdownTimer.setTimerType(Qt::PreciseTimer);
+    m_countdownTimer.setInterval(33);
+    connect(&m_countdownTimer, &QTimer::timeout, this, &IslandController::updateTimer);
+    m_alarmTimer.setTimerType(Qt::CoarseTimer);
+    m_alarmTimer.setInterval(1100);
+    connect(&m_alarmTimer, &QTimer::timeout, this, &IslandController::soundTimerAlert);
     updateClock();
     refreshSystemState();
     QTimer::singleShot(0, this, &IslandController::refreshMedia);
@@ -182,6 +188,102 @@ void IslandController::setPinned(bool pinned)
 void IslandController::togglePinned()
 {
     setPinned(!m_pinned);
+}
+
+void IslandController::openTimer()
+{
+    if (m_timerPanelOpen) {
+        return;
+    }
+    m_timerPanelOpen = true;
+    setExpanded(true);
+    emit timerChanged();
+}
+
+void IslandController::closeTimer()
+{
+    if (!m_timerPanelOpen) {
+        return;
+    }
+    m_timerPanelOpen = false;
+    emit timerChanged();
+}
+
+void IslandController::startTimer(int durationSeconds)
+{
+    durationSeconds = qBound(1, durationSeconds, 24 * 60 * 60);
+    m_alarmTimer.stop();
+    m_timerDurationSeconds = durationSeconds;
+    m_timerPausedRemainingMs = static_cast<qint64>(durationSeconds) * 1000;
+    m_timerDeadlineMs = QDateTime::currentMSecsSinceEpoch() + m_timerPausedRemainingMs;
+    m_timerRemainingSeconds = durationSeconds;
+    m_timerRemainingText = formatTimerDuration(m_timerPausedRemainingMs);
+    m_timerProgress = 1.0;
+    m_timerActive = true;
+    m_timerPaused = false;
+    m_timerRinging = false;
+    m_timerPanelOpen = true;
+    m_countdownTimer.start();
+    emit timerChanged();
+}
+
+void IslandController::toggleTimerPaused()
+{
+    if (!m_timerActive) {
+        return;
+    }
+
+    if (m_timerPaused) {
+        m_timerDeadlineMs = QDateTime::currentMSecsSinceEpoch() + m_timerPausedRemainingMs;
+        m_timerPaused = false;
+        m_countdownTimer.start();
+    } else {
+        m_timerPausedRemainingMs = qMax<qint64>(0, m_timerDeadlineMs
+                                                    - QDateTime::currentMSecsSinceEpoch());
+        m_timerPaused = true;
+        m_countdownTimer.stop();
+    }
+    emit timerChanged();
+}
+
+void IslandController::addTimerMinute()
+{
+    if (!m_timerActive) {
+        return;
+    }
+    constexpr qint64 minuteMs = 60 * 1000;
+    m_timerDurationSeconds = qMin(24 * 60 * 60, m_timerDurationSeconds + 60);
+    if (m_timerPaused) {
+        m_timerPausedRemainingMs = qMin<qint64>(24 * 60 * 60 * 1000,
+                                                m_timerPausedRemainingMs + minuteMs);
+    } else {
+        m_timerDeadlineMs += minuteMs;
+    }
+    updateTimer();
+}
+
+void IslandController::cancelTimer()
+{
+    if (!m_timerActive && !m_timerRinging) {
+        return;
+    }
+    m_countdownTimer.stop();
+    m_alarmTimer.stop();
+    m_timerActive = false;
+    m_timerPaused = false;
+    m_timerRinging = false;
+    m_timerDurationSeconds = 0;
+    m_timerRemainingSeconds = 0;
+    m_timerPausedRemainingMs = 0;
+    m_timerRemainingText = QStringLiteral("0:00");
+    m_timerProgress = 0.0;
+    emit timerChanged();
+}
+
+void IslandController::dismissTimer()
+{
+    cancelTimer();
+    closeTimer();
 }
 
 void IslandController::togglePlayback()
@@ -317,6 +419,79 @@ void IslandController::updateClock()
     m_compactDateText = nextCompactDate;
     m_dateText = nextDate;
     emit clockChanged();
+}
+
+QString IslandController::formatTimerDuration(qint64 totalMilliseconds) const
+{
+    const qint64 totalSeconds = qMax<qint64>(0, (totalMilliseconds + 999) / 1000);
+    const qint64 hours = totalSeconds / 3600;
+    const qint64 minutes = (totalSeconds % 3600) / 60;
+    const qint64 seconds = totalSeconds % 60;
+    if (hours > 0) {
+        return QStringLiteral("%1:%2:%3")
+            .arg(hours)
+            .arg(minutes, 2, 10, QLatin1Char('0'))
+            .arg(seconds, 2, 10, QLatin1Char('0'));
+    }
+    return QStringLiteral("%1:%2")
+        .arg(minutes)
+        .arg(seconds, 2, 10, QLatin1Char('0'));
+}
+
+void IslandController::updateTimer()
+{
+    if (!m_timerActive) {
+        return;
+    }
+
+    const qint64 remainingMs = m_timerPaused
+        ? m_timerPausedRemainingMs
+        : qMax<qint64>(0, m_timerDeadlineMs - QDateTime::currentMSecsSinceEpoch());
+    if (remainingMs <= 0) {
+        finishTimer();
+        return;
+    }
+
+    const int nextRemainingSeconds = static_cast<int>((remainingMs + 999) / 1000);
+    const QString nextText = formatTimerDuration(remainingMs);
+    const double nextProgress = m_timerDurationSeconds > 0
+        ? qBound(0.0, static_cast<double>(remainingMs)
+                          / (static_cast<double>(m_timerDurationSeconds) * 1000.0), 1.0)
+        : 0.0;
+
+    const bool secondChanged = nextRemainingSeconds != m_timerRemainingSeconds;
+    const bool progressChanged = qAbs(nextProgress - m_timerProgress) >= 0.0005;
+    if (!secondChanged && !progressChanged) {
+        return;
+    }
+    m_timerRemainingSeconds = nextRemainingSeconds;
+    m_timerRemainingText = nextText;
+    m_timerProgress = nextProgress;
+    emit timerChanged();
+}
+
+void IslandController::finishTimer()
+{
+    m_countdownTimer.stop();
+    m_timerActive = false;
+    m_timerPaused = false;
+    m_timerRinging = true;
+    m_timerRemainingSeconds = 0;
+    m_timerPausedRemainingMs = 0;
+    m_timerRemainingText = QStringLiteral("0:00");
+    m_timerProgress = 0.0;
+    m_timerPanelOpen = true;
+    setExpanded(true);
+    soundTimerAlert();
+    m_alarmTimer.start();
+    emit timerChanged();
+}
+
+void IslandController::soundTimerAlert()
+{
+#ifdef Q_OS_WIN
+    MessageBeep(MB_ICONEXCLAMATION);
+#endif
 }
 
 void IslandController::refreshMedia()
