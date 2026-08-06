@@ -214,6 +214,7 @@ Item {
                                    ? controller.networkName + ". " : "")
                          + controller.networkStatus
                          + (controller.batteryAvailable ? ". " + controller.powerText : "")
+                         + (tilingManager.enabled ? ". " + tilingManager.statusText : "")
 
         Row {
             id: clockRow
@@ -245,8 +246,8 @@ Item {
             y: 48
             width: parent.width
             height: 62
-            opacity: actionHover.hovered ? 0 : 1
-            scale: actionHover.hovered ? 0.96 : 1
+            opacity: actionHover.hovered || tilingManager.enabled ? 0 : 1
+            scale: actionHover.hovered || tilingManager.enabled ? 0.96 : 1
 
             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
             Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
@@ -311,6 +312,86 @@ Item {
         }
 
         Item {
+            id: tilingStatusView
+            y: 48
+            width: parent.width
+            height: 62
+            opacity: tilingManager.enabled && !actionHover.hovered ? 1 : 0
+            scale: tilingManager.enabled && !actionHover.hovered ? 1 : 0.96
+
+            Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
+            Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
+
+            Row {
+                anchors.centerIn: parent
+                spacing: 10
+
+                Item {
+                    width: 38
+                    height: 28
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 6
+                        color: "transparent"
+                        border.width: 1
+                        border.color: root.colors.divider
+                    }
+                    Rectangle {
+                        x: 3
+                        y: 3
+                        width: 14
+                        height: 22
+                        radius: 3
+                        color: root.colors.text
+                    }
+                    Rectangle {
+                        x: 20
+                        y: 3
+                        width: 15
+                        height: 10
+                        radius: 3
+                        color: root.colors.secondary
+                    }
+                    Rectangle {
+                        x: 20
+                        y: 16
+                        width: 15
+                        height: 9
+                        radius: 3
+                        color: root.colors.tertiary
+                    }
+                }
+
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 2
+
+                    Text {
+                        text: "DWINDLE"
+                        color: root.colors.text
+                        font.family: root.uiFont
+                        font.pixelSize: 8
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: 1
+                    }
+                    Text {
+                        text: tilingManager.tiledWindowCount === 0
+                              ? "READY"
+                              : (tilingManager.tiledWindowCount === 1
+                                 ? "1 WINDOW"
+                                 : tilingManager.tiledWindowCount + " WINDOWS")
+                        color: root.colors.tertiary
+                        font.family: root.uiFont
+                        font.pixelSize: 8
+                        font.weight: Font.DemiBold
+                        font.features: { "tnum": 1 }
+                    }
+                }
+            }
+        }
+
+        Item {
             id: actionReveal
             x: 2
             y: 49
@@ -321,7 +402,7 @@ Item {
 
             Row {
                 anchors.centerIn: parent
-                spacing: 8
+                spacing: 6
                 opacity: actionHover.hovered ? 1 : 0
                 scale: actionHover.hovered ? 1 : 0.94
                 enabled: opacity > 0.5
@@ -329,6 +410,20 @@ Item {
                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
                 Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 150; easing.type: Easing.OutBack } }
 
+                IslandButton {
+                    width: 30
+                    height: 30
+                    iconOnly: true
+                    quiet: true
+                    iconSource: Qt.resolvedUrl("../assets/icons/grid-light.svg")
+                    invertedIconSource: Qt.resolvedUrl("../assets/icons/grid-dark.svg")
+                    iconSize: 16
+                    selected: tilingManager.enabled
+                    accessibleName: tilingManager.enabled
+                                    ? "Disable Dwindle tiling"
+                                    : "Enable Dwindle tiling"
+                    onClicked: tilingManager.toggleEnabled()
+                }
                 IslandButton {
                     width: 30
                     height: 30

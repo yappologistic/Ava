@@ -16,6 +16,8 @@ qt_add_executable(DynamicIsland
     src/main.cpp
     src/islandcontroller.cpp
     src/islandcontroller.h
+    src/windowtilingmanager.cpp
+    src/windowtilingmanager.h
 )
 
 qt_add_qml_module(DynamicIsland
@@ -38,6 +40,8 @@ qt_add_qml_module(DynamicIsland
         assets/icons/pin-light.svg
         assets/icons/pin-off-dark.svg
         assets/icons/dismiss-light.svg
+        assets/icons/grid-dark.svg
+        assets/icons/grid-light.svg
 )
 
 target_link_libraries(DynamicIsland
@@ -50,7 +54,7 @@ target_link_libraries(DynamicIsland
 )
 
 if (WIN32)
-    target_link_libraries(DynamicIsland PRIVATE user32 ole32 windowsapp)
+    target_link_libraries(DynamicIsland PRIVATE user32 dwmapi ole32 windowsapp)
     set_target_properties(DynamicIsland PROPERTIES
         WIN32_EXECUTABLE TRUE
     )
