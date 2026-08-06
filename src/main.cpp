@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFontDatabase>
 #include <QPainterPath>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -159,6 +160,16 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Dynamic Island"));
     app.setApplicationDisplayName(QStringLiteral("Dynamic Island"));
     app.setOrganizationName(QStringLiteral("MyLand"));
+    const int snProFontId = QFontDatabase::addApplicationFont(
+        QStringLiteral(":/qt/qml/DynamicIsland/assets/fonts/SNPro[wght].ttf"));
+    if (snProFontId >= 0) {
+        const QStringList fontFamilies = QFontDatabase::applicationFontFamilies(snProFontId);
+        if (!fontFamilies.isEmpty()) {
+            QFont appFont(fontFamilies.constFirst());
+            appFont.setPointSizeF(10.0);
+            app.setFont(appFont);
+        }
+    }
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     QCommandLineParser parser;

@@ -10,7 +10,7 @@ Window {
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint
     title: "Dynamic Island"
 
-    readonly property string uiFont: "Segoe UI Variable"
+    readonly property string uiFont: "SN Pro"
     readonly property string iconFont: "Segoe Fluent Icons"
     readonly property int compactWidth: 150
     readonly property int compactHeight: 39
@@ -316,12 +316,16 @@ Window {
                 spacing: 7
                 visible: controller.timerActive || controller.timerRinging
 
-                Text {
+                Image {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "\uE121"
-                    color: colors.timer
-                    font.family: window.iconFont
-                    font.pixelSize: 14
+                    width: 15
+                    height: 15
+                    source: Qt.resolvedUrl("../assets/icons/timer-orange.svg")
+                    sourceSize.width: 30
+                    sourceSize.height: 30
+                    fillMode: Image.PreserveAspectFit
+                    smooth: true
+                    mipmap: true
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
