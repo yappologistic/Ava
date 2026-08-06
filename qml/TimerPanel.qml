@@ -246,19 +246,13 @@ Item {
                 }
             }
 
-            Column {
-                spacing: 1
+            Item {
+                width: countdownText.implicitWidth
+                height: 60
 
                 Text {
-                    text: controller.timerPaused ? "TIMER PAUSED" : "TIMER"
-                    color: root.timerOrange
-                    font.family: root.uiFont
-                    font.pixelSize: 9
-                    font.weight: Font.DemiBold
-                    font.letterSpacing: 1.1
-                }
-                Text {
                     id: countdownText
+                    y: 12
                     text: controller.timerRemainingText
                     color: "#f5f5f7"
                     font.family: root.uiFont
