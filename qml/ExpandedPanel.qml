@@ -13,6 +13,17 @@ Item {
     property bool dragActive: false
     property bool reducedMotion: false
     property bool tilingFeedbackActive: false
+    property bool mediaMotionReady: false
+    property string displayedMediaTitle: ""
+    property string displayedMediaArtist: ""
+    property string displayedMediaSource: ""
+    property url displayedMediaAppIcon: ""
+    property url displayedArtwork: ""
+    property string pendingMediaTitle: ""
+    property string pendingMediaArtist: ""
+    property string pendingMediaSource: ""
+    property url pendingMediaAppIcon: ""
+    property url pendingArtwork: ""
     readonly property date currentDate: {
         const clockToken = controller.dateText
         return new Date()
@@ -22,6 +33,53 @@ Item {
     function weekDate(index) {
         return new Date(currentDate.getFullYear(), currentDate.getMonth(),
                         currentDate.getDate() - currentDayIndex + index)
+    }
+
+    function syncMediaImmediately() {
+        displayedMediaTitle = controller.mediaTitle
+        displayedMediaArtist = controller.mediaArtist
+        displayedMediaSource = controller.mediaSource
+        displayedMediaAppIcon = controller.mediaAppIconUrl
+        displayedArtwork = controller.mediaArtworkUrl
+    }
+
+    Component.onCompleted: {
+        syncMediaImmediately()
+        mediaMotionReady = true
+    }
+
+    Connections {
+        target: controller
+        function onMediaChanged() {
+            if (!root.mediaMotionReady || root.reducedMotion) {
+                root.syncMediaImmediately()
+                return
+            }
+            if (controller.mediaTitle !== root.displayedMediaTitle
+                    || controller.mediaArtist !== root.displayedMediaArtist) {
+                root.pendingMediaTitle = controller.mediaTitle
+                root.pendingMediaArtist = controller.mediaArtist
+                metadataTransition.restart()
+            }
+            if (controller.mediaSource !== root.displayedMediaSource
+                    || controller.mediaAppIconUrl !== root.displayedMediaAppIcon.toString()) {
+                root.pendingMediaSource = controller.mediaSource
+                root.pendingMediaAppIcon = controller.mediaAppIconUrl
+                sourceTransition.restart()
+            }
+            if (controller.mediaArtworkUrl !== root.displayedArtwork.toString()) {
+                root.pendingArtwork = controller.mediaArtworkUrl
+                artworkTransition.restart()
+            }
+        }
+    }
+
+    Connections {
+        target: tilingManager
+        function onStateChanged() {
+            if (!root.reducedMotion && tilingStatusView.opacity > 0)
+                tilingStatusPulse.restart()
+        }
     }
 
     enabled: expanded && !dragActive
@@ -63,9 +121,10 @@ Item {
                 clip: true
 
                 Image {
+                    id: artworkImage
                     anchors.fill: parent
-                    source: controller.mediaArtworkUrl
-                    visible: controller.mediaArtworkUrl.length > 0
+                    source: root.displayedArtwork
+                    visible: root.displayedArtwork.toString().length > 0
                     fillMode: Image.PreserveAspectCrop
                     asynchronous: true
                     cache: false
@@ -75,7 +134,7 @@ Item {
 
                 Text {
                     anchors.centerIn: parent
-                    visible: controller.mediaArtworkUrl.length === 0
+                    visible: root.displayedArtwork.toString().length === 0
                     text: "\uE8D6"
                     color: root.colors.secondary
                     font.family: root.iconFont
@@ -84,14 +143,16 @@ Item {
             }
 
             Column {
+                id: metadataColumn
                 x: 104
                 y: 4
                 width: 174
                 spacing: 2
+                transform: Translate { id: metadataShift }
 
                 Text {
                     width: parent.width
-                    text: controller.mediaTitle
+                    text: root.displayedMediaTitle
                     color: root.colors.text
                     elide: Text.ElideRight
                     maximumLineCount: 1
@@ -101,8 +162,8 @@ Item {
                 }
                 Text {
                     width: parent.width
-                    text: controller.mediaArtist.length > 0
-                          ? controller.mediaArtist : controller.mediaSource
+                    text: root.displayedMediaArtist.length > 0
+                          ? root.displayedMediaArtist : root.displayedMediaSource
                     color: root.colors.secondary
                     elide: Text.ElideRight
                     maximumLineCount: 1
@@ -110,9 +171,12 @@ Item {
                     font.pixelSize: 8
                 }
                 Item {
+                    id: mediaSourceRow
                     width: parent.width
                     height: 11
-                    visible: controller.mediaArtist.length > 0 && controller.mediaSource.length > 0
+                    visible: root.displayedMediaArtist.length > 0
+                             && root.displayedMediaSource.length > 0
+                    transform: Translate { id: mediaSourceShift }
 
                     Image {
                         id: mediaAppIcon
@@ -120,8 +184,8 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         width: 9
                         height: 9
-                        visible: controller.mediaAppIconUrl.length > 0
-                        source: controller.mediaAppIconUrl
+                        visible: root.displayedMediaAppIcon.toString().length > 0
+                        source: root.displayedMediaAppIcon
                         fillMode: Image.PreserveAspectFit
                         asynchronous: true
                         cache: true
@@ -134,13 +198,64 @@ Item {
                         anchors.leftMargin: mediaAppIcon.visible ? 4 : 0
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
-                        text: controller.mediaSource
+                        text: root.displayedMediaSource
                         color: root.colors.tertiary
                         elide: Text.ElideRight
                         maximumLineCount: 1
                         font.family: root.uiFont
                         font.pixelSize: 8
                     }
+                }
+            }
+
+            SequentialAnimation {
+                id: artworkTransition
+                ParallelAnimation {
+                    NumberAnimation { target: artworkImage; property: "opacity"; to: 0.18; duration: MotionTokens.press }
+                    NumberAnimation { target: artworkImage; property: "scale"; to: 0.955; duration: MotionTokens.press; easing.type: Easing.InCubic }
+                }
+                ScriptAction { script: root.displayedArtwork = root.pendingArtwork }
+                ParallelAnimation {
+                    NumberAnimation { target: artworkImage; property: "opacity"; to: 1; duration: MotionTokens.content }
+                    NumberAnimation { target: artworkImage; property: "scale"; to: 1; duration: MotionTokens.content; easing.type: MotionTokens.easeOut }
+                }
+            }
+
+            SequentialAnimation {
+                id: metadataTransition
+                ParallelAnimation {
+                    NumberAnimation { target: metadataColumn; property: "opacity"; to: 0; duration: MotionTokens.press }
+                    NumberAnimation { target: metadataShift; property: "y"; to: -4; duration: MotionTokens.press; easing.type: Easing.InCubic }
+                }
+                ScriptAction {
+                    script: {
+                        root.displayedMediaTitle = root.pendingMediaTitle
+                        root.displayedMediaArtist = root.pendingMediaArtist
+                        metadataShift.y = 5
+                    }
+                }
+                ParallelAnimation {
+                    NumberAnimation { target: metadataColumn; property: "opacity"; to: 1; duration: MotionTokens.state }
+                    NumberAnimation { target: metadataShift; property: "y"; to: 0; duration: MotionTokens.state; easing.type: MotionTokens.easeOut }
+                }
+            }
+
+            SequentialAnimation {
+                id: sourceTransition
+                ParallelAnimation {
+                    NumberAnimation { target: mediaSourceRow; property: "opacity"; to: 0; duration: MotionTokens.press }
+                    NumberAnimation { target: mediaSourceShift; property: "x"; to: -5; duration: MotionTokens.press; easing.type: Easing.InCubic }
+                }
+                ScriptAction {
+                    script: {
+                        root.displayedMediaSource = root.pendingMediaSource
+                        root.displayedMediaAppIcon = root.pendingMediaAppIcon
+                        mediaSourceShift.x = 6
+                    }
+                }
+                ParallelAnimation {
+                    NumberAnimation { target: mediaSourceRow; property: "opacity"; to: 1; duration: MotionTokens.state }
+                    NumberAnimation { target: mediaSourceShift; property: "x"; to: 0; duration: MotionTokens.state; easing.type: MotionTokens.easeOut }
                 }
             }
 
@@ -290,7 +405,25 @@ Item {
                 font.letterSpacing: 1.1
             }
 
+            Rectangle {
+                id: todayHighlight
+                x: (parent.width - 146) / 2 + root.currentDayIndex * 21 + 1.5
+                y: 32
+                width: 17
+                height: 17
+                radius: 9
+                color: root.colors.text
+
+                Behavior on x {
+                    NumberAnimation {
+                        duration: root.reducedMotion ? 0 : MotionTokens.content
+                        easing.type: MotionTokens.easeOut
+                    }
+                }
+            }
+
             Row {
+                id: calendarDays
                 y: 19
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: 1
@@ -304,6 +437,26 @@ Item {
                         readonly property date calendarDate: root.weekDate(index)
                         width: 20
                         height: 39
+                        opacity: calendarView.opacity > 0.5 ? 1 : 0
+                        scale: calendarView.opacity > 0.5 ? 1 : 0.94
+
+                        Behavior on opacity {
+                            SequentialAnimation {
+                                PauseAnimation {
+                                    duration: root.reducedMotion ? 0 : dayCell.index * 14
+                                }
+                                NumberAnimation {
+                                    duration: root.reducedMotion ? 0 : MotionTokens.state
+                                    easing.type: MotionTokens.easeOut
+                                }
+                            }
+                        }
+                        Behavior on scale {
+                            NumberAnimation {
+                                duration: root.reducedMotion ? 0 : MotionTokens.state
+                                easing.type: MotionTokens.easeOut
+                            }
+                        }
 
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
@@ -320,8 +473,7 @@ Item {
                             width: 17
                             height: 17
                             radius: 9
-                            color: dayCell.index === root.currentDayIndex
-                                   ? root.colors.text : "transparent"
+                            color: "transparent"
 
                             Text {
                                 anchors.centerIn: parent
@@ -353,6 +505,7 @@ Item {
             Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
 
             Row {
+                id: tilingStatusContent
                 anchors.centerIn: parent
                 spacing: 10
 
@@ -421,6 +574,25 @@ Item {
                         font.weight: Font.DemiBold
                         font.features: { "tnum": 1 }
                     }
+                }
+            }
+
+            SequentialAnimation {
+                id: tilingStatusPulse
+                NumberAnimation {
+                    target: tilingStatusContent
+                    property: "scale"
+                    from: 0.94
+                    to: 1.025
+                    duration: MotionTokens.press
+                    easing.type: MotionTokens.easeOut
+                }
+                NumberAnimation {
+                    target: tilingStatusContent
+                    property: "scale"
+                    to: 1
+                    duration: MotionTokens.hover
+                    easing.type: MotionTokens.easeOut
                 }
             }
         }

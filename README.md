@@ -8,12 +8,12 @@ There is no demo or placeholder state. Ava reads and controls real Windows servi
 
 - Compact always-on-top clock using the bundled Inter typeface.
 - Apple-inspired timer with a snapping minute ruler, compact countdown, progress ring, pause/resume, cancel, add-one-minute, and a real Windows completion alert.
-- Live media title, artist, artwork, playback state, timeline, and transport controls through Global System Media Transport Controls.
+- Live media title, artist, artwork, source-app icon, playback state, timeline, and transport controls through Global System Media Transport Controls.
 - Windows Core Audio volume and mute controls.
 - Current network, battery, date, time, and week-calendar state.
 - Local file drop shelf with File Explorer reveal.
 - Optional native Dwindle tiling with adjustable splits, title-bar drag swapping, application minimum-size handling, animated placement, and exact window restoration.
-- Reduced-motion support and display-synchronized animation on 60 Hz, 120 Hz, 144 Hz, and higher-refresh monitors.
+- A shared motion system for shell morphing, media handoffs, timer values, calendar changes, controls, and tiling, with reduced-motion support and display synchronization on 60 Hz, 120 Hz, 144 Hz, and higher-refresh monitors.
 
 ## Interaction
 

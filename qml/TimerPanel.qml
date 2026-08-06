@@ -15,6 +15,9 @@ Item {
     readonly property color timerOrangePressed: "#e98700"
     readonly property int tickSpacing: 16
     readonly property int maximumMinutes: 60
+    readonly property bool setupActive: !controller.timerActive && !controller.timerRinging
+    readonly property bool runningActive: controller.timerActive
+    readonly property bool ringingActive: controller.timerRinging
 
     function snapRuler() {
         const minute = Math.max(1, Math.min(maximumMinutes,
@@ -29,9 +32,10 @@ Item {
     Item {
         id: setupView
         anchors.fill: parent
-        visible: !controller.timerActive && !controller.timerRinging
-        opacity: visible ? 1 : 0
-        scale: visible ? 1 : 0.97
+        enabled: root.setupActive
+        visible: opacity > 0.001
+        opacity: root.setupActive ? 1 : 0
+        scale: root.setupActive ? 1 : 0.97
 
         Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 150; easing.type: Easing.OutCubic } }
         Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 210; easing.type: Easing.OutCubic } }
@@ -100,12 +104,19 @@ Item {
                             anchors.horizontalCenter: parent.horizontalCenter
                             y: 22
                             width: minuteMark.distance < 0.6 ? 3 : 2
-                            height: minuteMark.index % 5 === 0 ? 34 : 29
+                            height: minuteMark.distance < 0.6
+                                    ? 38 : (minuteMark.index % 5 === 0 ? 34 : 29)
                             radius: width / 2
                             color: root.timerOrange
                             opacity: Math.max(0.10, 1 - minuteMark.distance / 20)
 
                             Behavior on width { NumberAnimation { duration: root.reducedMotion ? 0 : 90 } }
+                            Behavior on height {
+                                NumberAnimation {
+                                    duration: root.reducedMotion ? 0 : MotionTokens.hover
+                                    easing.type: MotionTokens.easeOut
+                                }
+                            }
                         }
                     }
                 }
@@ -113,10 +124,25 @@ Item {
         }
 
         Item {
+            id: selectionIndicator
             anchors.horizontalCenter: ruler.horizontalCenter
-            y: 64
+            y: ruler.moving || snapAnimation.running ? 66 : 64
             width: 14
             height: 10
+            scale: ruler.moving || snapAnimation.running ? 0.88 : 1
+
+            Behavior on y {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.hover
+                    easing.type: MotionTokens.easeOut
+                }
+            }
+            Behavior on scale {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.hover
+                    easing.type: MotionTokens.settle
+                }
+            }
 
             Canvas {
                 anchors.fill: parent
@@ -152,10 +178,8 @@ Item {
             HoverHandler { id: startHover }
             TapHandler {
                 id: startTap
-                onTapped: {
-                    controller.startTimer(root.selectedMinutes * 60)
-                    collapseDelay.restart()
-                }
+                enabled: !startCommitAnimation.running
+                onTapped: startCommitAnimation.restart()
             }
 
             Text {
@@ -169,6 +193,7 @@ Item {
         }
 
         Text {
+            id: selectedTimeText
             anchors.right: parent.right
             anchors.rightMargin: 28
             y: 67
@@ -179,15 +204,76 @@ Item {
             font.weight: Font.Light
             font.letterSpacing: -1.7
             font.features: { "tnum": 1 }
+            transform: Translate { id: selectedTimeShift }
+
+            onTextChanged: {
+                if (!root.reducedMotion)
+                    selectedTimeRoll.restart()
+            }
+        }
+
+        ParallelAnimation {
+            id: selectedTimeRoll
+            NumberAnimation {
+                target: selectedTimeShift
+                property: "y"
+                from: 5
+                to: 0
+                duration: MotionTokens.state
+                easing.type: MotionTokens.easeOut
+            }
+            SequentialAnimation {
+                NumberAnimation {
+                    target: selectedTimeText
+                    property: "opacity"
+                    from: 0.42
+                    to: 0.72
+                    duration: MotionTokens.press
+                }
+                NumberAnimation {
+                    target: selectedTimeText
+                    property: "opacity"
+                    to: 1
+                    duration: MotionTokens.press
+                }
+            }
+        }
+
+        SequentialAnimation {
+            id: startCommitAnimation
+            ParallelAnimation {
+                NumberAnimation {
+                    target: startButton
+                    property: "scale"
+                    to: 0.94
+                    duration: MotionTokens.press
+                    easing.type: Easing.InCubic
+                }
+                NumberAnimation {
+                    target: selectedTimeShift
+                    property: "y"
+                    to: -4
+                    duration: MotionTokens.press
+                    easing.type: Easing.InCubic
+                }
+            }
+            ScriptAction {
+                script: {
+                    controller.startTimer(root.selectedMinutes * 60)
+                    selectedTimeShift.y = 0
+                    collapseDelay.restart()
+                }
+            }
         }
     }
 
     Item {
         id: runningView
         anchors.fill: parent
-        visible: controller.timerActive
-        opacity: visible ? 1 : 0
-        scale: visible ? 1 : 0.97
+        enabled: root.runningActive
+        visible: opacity > 0.001
+        opacity: root.runningActive ? 1 : 0
+        scale: root.runningActive ? 1 : 0.97
 
         Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 170; easing.type: Easing.OutCubic } }
         Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 220; easing.type: Easing.OutCubic } }
@@ -261,12 +347,37 @@ Item {
                     font.letterSpacing: -1.5
                     font.features: { "tnum": 1 }
                     transformOrigin: Item.Left
+                    transform: Translate { id: countdownShift }
 
-                    onTextChanged: countdownPulse.restart()
-                    SequentialAnimation {
-                        id: countdownPulse
-                        NumberAnimation { target: countdownText; property: "scale"; to: 0.985; duration: root.reducedMotion ? 0 : 45; easing.type: Easing.OutQuad }
-                        NumberAnimation { target: countdownText; property: "scale"; to: 1; duration: root.reducedMotion ? 0 : 105; easing.type: Easing.OutCubic }
+                    onTextChanged: {
+                        if (!root.reducedMotion)
+                            countdownRoll.restart()
+                    }
+                    ParallelAnimation {
+                        id: countdownRoll
+                        NumberAnimation {
+                            target: countdownShift
+                            property: "y"
+                            from: 5
+                            to: 0
+                            duration: MotionTokens.state
+                            easing.type: MotionTokens.easeOut
+                        }
+                        SequentialAnimation {
+                            NumberAnimation {
+                                target: countdownText
+                                property: "opacity"
+                                from: 0.50
+                                to: 0.78
+                                duration: MotionTokens.press
+                            }
+                            NumberAnimation {
+                                target: countdownText
+                                property: "opacity"
+                                to: 1
+                                duration: MotionTokens.press
+                            }
+                        }
                     }
                 }
             }
@@ -333,9 +444,10 @@ Item {
                 height: 39
                 radius: 20
                 color: pauseTap.pressed ? root.timerOrangePressed : root.timerOrange
-                scale: pauseTap.pressed ? 0.96 : 1
+                scale: pauseTap.pressed ? 0.94 : (pauseHover.hovered ? 1.018 : 1)
                 Accessible.name: controller.timerPaused ? "Resume timer" : "Pause timer"
                 Accessible.role: Accessible.Button
+                HoverHandler { id: pauseHover }
                 TapHandler { id: pauseTap; onTapped: controller.toggleTimerPaused() }
                 Text {
                     anchors.centerIn: parent
@@ -354,9 +466,10 @@ Item {
     Item {
         id: ringingView
         anchors.fill: parent
-        visible: controller.timerRinging
-        opacity: visible ? 1 : 0
-        scale: visible ? 1 : 0.94
+        enabled: root.ringingActive
+        visible: opacity > 0.001
+        opacity: root.ringingActive ? 1 : 0
+        scale: root.ringingActive ? 1 : 0.94
 
         Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
         Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 240; easing.type: Easing.OutBack } }
@@ -372,7 +485,7 @@ Item {
 
             SequentialAnimation on scale {
                 running: ringingView.visible && !root.reducedMotion
-                loops: Animation.Infinite
+                loops: 2
                 NumberAnimation { to: 1.07; duration: 520; easing.type: Easing.InOutSine }
                 NumberAnimation { to: 1; duration: 520; easing.type: Easing.InOutSine }
             }
@@ -420,9 +533,10 @@ Item {
             height: 44
             radius: 22
             color: stopTap.pressed ? root.timerOrangePressed : root.timerOrange
-            scale: stopTap.pressed ? 0.96 : 1
+            scale: stopTap.pressed ? 0.94 : (stopHover.hovered ? 1.018 : 1)
             Accessible.name: "Stop timer alert"
             Accessible.role: Accessible.Button
+            HoverHandler { id: stopHover }
             TapHandler {
                 id: stopTap
                 onTapped: {

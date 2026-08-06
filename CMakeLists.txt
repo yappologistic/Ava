@@ -28,6 +28,7 @@ qt_add_qml_module(Ava
         qml/ExpandedPanel.qml
         qml/TimerPanel.qml
         qml/IslandButton.qml
+        qml/MotionTokens.qml
         qml/NotchSurface.qml
     RESOURCES
         assets/icons/play-dark.svg
