@@ -22,9 +22,9 @@ The app does not use demo state. Everything shown in the island comes from Windo
 - Drag a local file over the island to reveal the local drop target.
 - Reduced-motion preferences are respected.
 
-The shell uses spring-driven width and height morphing, staged content transitions, and small press/hover responses. Its geometry and timing were measured across all 48,446 frames of the supplied 30 fps reference video: the stable source states are approximately `50 × 13` and `195 × 43`, with a roughly 300 ms overshooting settle. The Qt geometry preserves those ratios at Windows desktop scale. Its top-left and top-right junctions use reverse cubic curves, while the lower corners maintain a continuous rounded silhouette.
+The shell uses an interruptible, frame-time-driven spring for width and height morphing, staged content transitions, and small press/hover responses. Its geometry and timing were measured across all 48,446 frames of the supplied 30 fps reference video: the stable source states are approximately `50 × 13` and `195 × 43`, with a roughly 300 ms overshooting settle. Height leads width while opening, width leads height while closing, and velocity carries through a mid-flight reversal instead of restarting. The Qt geometry preserves the source ratios at Windows desktop scale. Its top-left and top-right junctions use reverse cubic curves, while the lower corners maintain a continuous rounded silhouette.
 
-Animations are not capped at 60 Hz. Qt Quick's synchronized render loop presents at the active display's vertical refresh rate, so 120 Hz, 144 Hz, and higher-refresh monitors receive additional animation samples automatically. Vsync remains enabled, animation duration is time-based rather than frame-count based, and scene-graph resources stay resident to avoid avoidable setup work during an interaction.
+Animations are not capped at 60 Hz. Qt Quick's synchronized render loop presents at the active display's vertical refresh rate, and the shell spring advances from `FrameAnimation.frameTime`, so 120 Hz, 144 Hz, and higher-refresh monitors receive genuinely denser motion samples. Vsync remains enabled, animation duration is time-based rather than frame-count based, and scene-graph resources stay resident to avoid avoidable setup work during an interaction.
 
 ## Native window behavior
 

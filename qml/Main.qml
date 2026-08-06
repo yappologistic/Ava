@@ -27,9 +27,23 @@ Window {
     readonly property int islandTargetHeight: dragActive ? dragHeight
                                                          : (controller.expanded ? expandedHeight : compactHeight)
 
-    property real islandVisualWidth: islandTargetWidth
-    property real islandVisualHeight: islandTargetHeight
+    property real islandVisualWidth: compactWidth
+    property real islandVisualHeight: compactHeight
+    property real islandWidthVelocity: 0
+    property real islandHeightVelocity: 0
     property bool motionReady: false
+
+    // A lightly underdamped, axis-staggered response measured against the reference.
+    // Height leads while opening; width leads while closing. Angular frequency keeps
+    // the response time-based while FrameAnimation samples it at the display cadence.
+    readonly property real openWidthFrequency: 24
+    readonly property real openHeightFrequency: 29
+    readonly property real closeWidthFrequency: 30
+    readonly property real closeHeightFrequency: 24
+    readonly property real openWidthDamping: 0.78
+    readonly property real openHeightDamping: 0.82
+    readonly property real closeWidthDamping: 0.76
+    readonly property real closeHeightDamping: 0.78
 
     readonly property real surfaceHeight: islandVisualHeight
     readonly property real morphProgress: Math.max(0, Math.min(1,
@@ -58,28 +72,90 @@ Window {
         readonly property color green: "#63e6a5"
     }
 
-    Component.onCompleted: motionReady = true
+    function snapMorphToTarget() {
+        islandVisualWidth = islandTargetWidth
+        islandVisualHeight = islandTargetHeight
+        islandWidthVelocity = 0
+        islandHeightVelocity = 0
+    }
 
-    Behavior on islandVisualWidth {
-        enabled: window.motionReady && !controller.reducedMotion
-        SpringAnimation {
-            spring: 7.0
-            damping: 0.42
-            mass: 0.80
-            velocity: 9000
-            epsilon: 0.18
+    function advanceMorph(frameTime) {
+        if (!motionReady || controller.reducedMotion) {
+            snapMorphToTarget()
+            return
+        }
+
+        // Clamp a resumed/stalled frame, then integrate in small fixed substeps.
+        // This avoids a single large impulse without quantizing visible updates.
+        const elapsed = Math.min(Math.max(frameTime, 0), 1 / 30)
+        if (elapsed <= 0)
+            return
+
+        const opening = islandTargetWidth > compactWidth + 0.5
+        const widthFrequency = opening ? openWidthFrequency : closeWidthFrequency
+        const heightFrequency = opening ? openHeightFrequency : closeHeightFrequency
+        const widthDamping = opening ? openWidthDamping : closeWidthDamping
+        const heightDamping = opening ? openHeightDamping : closeHeightDamping
+        const steps = Math.max(1, Math.ceil(elapsed * 240))
+        const stepTime = elapsed / steps
+
+        let width = islandVisualWidth
+        let height = islandVisualHeight
+        let widthVelocity = islandWidthVelocity
+        let heightVelocity = islandHeightVelocity
+
+        for (let step = 0; step < steps; ++step) {
+            const widthAcceleration = widthFrequency * widthFrequency
+                                      * (islandTargetWidth - width)
+                                      - 2 * widthDamping * widthFrequency * widthVelocity
+            widthVelocity += widthAcceleration * stepTime
+            width += widthVelocity * stepTime
+
+            const heightAcceleration = heightFrequency * heightFrequency
+                                       * (islandTargetHeight - height)
+                                       - 2 * heightDamping * heightFrequency * heightVelocity
+            heightVelocity += heightAcceleration * stepTime
+            height += heightVelocity * stepTime
+        }
+
+        if (Math.abs(islandTargetWidth - width) < 0.04
+                && Math.abs(widthVelocity) < 0.45) {
+            width = islandTargetWidth
+            widthVelocity = 0
+        }
+        if (Math.abs(islandTargetHeight - height) < 0.04
+                && Math.abs(heightVelocity) < 0.45) {
+            height = islandTargetHeight
+            heightVelocity = 0
+        }
+
+        islandVisualWidth = width
+        islandVisualHeight = height
+        islandWidthVelocity = widthVelocity
+        islandHeightVelocity = heightVelocity
+    }
+
+    Component.onCompleted: {
+        snapMorphToTarget()
+        motionReady = true
+    }
+
+    Connections {
+        target: controller
+        function onReducedMotionChanged() {
+            if (controller.reducedMotion)
+                window.snapMorphToTarget()
         }
     }
 
-    Behavior on islandVisualHeight {
-        enabled: window.motionReady && !controller.reducedMotion
-        SpringAnimation {
-            spring: 7.0
-            damping: 0.42
-            mass: 0.80
-            velocity: 9000
-            epsilon: 0.18
-        }
+    FrameAnimation {
+        id: morphFrameClock
+        running: window.motionReady && !controller.reducedMotion
+                 && (Math.abs(window.islandVisualWidth - window.islandTargetWidth) > 0.04
+                     || Math.abs(window.islandVisualHeight - window.islandTargetHeight) > 0.04
+                     || Math.abs(window.islandWidthVelocity) > 0.45
+                     || Math.abs(window.islandHeightVelocity) > 0.45)
+        onTriggered: window.advanceMorph(frameTime)
     }
 
     Timer {
