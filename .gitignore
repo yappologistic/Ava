@@ -21,3 +21,9 @@ CMakeUserPresets.json
 *.ilk
 *.obj
 *.exe
+
+
+# Editor shiii
+.vscode/
+.idea/
+.claude/
