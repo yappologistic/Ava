@@ -152,7 +152,6 @@ private slots:
     void tick();
     void updateTimer();
     void updateAudioPeak();
-    void soundTimerAlert();
 
 private:
     struct PlatformState;
@@ -164,12 +163,13 @@ private:
     QString formatDuration(qint64 totalMilliseconds) const;
     QString formatTimerDuration(qint64 totalMilliseconds) const;
     void finishTimer();
+    void startTimerAlert();
+    void stopTimerAlert();
 
     std::shared_ptr<PlatformState> m_platform;
     QTimer m_timer;
     QTimer m_countdownTimer;
     QTimer m_audioMeterTimer;
-    QTimer m_alarmTimer;
     int m_slowRefreshCounter = 0;
 
     bool m_expanded = false;

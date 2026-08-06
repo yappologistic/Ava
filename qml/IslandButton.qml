@@ -20,7 +20,10 @@ Button {
     property bool reducedMotion: controller.reducedMotion
     property bool motionReady: false
     property bool rotatesOnSelection: false
+    property color glowColor: "transparent"
     property real focusProgress: visualFocus ? 1 : 0
+    readonly property bool hasGlow: glowColor.a > 0 && enabled
+    readonly property real glowStrength: down ? 1.5 : (hovered ? 1.28 : 1)
     readonly property string visualToken: glyph + "|" + iconSource + "|" + invertedIconSource
 
     function reject() {
@@ -68,6 +71,34 @@ Button {
 
     background: Rectangle {
         radius: control.iconOnly ? height / 2 : 9
+
+        // Stacked translucent rings read as a bloom without pulling in a blur
+        // effect, and the margins bias it downward so it glows from the base.
+        Repeater {
+            model: control.hasGlow ? 7 : 0
+
+            Rectangle {
+                required property int index
+                readonly property real spread: (index + 1) * 1.9
+                z: -1
+                anchors.fill: parent
+                anchors.leftMargin: -spread
+                anchors.rightMargin: -spread
+                anchors.topMargin: spread * 0.65
+                anchors.bottomMargin: -spread * 1.5
+                radius: parent.radius + spread
+                color: control.glowColor
+                opacity: 0.1 * Math.pow(1 - index / 7, 1.8) * control.glowStrength
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: control.reducedMotion ? 0 : MotionTokens.hover
+                        easing.type: MotionTokens.easeOut
+                    }
+                }
+            }
+        }
+
         color: {
             if (control.bare && !control.accented && !control.selected)
                 return control.down ? "#30ffffff" : (control.hovered ? "#18ffffff" : "transparent")
