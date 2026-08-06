@@ -7,7 +7,7 @@ Item {
     id: root
 
     property var colors
-    property string uiFont: "Segoe UI Variable"
+    property string uiFont: "SN Pro"
     property string iconFont: "Segoe Fluent Icons"
     property bool reducedMotion: false
     property int selectedMinutes: 15
@@ -224,12 +224,16 @@ Item {
                 }
             }
 
-            Text {
+            Image {
                 anchors.centerIn: parent
-                text: "\uE121"
-                color: root.timerOrange
-                font.family: root.iconFont
-                font.pixelSize: 19
+                width: 20
+                height: 20
+                source: Qt.resolvedUrl("../assets/icons/timer-orange.svg")
+                sourceSize.width: 40
+                sourceSize.height: 40
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+                mipmap: true
             }
         }
 
@@ -372,12 +376,16 @@ Item {
                 NumberAnimation { to: 1; duration: 520; easing.type: Easing.InOutSine }
             }
 
-            Text {
+            Image {
                 anchors.centerIn: parent
-                text: "\uE121"
-                color: "#000000"
-                font.family: root.iconFont
-                font.pixelSize: 21
+                width: 22
+                height: 22
+                source: Qt.resolvedUrl("../assets/icons/timer-dark.svg")
+                sourceSize.width: 44
+                sourceSize.height: 44
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+                mipmap: true
             }
         }
 

@@ -15,6 +15,7 @@ Button {
     property bool bare: false
     property int fixedWidth: 0
     property string accessibleName: ""
+    property string uiFont: "SN Pro"
     property color accentColor: "#5ac8fa"
 
     implicitWidth: fixedWidth > 0 ? fixedWidth : (iconOnly ? 32 : Math.max(72, labelRow.implicitWidth + 22))
@@ -92,7 +93,7 @@ Button {
                 visible: control.text.length > 0
                 text: control.text
                 color: control.accented || control.selected ? "#000000" : "#f5f5f7"
-                font.family: "Segoe UI Variable"
+                font.family: control.uiFont
                 font.pixelSize: 11
                 font.weight: Font.DemiBold
                 verticalAlignment: Text.AlignVCenter

@@ -7,7 +7,7 @@ Item {
     id: root
 
     property var colors
-    property string uiFont: "Segoe UI Variable"
+    property string uiFont: "SN Pro"
     property string iconFont: "Segoe Fluent Icons"
     property bool expanded: false
     property bool dragActive: false
@@ -426,7 +426,9 @@ Item {
                     height: 30
                     iconOnly: true
                     quiet: true
-                    glyph: "\uE121"
+                    iconSource: Qt.resolvedUrl("../assets/icons/timer-light.svg")
+                    invertedIconSource: Qt.resolvedUrl("../assets/icons/timer-dark.svg")
+                    iconSize: 16
                     selected: controller.timerPanelOpen
                     accessibleName: "Open timer"
                     onClicked: controller.openTimer()
