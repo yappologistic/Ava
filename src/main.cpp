@@ -180,6 +180,13 @@ int main(int argc, char *argv[])
     const QCommandLineOption tilingOption(
         QStringLiteral("tiling"),
         QStringLiteral("Start with Dwindle workspace tiling enabled."));
+    const QCommandLineOption timerOption(
+        QStringLiteral("timer"),
+        QStringLiteral("Open the timer chooser."));
+    const QCommandLineOption startTimerOption(
+        QStringLiteral("start-timer"),
+        QStringLiteral("Start a timer for the given number of seconds."),
+        QStringLiteral("seconds"));
     const QCommandLineOption tilingProcessOption(
         QStringLiteral("tiling-process-id"),
         QStringLiteral("Restrict tiling to a process ID. May be specified more than once."),
@@ -189,6 +196,8 @@ int main(int argc, char *argv[])
     parser.addOption(screenshotOption);
     parser.addOption(motionReportOption);
     parser.addOption(tilingOption);
+    parser.addOption(timerOption);
+    parser.addOption(startTimerOption);
     parser.addOption(tilingProcessOption);
     parser.process(app);
 
@@ -205,6 +214,16 @@ int main(int argc, char *argv[])
     tilingManager.setProcessAllowList(tilingProcessIds);
     controller.setExpanded(parser.isSet(expandedOption) || parser.isSet(pinnedOption));
     controller.setPinned(parser.isSet(pinnedOption));
+    if (parser.isSet(timerOption)) {
+        controller.openTimer();
+    }
+    if (parser.isSet(startTimerOption)) {
+        bool valid = false;
+        const int durationSeconds = parser.value(startTimerOption).toInt(&valid);
+        if (valid && durationSeconds > 0) {
+            controller.startTimer(durationSeconds);
+        }
+    }
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);

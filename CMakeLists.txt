@@ -26,6 +26,7 @@ qt_add_qml_module(DynamicIsland
     QML_FILES
         qml/Main.qml
         qml/ExpandedPanel.qml
+        qml/TimerPanel.qml
         qml/IslandButton.qml
         qml/NotchSurface.qml
     RESOURCES
