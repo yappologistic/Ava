@@ -40,9 +40,7 @@ Item {
             id: ruler
             x: 20
             y: 4
-            // Leave a quiet lane for the close control without shortening the
-            // visible 0–30 minute span around the default 15-minute selection.
-            width: parent.width - 68
+            width: parent.width - 40
             height: 63
             clip: true
             contentWidth: width + root.maximumMinutes * root.tickSpacing
@@ -116,7 +114,7 @@ Item {
 
         Item {
             anchors.horizontalCenter: ruler.horizontalCenter
-            y: 60
+            y: 64
             width: 14
             height: 10
 
