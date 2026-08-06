@@ -1,0 +1,55 @@
+#pragma once
+
+#include <QAbstractNativeEventFilter>
+#include <QObject>
+#include <QSet>
+#include <QString>
+#include <QTimer>
+
+#include <memory>
+
+class WindowTilingManager final : public QObject, public QAbstractNativeEventFilter
+{
+    Q_OBJECT
+
+    Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY enabledChanged)
+    Q_PROPERTY(int tiledWindowCount READ tiledWindowCount NOTIFY stateChanged)
+    Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
+    Q_PROPERTY(QString shortcutText READ shortcutText CONSTANT)
+
+public:
+    explicit WindowTilingManager(QObject *parent = nullptr);
+    ~WindowTilingManager() override;
+
+    bool enabled() const { return m_enabled; }
+    int tiledWindowCount() const { return m_tiledWindowCount; }
+    QString statusText() const;
+    QString shortcutText() const { return QStringLiteral("Win+Alt+T"); }
+
+    void setIslandWindow(quintptr nativeHandle);
+    void setProcessAllowList(const QSet<quint32> &processIds);
+    bool nativeEventFilter(const QByteArray &eventType,
+                           void *message,
+                           qintptr *result) override;
+
+public slots:
+    void setEnabled(bool enabled);
+    void toggleEnabled();
+    void retile();
+
+signals:
+    void enabledChanged();
+    void stateChanged();
+
+private:
+    struct NativeState;
+
+    void reconcileWindows();
+    void restoreWindows();
+    void setTiledWindowCount(int count);
+
+    std::unique_ptr<NativeState> m_native;
+    QTimer m_reconcileTimer;
+    bool m_enabled = false;
+    int m_tiledWindowCount = 0;
+};

@@ -20,6 +20,7 @@ The app does not use demo state. Everything shown in the island comes from Windo
 - Use the real previous, play/pause, and next media controls.
 - Mute/unmute the active audio endpoint, pin the island, or collapse it from the bottom-right controls.
 - Drag a local file over the island to reveal the local drop target.
+- Enable native Dwindle workspace tiling from the right utility cluster or with `Win+Alt+T`.
 - Reduced-motion preferences are respected.
 
 The shell uses an interruptible, frame-time-driven spring for width and height morphing, staged content transitions, and small press/hover responses. Its geometry and timing were measured across all 48,446 frames of the supplied 30 fps reference video: the stable source states are approximately `50 × 13` and `195 × 43`, with a roughly 300 ms overshooting settle. Height leads width while opening, width leads height while closing, and velocity carries through a mid-flight reversal instead of restarting. The Qt geometry preserves the source ratios at Windows desktop scale. Its top-left and top-right junctions use reverse cubic curves, while the lower corners maintain a continuous rounded silhouette.
@@ -29,6 +30,12 @@ Animations are not capped at 60 Hz. Qt Quick's synchronized render loop presents
 ## Native window behavior
 
 The frameless Qt window is created with `WS_EX_TOPMOST`, `WS_EX_TOOLWINDOW`, and `WS_EX_NOACTIVATE`. A native `QWindow` input mask follows the animated silhouette, so Windows never routes pointer input from the transparent canvas to the island. Topmost status is reaffirmed without activation, allowing the island to remain above ordinary and borderless-fullscreen windows without stealing focus.
+
+## Dwindle workspace tiling
+
+Workspace tiling is off by default. When enabled, a native Win32 engine arranges eligible application windows independently on each monitor using a recursive Dwindle split. It respects each monitor's working area, preserves the taskbar, leaves compact-island clearance on the island display, and maintains consistent outer and inner gaps. New windows enter the layout automatically, minimized windows remain untouched, and tool, owned, cloaked, topmost, fullscreen-style, or unresponsive surfaces are excluded.
+
+Every window placement is captured before the engine moves it. Disabling tiling, pressing `Win+Alt+T` again, or closing Dynamic Island restores surviving windows to their original normal, maximized, or minimized placement.
 
 Exclusive DirectX fullscreen can bypass the normal Desktop Window Manager composition path, so no conventional desktop overlay can guarantee visibility above every exclusive-mode game.
 
@@ -57,6 +64,7 @@ The executable supports deterministic native renders and motion telemetry:
 .\build\Release\DynamicIsland.exe --screenshot compact.png
 .\build\Release\DynamicIsland.exe --expanded --screenshot expanded.png
 .\build\Release\DynamicIsland.exe --pinned
+.\build\Release\DynamicIsland.exe --tiling
 .\build\Release\DynamicIsland.exe --motion-report motion-report.csv
 ```
 
@@ -66,6 +74,7 @@ Screenshot mode adds a gray QA backdrop so the transparent edge and reverse curv
 
 - `src/islandcontroller.h/.cpp` — real Windows media, audio, network, power, clock, and file-drop integration.
 - `src/main.cpp` — application startup, CLI verification modes, topmost behavior, and native silhouette hit-testing.
+- `src/windowtilingmanager.h/.cpp` — opt-in Win32 Dwindle layout engine, global shortcut, window filtering, and restoration.
 - `qml/Main.qml` — compact state, morphing layout, input, drop target, and window geometry.
 - `qml/ExpandedPanel.qml` — expanded media, time, status, and action layout.
 - `qml/NotchSurface.qml` — cubic reverse-curve ears and continuous lower corners.

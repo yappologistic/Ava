@@ -13,6 +13,7 @@
 #include <QQmlContext>
 #include <QPointer>
 #include <QSharedPointer>
+#include <QSet>
 #include <QSurfaceFormat>
 #include <QTextStream>
 #include <QTimer>
@@ -20,6 +21,7 @@
 #include <cmath>
 
 #include "islandcontroller.h"
+#include "windowtilingmanager.h"
 
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
@@ -175,18 +177,38 @@ int main(int argc, char *argv[])
         QStringLiteral("motion-report"),
         QStringLiteral("Record compact-to-expanded frame geometry as CSV and exit."),
         QStringLiteral("path"));
+    const QCommandLineOption tilingOption(
+        QStringLiteral("tiling"),
+        QStringLiteral("Start with Dwindle workspace tiling enabled."));
+    const QCommandLineOption tilingProcessOption(
+        QStringLiteral("tiling-process-id"),
+        QStringLiteral("Restrict tiling to a process ID. May be specified more than once."),
+        QStringLiteral("pid"));
     parser.addOption(expandedOption);
     parser.addOption(pinnedOption);
     parser.addOption(screenshotOption);
     parser.addOption(motionReportOption);
+    parser.addOption(tilingOption);
+    parser.addOption(tilingProcessOption);
     parser.process(app);
 
     IslandController controller;
+    WindowTilingManager tilingManager;
+    QSet<quint32> tilingProcessIds;
+    for (const QString &value : parser.values(tilingProcessOption)) {
+        bool valid = false;
+        const quint32 processId = value.toUInt(&valid);
+        if (valid && processId != 0) {
+            tilingProcessIds.insert(processId);
+        }
+    }
+    tilingManager.setProcessAllowList(tilingProcessIds);
     controller.setExpanded(parser.isSet(expandedOption) || parser.isSet(pinnedOption));
     controller.setPinned(parser.isSet(pinnedOption));
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
+    engine.rootContext()->setContextProperty(QStringLiteral("tilingManager"), &tilingManager);
     engine.rootContext()->setContextProperty(QStringLiteral("qaBackdrop"),
                                              parser.isSet(screenshotOption));
     engine.rootContext()->setContextProperty(
@@ -205,6 +227,12 @@ int main(int argc, char *argv[])
     }
     rootWindow->setPersistentGraphics(true);
     rootWindow->setPersistentSceneGraph(true);
+    tilingManager.setIslandWindow(rootWindow->winId());
+    if (parser.isSet(tilingOption)) {
+        QTimer::singleShot(300, &tilingManager, [&tilingManager]() {
+            tilingManager.setEnabled(true);
+        });
+    }
 
 #ifdef Q_OS_WIN
     IslandHitTestFilter hitTestFilter(rootWindow, rootObject);
