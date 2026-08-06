@@ -32,7 +32,8 @@ Window {
                                : (mediaPeekActive && controller.mediaAvailable
                                   && !controller.timerActive && !controller.timerRinging
                                   ? mediaPeekWidth
-                                  : compactWidth + Math.round(hoverTension * 4)))
+                                  : compactWidth + (claudePresent ? 22 : 0)
+                                    + Math.round(hoverTension * 4)))
     readonly property int islandTargetHeight: dragActive ? dragHeight
         : (shellExpandedVisual ? expandedHeight + Math.round(ringingPulse * 3)
                                : compactHeight + Math.round(hoverTension))
@@ -54,6 +55,7 @@ Window {
                                               ? "timer"
                                               : (window.mediaPeekActive && controller.mediaAvailable
                                                  ? "media" : "clock")
+    readonly property bool claudePresent: claude.busy || claude.requestActive
 
     // A lightly underdamped, axis-staggered response measured against the reference.
     // Height leads while opening; width leads while closing. Angular frequency keeps
@@ -220,9 +222,17 @@ Window {
         function onForegroundFullscreenChanged() {
             if (controller.foregroundFullscreen && !qaMode) {
                 window.mediaPeekActive = false
-                if (!controller.timerRinging)
+                if (!controller.timerRinging && !claude.requestActive)
                     controller.setExpanded(false)
             }
+        }
+    }
+
+    Connections {
+        target: claude
+        function onRequestArrived(kind) {
+            if (!qaMode)
+                controller.setExpanded(true)
         }
     }
 
@@ -345,6 +355,7 @@ Window {
         running: controller.expanded && !controller.pinned
                  && !islandHover.hovered && !qaMode
                  && !window.tilingFeedbackActive
+                 && !claude.requestActive
         onTriggered: controller.setExpanded(false)
     }
 
@@ -482,6 +493,11 @@ Window {
                     fontFamily: window.uiFont
                     fontPixelSize: 9
                     fontWeight: Font.DemiBold
+                    reducedMotion: controller.reducedMotion
+                }
+                ClaudeBadge {
+                    anchors.verticalCenter: compactClockDigits.verticalCenter
+                    iconSize: 14
                     reducedMotion: controller.reducedMotion
                 }
             }

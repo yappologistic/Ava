@@ -21,6 +21,7 @@
 
 #include <cmath>
 
+#include "claudebridge.h"
 #include "islandcontroller.h"
 #include "windowtilingmanager.h"
 
@@ -34,14 +35,19 @@
 class IslandHitTestFilter final : public QAbstractNativeEventFilter
 {
 public:
-    IslandHitTestFilter(QQuickWindow *window, QObject *root)
-        : m_window(window), m_root(root)
+    IslandHitTestFilter(QQuickWindow *window, QObject *root, const bool *allowActivation)
+        : m_window(window), m_root(root), m_allowActivation(allowActivation)
     {
     }
 
     bool nativeEventFilter(const QByteArray &, void *message, qintptr *result) override
     {
         if (!m_window || !m_root) {
+            return false;
+        }
+        // Answering Claude Code by typing needs real keyboard focus, so the
+        // island stops refusing activation for as long as the composer is open.
+        if (m_allowActivation && *m_allowActivation) {
             return false;
         }
 
@@ -57,6 +63,7 @@ public:
 private:
     QPointer<QQuickWindow> m_window;
     QPointer<QObject> m_root;
+    const bool *m_allowActivation = nullptr;
 };
 
 class IslandWindowMask final
@@ -198,6 +205,12 @@ int main(int argc, char *argv[])
         QStringLiteral("start-timer"),
         QStringLiteral("Start a timer for the given number of seconds."),
         QStringLiteral("seconds"));
+    const QCommandLineOption noClaudeHooksOption(
+        QStringLiteral("no-claude-hooks"),
+        QStringLiteral("Do not register Ava's Claude Code hooks on startup."));
+    const QCommandLineOption uninstallClaudeHooksOption(
+        QStringLiteral("uninstall-claude-hooks"),
+        QStringLiteral("Remove Ava's Claude Code hooks and exit."));
     const QCommandLineOption tilingProcessOption(
         QStringLiteral("tiling-process-id"),
         QStringLiteral("Restrict tiling to a process ID. May be specified more than once."),
@@ -209,11 +222,22 @@ int main(int argc, char *argv[])
     parser.addOption(tilingOption);
     parser.addOption(timerOption);
     parser.addOption(startTimerOption);
+    parser.addOption(noClaudeHooksOption);
+    parser.addOption(uninstallClaudeHooksOption);
     parser.addOption(tilingProcessOption);
     parser.process(app);
 
+    if (parser.isSet(uninstallClaudeHooksOption)) {
+        ClaudeBridge::uninstallHooksInPlace();
+        return 0;
+    }
+
     IslandController controller;
     WindowTilingManager tilingManager;
+    ClaudeBridge claudeBridge;
+    if (!parser.isSet(noClaudeHooksOption)) {
+        claudeBridge.installHooks();
+    }
     QSet<quint32> tilingProcessIds;
     for (const QString &value : parser.values(tilingProcessOption)) {
         bool valid = false;
@@ -239,6 +263,7 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
     engine.rootContext()->setContextProperty(QStringLiteral("tilingManager"), &tilingManager);
+    engine.rootContext()->setContextProperty(QStringLiteral("claude"), &claudeBridge);
     engine.rootContext()->setContextProperty(QStringLiteral("qaBackdrop"),
                                              parser.isSet(screenshotOption));
     engine.rootContext()->setContextProperty(
@@ -265,7 +290,8 @@ int main(int argc, char *argv[])
     }
 
 #ifdef Q_OS_WIN
-    IslandHitTestFilter hitTestFilter(rootWindow, rootObject);
+    bool allowActivation = false;
+    IslandHitTestFilter hitTestFilter(rootWindow, rootObject, &allowActivation);
     app.installNativeEventFilter(&hitTestFilter);
 
     auto inputMask = std::make_shared<IslandWindowMask>(rootWindow, rootObject);
@@ -274,10 +300,15 @@ int main(int argc, char *argv[])
         inputMask->update();
     });
 
-    const auto keepTopmost = [rootWindow]() {
+    const auto keepTopmost = [rootWindow, &allowActivation]() {
         const HWND hwnd = reinterpret_cast<HWND>(rootWindow->winId());
         LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        style |= WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        style |= WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+        if (allowActivation) {
+            style &= ~static_cast<LONG_PTR>(WS_EX_NOACTIVATE);
+        } else {
+            style |= WS_EX_NOACTIVATE;
+        }
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
         SetWindowPos(hwnd,
                      HWND_TOPMOST,
@@ -288,6 +319,44 @@ int main(int argc, char *argv[])
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     };
     QTimer::singleShot(0, &app, keepTopmost);
+
+    // The reply composer is the only state where Ava takes focus from the
+    // foreground application, and it hands focus straight back afterwards.
+    HWND previousForeground = nullptr;
+    QObject::connect(
+        &claudeBridge,
+        &ClaudeBridge::replyModeChanged,
+        rootWindow,
+        [rootWindow, &allowActivation, &previousForeground, &claudeBridge, keepTopmost]() {
+            allowActivation = claudeBridge.replyMode();
+            keepTopmost();
+
+            const HWND hwnd = reinterpret_cast<HWND>(rootWindow->winId());
+            if (!allowActivation) {
+                if (previousForeground && IsWindow(previousForeground)) {
+                    SetForegroundWindow(previousForeground);
+                }
+                previousForeground = nullptr;
+                return;
+            }
+
+            // Windows refuses SetForegroundWindow to a background process
+            // unless the caller shares the foreground thread's input queue.
+            previousForeground = GetForegroundWindow();
+            const DWORD foregroundThread = GetWindowThreadProcessId(previousForeground, nullptr);
+            const DWORD ownThread = GetCurrentThreadId();
+            const bool attach = foregroundThread != 0 && foregroundThread != ownThread;
+            if (attach) {
+                AttachThreadInput(ownThread, foregroundThread, TRUE);
+            }
+            SetForegroundWindow(hwnd);
+            BringWindowToTop(hwnd);
+            SetFocus(hwnd);
+            if (attach) {
+                AttachThreadInput(ownThread, foregroundThread, FALSE);
+            }
+            rootWindow->requestActivate();
+        });
     QTimer topmostTimer;
     topmostTimer.setInterval(2000);
     QObject::connect(&topmostTimer, &QTimer::timeout, &app, keepTopmost);

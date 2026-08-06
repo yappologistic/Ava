@@ -34,6 +34,7 @@ Item {
     property int displayedFileCount: 0
     property bool fileShelfRetained: false
     property real tilingCommitProgress: 0
+    readonly property bool claudePanelOpen: claude.requestActive
     readonly property date currentDate: displayedCalendarDate
     readonly property int currentDayIndex: currentDate.getDay()
 
@@ -182,7 +183,7 @@ Item {
     // the left third, while the middle stays visually quiet.
     Item {
         id: mediaPane
-        enabled: !controller.timerPanelOpen
+        enabled: !controller.timerPanelOpen && !root.claudePanelOpen
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
         scale: enabled ? 1 : 0.94
@@ -583,7 +584,7 @@ Item {
     // the source. Hovering this cluster crossfades to utility actions.
     Item {
         id: clockPane
-        enabled: !controller.timerPanelOpen
+        enabled: !controller.timerPanelOpen && !root.claudePanelOpen
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
         scale: enabled ? 1 : 0.94
@@ -628,6 +629,12 @@ Item {
                 fontFamily: root.uiFont
                 fontPixelSize: 9
                 fontWeight: Font.DemiBold
+                reducedMotion: root.reducedMotion
+            }
+            ClaudeBadge {
+                anchors.verticalCenter: expandedClockDigits.verticalCenter
+                anchors.verticalCenterOffset: 1
+                iconSize: 17
                 reducedMotion: root.reducedMotion
             }
         }
@@ -1033,7 +1040,7 @@ Item {
 
     Rectangle {
         id: fileShelfChip
-        visible: !controller.timerPanelOpen
+        visible: !controller.timerPanelOpen && !root.claudePanelOpen
                  && (controller.droppedFileCount > 0 || root.fileShelfRetained)
         x: 318
         y: 75
@@ -1171,6 +1178,28 @@ Item {
         Behavior on opacity {
             SequentialAnimation {
                 PauseAnimation { duration: timerPanelHost.enabled && !root.reducedMotion ? 55 : 0 }
+                NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: MotionTokens.easeOut }
+            }
+        }
+        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
+    }
+
+    ClaudePanel {
+        id: claudePanelHost
+        z: 30
+        anchors.fill: parent
+        enabled: root.claudePanelOpen
+        visible: opacity > 0.001
+        opacity: enabled ? 1 : 0
+        scale: enabled ? 1 : 0.94
+        colors: root.colors
+        uiFont: root.uiFont
+        iconFont: root.iconFont
+        reducedMotion: root.reducedMotion
+        transformOrigin: Item.Top
+        Behavior on opacity {
+            SequentialAnimation {
+                PauseAnimation { duration: claudePanelHost.enabled && !root.reducedMotion ? 45 : 0 }
                 NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: MotionTokens.easeOut }
             }
         }

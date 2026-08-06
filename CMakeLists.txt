@@ -8,12 +8,14 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
 qt_add_executable(Ava
     src/main.cpp
+    src/claudebridge.cpp
+    src/claudebridge.h
     src/islandcontroller.cpp
     src/islandcontroller.h
     src/windowtilingmanager.cpp
@@ -26,6 +28,8 @@ qt_add_qml_module(Ava
     QML_FILES
         qml/Main.qml
         qml/ExpandedPanel.qml
+        qml/ClaudePanel.qml
+        qml/ClaudeBadge.qml
         qml/TimerPanel.qml
         qml/IslandButton.qml
         qml/MotionTokens.qml
@@ -49,6 +53,7 @@ qt_add_qml_module(Ava
         assets/icons/timer-light.svg
         assets/icons/timer-dark.svg
         assets/icons/timer-orange.svg
+        assets/icons/claude.svg
         assets/fonts/Inter[opsz,wght].ttf
         assets/fonts/OFL-Inter.txt
 )
@@ -57,6 +62,7 @@ target_link_libraries(Ava
     PRIVATE
         Qt6::Core
         Qt6::Gui
+        Qt6::Network
         Qt6::Qml
         Qt6::Quick
         Qt6::QuickControls2
