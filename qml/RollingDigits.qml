@@ -12,6 +12,8 @@ Item {
     property int fontWeight: Font.Normal
     property real letterSpacing: 0
     property bool reducedMotion: false
+    property int staggerMs: 18
+    property bool staggerFromRight: true
     // Positive values roll forward; negative values roll backward for countdowns.
     property int rollDirection: 1
 
@@ -85,6 +87,10 @@ Item {
                 property string settledCharacter: ""
                 property string incomingCharacter: ""
                 property bool ready: false
+                readonly property int transitionDelay: root.staggerMs <= 0 ? 0
+                    : (root.staggerFromRight
+                       ? (root.text.length - 1 - index) * root.staggerMs
+                       : index * root.staggerMs)
 
                 width: root.characterWidth(observedCharacter)
                 height: root.height
@@ -104,7 +110,9 @@ Item {
                         incomingCharacter = ""
                         outgoing.y = 0
                         outgoing.opacity = 1
+                        outgoing.scale = 1
                         incoming.opacity = 0
+                        incoming.scale = 1
                         return
                     }
                     if (settledCharacter === observedCharacter)
@@ -114,8 +122,10 @@ Item {
                     incomingCharacter = observedCharacter
                     incoming.y = root.rollDirection * root.rollDistance
                     incoming.opacity = 0
+                    incoming.scale = 1.025
                     outgoing.y = 0
                     outgoing.opacity = 1
+                    outgoing.scale = 1
                     roll.start()
                 }
 
@@ -149,33 +159,67 @@ Item {
                 ParallelAnimation {
                     id: roll
 
-                    NumberAnimation {
-                        target: outgoing
-                        property: "y"
-                        to: -root.rollDirection * root.rollDistance
-                        duration: MotionTokens.state
-                        easing.type: Easing.InCubic
+                    SequentialAnimation {
+                        PauseAnimation { duration: digitCell.transitionDelay }
+                        NumberAnimation {
+                            target: outgoing
+                            property: "y"
+                            to: -root.rollDirection * root.rollDistance
+                            duration: MotionTokens.state
+                            easing.type: Easing.InCubic
+                        }
                     }
-                    NumberAnimation {
-                        target: outgoing
-                        property: "opacity"
-                        to: 0
-                        duration: MotionTokens.state
-                        easing.type: Easing.InCubic
+                    SequentialAnimation {
+                        PauseAnimation { duration: digitCell.transitionDelay }
+                        NumberAnimation {
+                            target: outgoing
+                            property: "opacity"
+                            to: 0
+                            duration: MotionTokens.state
+                            easing.type: Easing.InCubic
+                        }
                     }
-                    NumberAnimation {
-                        target: incoming
-                        property: "y"
-                        to: 0
-                        duration: MotionTokens.state
-                        easing.type: MotionTokens.easeOut
+                    SequentialAnimation {
+                        PauseAnimation { duration: digitCell.transitionDelay }
+                        NumberAnimation {
+                            target: incoming
+                            property: "y"
+                            to: 0
+                            duration: MotionTokens.state
+                            easing.type: MotionTokens.easeOut
+                        }
                     }
-                    NumberAnimation {
-                        target: incoming
-                        property: "opacity"
-                        to: 1
-                        duration: MotionTokens.state
-                        easing.type: MotionTokens.easeOut
+                    SequentialAnimation {
+                        PauseAnimation { duration: digitCell.transitionDelay }
+                        NumberAnimation {
+                            target: incoming
+                            property: "opacity"
+                            to: 1
+                            duration: MotionTokens.state
+                            easing.type: MotionTokens.easeOut
+                        }
+                    }
+                    SequentialAnimation {
+                        PauseAnimation { duration: digitCell.transitionDelay }
+                        NumberAnimation {
+                            target: outgoing
+                            property: "scale"
+                            from: 1
+                            to: 0.97
+                            duration: MotionTokens.state
+                            easing.type: Easing.InCubic
+                        }
+                    }
+                    SequentialAnimation {
+                        PauseAnimation { duration: digitCell.transitionDelay }
+                        NumberAnimation {
+                            target: incoming
+                            property: "scale"
+                            from: 1.025
+                            to: 1
+                            duration: MotionTokens.state
+                            easing.type: MotionTokens.easeOut
+                        }
                     }
 
                     onFinished: {
@@ -183,7 +227,9 @@ Item {
                         digitCell.incomingCharacter = ""
                         outgoing.y = 0
                         outgoing.opacity = 1
+                        outgoing.scale = 1
                         incoming.opacity = 0
+                        incoming.scale = 1
                     }
                 }
             }

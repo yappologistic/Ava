@@ -12,6 +12,7 @@ Item {
     property bool expanded: false
     property bool dragActive: false
     property bool reducedMotion: false
+    property real morphProgress: 1
     property bool tilingFeedbackActive: false
     property bool mediaMotionReady: false
     property string displayedMediaTitle: ""
@@ -31,9 +32,12 @@ Item {
     property string displayedCalendarToken: ""
     property int observedLayoutRevision: 0
     property int observedShortcutRevision: 0
+    property bool observedTilingConstraint: false
     property int displayedFileCount: 0
     property bool fileShelfRetained: false
     property real tilingCommitProgress: 0
+    property real calendarAccentPulseProgress: 0
+    property string observedArtworkAccent: ""
     readonly property date currentDate: displayedCalendarDate
     readonly property int currentDayIndex: 3
     readonly property int calendarCellWidth: 31
@@ -50,6 +54,10 @@ Item {
                                                                  calendarActiveAccent.g,
                                                                  calendarActiveAccent.b, 0.24)
                                                        : colors.calendarSelection
+    readonly property real revealProgress: reducedMotion
+                                               ? (expanded ? 1 : 0)
+                                               : Math.max(0, Math.min(1,
+                                                   (morphProgress - 0.04) / 0.82))
 
     function calendarDateAt(index) {
         return new Date(currentDate.getFullYear(), currentDate.getMonth(),
@@ -100,13 +108,19 @@ Item {
         displayedCalendarDate = new Date()
         observedLayoutRevision = tilingManager.layoutRevision
         observedShortcutRevision = tilingManager.shortcutRevision
+        observedTilingConstraint = tilingManager.interactionConstrained
         displayedFileCount = controller.droppedFileCount
+        observedArtworkAccent = controller.mediaArtworkAccent
         mediaMotionReady = true
     }
 
     Connections {
         target: controller
         function onMediaChanged() {
+            const accentChanged = root.observedArtworkAccent !== controller.mediaArtworkAccent
+            root.observedArtworkAccent = controller.mediaArtworkAccent
+            if (accentChanged && controller.mediaPlaying && !root.reducedMotion)
+                calendarAccentPulse.restart()
             if (!root.mediaMotionReady || root.reducedMotion) {
                 root.syncMediaImmediately()
                 return
@@ -183,14 +197,19 @@ Item {
         }
         function onInteractionChanged() {
             const layoutChanged = root.observedLayoutRevision !== tilingManager.layoutRevision
+            const constraintEntered = !root.observedTilingConstraint
+                    && tilingManager.interactionConstrained
             const meaningfulChange = layoutChanged
                     || root.observedShortcutRevision !== tilingManager.shortcutRevision
             root.observedLayoutRevision = tilingManager.layoutRevision
             root.observedShortcutRevision = tilingManager.shortcutRevision
+            root.observedTilingConstraint = tilingManager.interactionConstrained
             if (meaningfulChange && !root.reducedMotion && tilingStatusView.opacity > 0)
                 tilingStatusPulse.restart()
             if (layoutChanged && !root.reducedMotion)
                 tilingCommit.restart()
+            if (constraintEntered && !root.reducedMotion)
+                constraintPulse.restart()
         }
     }
 
@@ -240,7 +259,16 @@ Item {
                 radius: 14
                 color: root.colors.raised
                 clip: true
-                transform: Translate { id: artworkShift }
+                opacity: 0.56 + root.revealProgress * 0.44
+                scale: 0.31 + root.revealProgress * 0.69
+                transformOrigin: Item.Center
+                transform: [
+                    Translate { id: artworkShift },
+                    Translate {
+                        x: -4 * (1 - root.revealProgress)
+                        y: -5 * (1 - root.revealProgress)
+                    }
+                ]
 
                 Image {
                     id: artworkImage
@@ -262,6 +290,18 @@ Item {
                     font.family: root.iconFont
                     font.pixelSize: 28
                 }
+
+                Rectangle {
+                    anchors.fill: parent
+                    color: "black"
+                    opacity: root.mediaScrubbing ? 0.18 : 0
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: root.reducedMotion ? 0 : MotionTokens.state
+                            easing.type: MotionTokens.easeOut
+                        }
+                    }
+                }
             }
 
             Column {
@@ -270,7 +310,12 @@ Item {
                 y: 4
                 width: 174
                 spacing: 2
-                transform: Translate { id: metadataShift }
+                scale: 0.94 + root.revealProgress * 0.06
+                transformOrigin: Item.Left
+                transform: [
+                    Translate { id: metadataShift },
+                    Translate { x: 13 * (1 - root.revealProgress) }
+                ]
 
                 Text {
                     width: parent.width
@@ -410,18 +455,23 @@ Item {
             }
 
             Row {
+                id: transportControls
                 x: 99
                 y: 56
                 spacing: 8
+                opacity: Math.max(0, Math.min(1, (root.revealProgress - 0.20) / 0.80))
+                scale: 0.88 + root.revealProgress * 0.12
+                transformOrigin: Item.Left
 
                 IslandButton {
                     id: previousButton
-                    width: 23
-                    height: 23
+                    width: 24
+                    height: 24
                     iconOnly: true
                     bare: true
-                    iconSource: Qt.resolvedUrl("../assets/icons/previous-light.svg")
-                    iconSize: 12
+                    transportKind: "previous"
+                    iconSize: 14
+                    pressShiftX: -2
                     enabled: controller.mediaCanPrevious
                     accessibleName: "Previous track"
                     onClicked: {
@@ -435,21 +485,21 @@ Item {
                     height: 24
                     iconOnly: true
                     bare: true
-                    iconSource: controller.mediaPlaying
-                                ? Qt.resolvedUrl("../assets/icons/pause-light.svg")
-                                : Qt.resolvedUrl("../assets/icons/play-light.svg")
-                    iconSize: 13
+                    transportKind: "playback"
+                    playbackPlaying: controller.mediaPlaying
+                    iconSize: 14
                     accessibleName: controller.mediaPlaying ? "Pause" : "Play"
                     onClicked: controller.togglePlayback()
                 }
                 IslandButton {
                     id: nextButton
-                    width: 23
-                    height: 23
+                    width: 24
+                    height: 24
                     iconOnly: true
                     bare: true
-                    iconSource: Qt.resolvedUrl("../assets/icons/next-light.svg")
-                    iconSize: 12
+                    transportKind: "next"
+                    iconSize: 14
+                    pressShiftX: 2
                     enabled: controller.mediaCanNext
                     accessibleName: "Next track"
                     onClicked: {
@@ -466,6 +516,9 @@ Item {
                 width: 174
                 height: 17
                 enabled: controller.mediaSeekable
+                opacity: Math.max(0, Math.min(1, (root.revealProgress - 0.28) / 0.72))
+                scale: 0.90 + root.revealProgress * 0.10
+                transformOrigin: Item.Left
                 transform: Translate { id: seekFeedbackShift }
 
                 Rectangle {
@@ -523,14 +576,19 @@ Item {
                 }
 
                 Rectangle {
-                    visible: seekArea.containsMouse || seekArea.pressed
-                    opacity: visible ? 1 : 0
+                    id: seekPreview
+                    visible: opacity > 0.001
+                    opacity: seekArea.containsMouse || seekArea.pressed ? 1 : 0
                     x: Math.max(0, Math.min(parent.width - width, seekArea.mouseX - width / 2))
-                    y: -17
+                    y: seekArea.containsMouse || seekArea.pressed ? -18 : -14
                     width: seekPreviewText.implicitWidth + 10
                     height: 15
                     radius: 7.5
                     color: "#252527"
+                    scale: seekArea.containsMouse || seekArea.pressed ? 1 : 0.92
+                    Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
+                    Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover; easing.type: MotionTokens.easeOut } }
+                    Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover; easing.type: MotionTokens.settle } }
                     Text {
                         id: seekPreviewText
                         anchors.centerIn: parent
@@ -647,6 +705,8 @@ Item {
             letterSpacing: -0.5
             reducedMotion: root.reducedMotion
             rollDirection: 1
+            scale: 0.72 + root.revealProgress * 0.28
+            transform: Translate { y: -7 * (1 - root.revealProgress) }
         }
 
         Item {
@@ -718,6 +778,7 @@ Item {
                             font.letterSpacing: dayCell.index === root.currentDayIndex ? 0.4 : 0
                         }
                         Rectangle {
+                            id: selectedDatePlate
                             anchors.horizontalCenter: parent.horizontalCenter
                             y: 13
                             width: root.calendarSelectionWidth
@@ -726,6 +787,8 @@ Item {
                             color: dayCell.index === root.currentDayIndex
                                    ? root.calendarActiveSelection
                                    : "transparent"
+                            scale: dayCell.index === root.currentDayIndex
+                                   ? 1 + root.calendarAccentPulseProgress * 0.035 : 1
 
                             Behavior on color {
                                 ColorAnimation {
@@ -778,6 +841,25 @@ Item {
             }
         }
 
+        SequentialAnimation {
+            id: calendarAccentPulse
+            NumberAnimation {
+                target: root
+                property: "calendarAccentPulseProgress"
+                from: 0
+                to: 1
+                duration: MotionTokens.press
+                easing.type: MotionTokens.easeOut
+            }
+            NumberAnimation {
+                target: root
+                property: "calendarAccentPulseProgress"
+                to: 0
+                duration: MotionTokens.directSettle
+                easing.type: MotionTokens.settle
+            }
+        }
+
         Item {
             id: tilingStatusView
             y: 48
@@ -824,7 +906,17 @@ Item {
                                ? root.colors.accent
                                : (tilingManager.layoutRevision % 2 === 0
                                   ? root.colors.text : root.colors.secondary)
+                        opacity: tilingManager.previewSlot < 0
+                                 || tilingManager.previewSlot === 0 ? 1 : 0.28
+                        scale: tilingManager.previewSlot === 0
+                               ? 1.06 : (tilingManager.previewSlot >= 0 ? 0.94 : 1)
+                        transform: Translate {
+                            x: root.tilingCommitProgress * 4
+                            y: -root.tilingCommitProgress * 2
+                        }
                         Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
+                        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
+                        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover; easing.type: MotionTokens.settle } }
                     }
                     Rectangle {
                         id: secondTilePreview
@@ -837,9 +929,20 @@ Item {
                                ? root.colors.accent
                                : (tilingManager.layoutRevision % 2 === 0
                                   ? root.colors.secondary : root.colors.text)
+                        opacity: tilingManager.previewSlot < 0
+                                 || tilingManager.previewSlot === 1 ? 1 : 0.28
+                        scale: tilingManager.previewSlot === 1
+                               ? 1.06 : (tilingManager.previewSlot >= 0 ? 0.94 : 1)
+                        transform: Translate {
+                            x: -root.tilingCommitProgress * 4
+                            y: root.tilingCommitProgress * 2
+                        }
                         Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
+                        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
+                        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover; easing.type: MotionTokens.settle } }
                     }
                     Rectangle {
+                        id: thirdTilePreview
                         x: 20
                         y: 16
                         width: 15
@@ -847,9 +950,17 @@ Item {
                         radius: 3
                         color: tilingManager.previewSlot === 2
                                ? root.colors.accent : root.colors.tertiary
+                        opacity: tilingManager.previewSlot < 0
+                                 || tilingManager.previewSlot === 2 ? 1 : 0.28
+                        scale: tilingManager.previewSlot === 2
+                               ? 1.06 : (tilingManager.previewSlot >= 0 ? 0.94 : 1)
+                        transform: Translate { y: -root.tilingCommitProgress * 2 }
                         Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
+                        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
+                        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover; easing.type: MotionTokens.settle } }
                     }
                     Rectangle {
+                        id: resizeDivider
                         visible: tilingManager.adjusting
                                  && tilingManager.interactionKind === "RESIZING"
                         x: Math.max(2, Math.min(parent.width - 3,
@@ -859,6 +970,7 @@ Item {
                         height: parent.height - 4
                         radius: 1
                         color: root.colors.accent
+                        transformOrigin: Item.Center
                         Behavior on x {
                             enabled: !root.reducedMotion
                             NumberAnimation { duration: 45; easing.type: Easing.OutCubic }
@@ -957,6 +1069,32 @@ Item {
                     to: 0
                     duration: MotionTokens.directSettle
                     easing.type: MotionTokens.easeOut
+                }
+            }
+
+            SequentialAnimation {
+                id: constraintPulse
+                NumberAnimation {
+                    target: resizeDivider
+                    property: "scale"
+                    from: 1
+                    to: 1.35
+                    duration: MotionTokens.press
+                    easing.type: MotionTokens.easeOut
+                }
+                NumberAnimation {
+                    target: resizeDivider
+                    property: "scale"
+                    to: 0.94
+                    duration: 70
+                    easing.type: Easing.InOutCubic
+                }
+                NumberAnimation {
+                    target: resizeDivider
+                    property: "scale"
+                    to: 1
+                    duration: MotionTokens.hover
+                    easing.type: MotionTokens.settle
                 }
             }
         }
