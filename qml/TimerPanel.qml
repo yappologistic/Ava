@@ -192,51 +192,20 @@ Item {
             }
         }
 
-        Text {
+        RollingDigits {
             id: selectedTimeText
             anchors.right: parent.right
             anchors.rightMargin: 28
             y: 67
             text: root.selectedMinutes + ":00"
             color: root.timerOrange
-            font.family: root.uiFont
-            font.pixelSize: 39
-            font.weight: Font.Light
-            font.letterSpacing: -1.7
-            font.features: { "tnum": 1 }
+            fontFamily: root.uiFont
+            fontPixelSize: 39
+            fontWeight: Font.Light
+            letterSpacing: -1.7
+            reducedMotion: root.reducedMotion
+            rollDirection: 1
             transform: Translate { id: selectedTimeShift }
-
-            onTextChanged: {
-                if (!root.reducedMotion)
-                    selectedTimeRoll.restart()
-            }
-        }
-
-        ParallelAnimation {
-            id: selectedTimeRoll
-            NumberAnimation {
-                target: selectedTimeShift
-                property: "y"
-                from: 5
-                to: 0
-                duration: MotionTokens.state
-                easing.type: MotionTokens.easeOut
-            }
-            SequentialAnimation {
-                NumberAnimation {
-                    target: selectedTimeText
-                    property: "opacity"
-                    from: 0.42
-                    to: 0.72
-                    duration: MotionTokens.press
-                }
-                NumberAnimation {
-                    target: selectedTimeText
-                    property: "opacity"
-                    to: 1
-                    duration: MotionTokens.press
-                }
-            }
         }
 
         SequentialAnimation {
@@ -336,49 +305,17 @@ Item {
                 width: countdownText.implicitWidth
                 height: 60
 
-                Text {
+                RollingDigits {
                     id: countdownText
                     y: 12
                     text: controller.timerRemainingText
                     color: "#f5f5f7"
-                    font.family: root.uiFont
-                    font.pixelSize: 35
-                    font.weight: Font.Light
-                    font.letterSpacing: -1.5
-                    font.features: { "tnum": 1 }
-                    transformOrigin: Item.Left
-                    transform: Translate { id: countdownShift }
-
-                    onTextChanged: {
-                        if (!root.reducedMotion)
-                            countdownRoll.restart()
-                    }
-                    ParallelAnimation {
-                        id: countdownRoll
-                        NumberAnimation {
-                            target: countdownShift
-                            property: "y"
-                            from: 5
-                            to: 0
-                            duration: MotionTokens.state
-                            easing.type: MotionTokens.easeOut
-                        }
-                        SequentialAnimation {
-                            NumberAnimation {
-                                target: countdownText
-                                property: "opacity"
-                                from: 0.50
-                                to: 0.78
-                                duration: MotionTokens.press
-                            }
-                            NumberAnimation {
-                                target: countdownText
-                                property: "opacity"
-                                to: 1
-                                duration: MotionTokens.press
-                            }
-                        }
-                    }
+                    fontFamily: root.uiFont
+                    fontPixelSize: 35
+                    fontWeight: Font.Light
+                    letterSpacing: -1.5
+                    reducedMotion: root.reducedMotion
+                    rollDirection: -1
                 }
             }
         }

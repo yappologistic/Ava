@@ -41,6 +41,7 @@ class IslandController final : public QObject
     Q_PROPERTY(double mediaProgress READ mediaProgress NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaPositionText READ mediaPositionText NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaDurationText READ mediaDurationText NOTIFY mediaChanged)
+    Q_PROPERTY(QVariantList audioPeakLevels READ audioPeakLevels NOTIFY audioPeakChanged)
 
     Q_PROPERTY(QString networkName READ networkName NOTIFY systemChanged)
     Q_PROPERTY(QString networkStatus READ networkStatus NOTIFY systemChanged)
@@ -87,6 +88,7 @@ public:
     double mediaProgress() const { return m_mediaProgress; }
     QString mediaPositionText() const { return m_mediaPositionText; }
     QString mediaDurationText() const { return m_mediaDurationText; }
+    QVariantList audioPeakLevels() const { return m_audioPeakLevels; }
 
     QString networkName() const { return m_networkName; }
     QString networkStatus() const { return m_networkStatus; }
@@ -130,12 +132,14 @@ signals:
     void clockChanged();
     void timerChanged();
     void mediaChanged();
+    void audioPeakChanged();
     void systemChanged();
     void droppedFilesChanged();
 
 private slots:
     void tick();
     void updateTimer();
+    void updateAudioPeak();
     void soundTimerAlert();
 
 private:
@@ -151,6 +155,7 @@ private:
     std::shared_ptr<PlatformState> m_platform;
     QTimer m_timer;
     QTimer m_countdownTimer;
+    QTimer m_audioMeterTimer;
     QTimer m_alarmTimer;
     int m_slowRefreshCounter = 0;
 
@@ -188,6 +193,7 @@ private:
     double m_mediaProgress = 0.0;
     QString m_mediaPositionText = QStringLiteral("0:00");
     QString m_mediaDurationText = QStringLiteral("0:00");
+    QVariantList m_audioPeakLevels{0.0, 0.0, 0.0, 0.0};
 
     QString m_networkName;
     QString m_networkStatus = QStringLiteral("Offline");

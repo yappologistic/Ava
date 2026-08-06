@@ -362,17 +362,19 @@ Item {
             anchors.horizontalCenter: parent.horizontalCenter
             spacing: 3
 
-            Text {
+            RollingDigits {
+                id: expandedClockDigits
                 text: controller.timeText
                 color: root.colors.text
-                font.family: root.uiFont
-                font.pixelSize: 25
-                font.weight: Font.DemiBold
-                font.letterSpacing: -1
-                font.features: { "tnum": 1 }
+                fontFamily: root.uiFont
+                fontPixelSize: 25
+                fontWeight: Font.DemiBold
+                letterSpacing: -1
+                reducedMotion: root.reducedMotion
+                rollDirection: 1
             }
             Text {
-                anchors.bottom: parent.children[0].bottom
+                anchors.bottom: expandedClockDigits.bottom
                 anchors.bottomMargin: 4
                 text: controller.meridiemText
                 color: root.colors.secondary

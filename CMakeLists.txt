@@ -30,6 +30,7 @@ qt_add_qml_module(Ava
         qml/IslandButton.qml
         qml/MotionTokens.qml
         qml/NotchSurface.qml
+        qml/RollingDigits.qml
     RESOURCES
         assets/icons/play-dark.svg
         assets/icons/pause-dark.svg
