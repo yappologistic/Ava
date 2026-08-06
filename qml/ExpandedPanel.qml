@@ -12,6 +12,7 @@ Item {
     property bool expanded: false
     property bool dragActive: false
     property bool reducedMotion: false
+    property bool tilingFeedbackActive: false
     readonly property date currentDate: {
         const clockToken = controller.dateText
         return new Date()
@@ -246,8 +247,10 @@ Item {
             y: 48
             width: parent.width
             height: 62
-            opacity: actionHover.hovered || tilingManager.enabled ? 0 : 1
-            scale: actionHover.hovered || tilingManager.enabled ? 0.96 : 1
+            opacity: actionHover.hovered || tilingManager.enabled
+                     || root.tilingFeedbackActive ? 0 : 1
+            scale: actionHover.hovered || tilingManager.enabled
+                   || root.tilingFeedbackActive ? 0.96 : 1
 
             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
             Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
@@ -316,8 +319,10 @@ Item {
             y: 48
             width: parent.width
             height: 62
-            opacity: tilingManager.enabled && !actionHover.hovered ? 1 : 0
-            scale: tilingManager.enabled && !actionHover.hovered ? 1 : 0.96
+            opacity: (tilingManager.enabled || root.tilingFeedbackActive)
+                     && !actionHover.hovered ? 1 : 0
+            scale: (tilingManager.enabled || root.tilingFeedbackActive)
+                   && !actionHover.hovered ? 1 : 0.96
 
             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
             Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
@@ -376,11 +381,13 @@ Item {
                         font.letterSpacing: 1
                     }
                     Text {
-                        text: tilingManager.tiledWindowCount === 0
+                        text: !tilingManager.enabled
+                              ? "OFF"
+                              : (tilingManager.tiledWindowCount === 0
                               ? "READY"
                               : (tilingManager.tiledWindowCount === 1
                                  ? "1 WINDOW"
-                                 : tilingManager.tiledWindowCount + " WINDOWS")
+                                 : tilingManager.tiledWindowCount + " WINDOWS"))
                         color: root.colors.tertiary
                         font.family: root.uiFont
                         font.pixelSize: 8

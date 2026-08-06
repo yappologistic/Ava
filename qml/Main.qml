@@ -32,6 +32,7 @@ Window {
     property real islandWidthVelocity: 0
     property real islandHeightVelocity: 0
     property bool motionReady: false
+    property bool tilingFeedbackActive: false
 
     // A lightly underdamped, axis-staggered response measured against the reference.
     // Height leads while opening; width leads while closing. Angular frequency keeps
@@ -148,6 +149,26 @@ Window {
         }
     }
 
+    Connections {
+        target: tilingManager
+        function onEnabledChanged() {
+            window.tilingFeedbackActive = true
+            controller.setExpanded(true)
+            tilingFeedbackTimer.restart()
+        }
+    }
+
+    Timer {
+        id: tilingFeedbackTimer
+        interval: 1100
+        repeat: false
+        onTriggered: {
+            window.tilingFeedbackActive = false
+            if (!controller.pinned && !islandHover.hovered && !qaMode)
+                controller.setExpanded(false)
+        }
+    }
+
     FrameAnimation {
         id: morphFrameClock
         running: window.motionReady && !controller.reducedMotion
@@ -172,6 +193,7 @@ Window {
         repeat: false
         running: controller.expanded && !controller.pinned
                  && !islandHover.hovered && !qaMode
+                 && !window.tilingFeedbackActive
         onTriggered: controller.setExpanded(false)
     }
 
@@ -730,6 +752,7 @@ Window {
             expanded: controller.expanded
             dragActive: window.dragActive
             reducedMotion: controller.reducedMotion
+            tilingFeedbackActive: window.tilingFeedbackActive
         }
 
         Item {
