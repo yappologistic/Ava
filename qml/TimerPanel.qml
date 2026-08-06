@@ -116,7 +116,7 @@ Item {
 
         Item {
             anchors.horizontalCenter: ruler.horizontalCenter
-            y: 57
+            y: 60
             width: 14
             height: 10
 
