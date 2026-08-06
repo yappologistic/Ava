@@ -160,10 +160,10 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Dynamic Island"));
     app.setApplicationDisplayName(QStringLiteral("Dynamic Island"));
     app.setOrganizationName(QStringLiteral("MyLand"));
-    const int snProFontId = QFontDatabase::addApplicationFont(
-        QStringLiteral(":/qt/qml/DynamicIsland/assets/fonts/SNPro[wght].ttf"));
-    if (snProFontId >= 0) {
-        const QStringList fontFamilies = QFontDatabase::applicationFontFamilies(snProFontId);
+    const int geistFontId = QFontDatabase::addApplicationFont(
+        QStringLiteral(":/qt/qml/DynamicIsland/assets/fonts/Geist[wght].ttf"));
+    if (geistFontId >= 0) {
+        const QStringList fontFamilies = QFontDatabase::applicationFontFamilies(geistFontId);
         if (!fontFamilies.isEmpty()) {
             QFont appFont(fontFamilies.constFirst());
             appFont.setPointSizeF(10.0);

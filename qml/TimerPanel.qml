@@ -7,7 +7,7 @@ Item {
     id: root
 
     property var colors
-    property string uiFont: "SN Pro"
+    property string uiFont: "Geist"
     property string iconFont: "Segoe Fluent Icons"
     property bool reducedMotion: false
     property int selectedMinutes: 15
