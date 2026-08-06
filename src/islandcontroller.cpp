@@ -862,9 +862,18 @@ void IslandController::updateAudioPeak()
     }
 
     for (qsizetype index = 0; index < nextLevels.size(); ++index) {
+        static constexpr std::array<double, 5> attackResponses{
+            0.38, 0.29, 0.44, 0.31, 0.40
+        };
+        static constexpr std::array<double, 5> releaseResponses{
+            0.12, 0.18, 0.10, 0.17, 0.13
+        };
         const double previous = m_audioPeakLevels.at(index).toDouble();
         const double raw = nextLevels.at(index).toDouble();
-        const double response = raw > previous ? 0.34 : 0.14;
+        const size_t responseIndex = static_cast<size_t>(index);
+        const double response = raw > previous
+            ? attackResponses.at(responseIndex)
+            : releaseResponses.at(responseIndex);
         nextLevels[index] = previous + (raw - previous) * response;
     }
 
