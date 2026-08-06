@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractNativeEventFilter>
+#include <QElapsedTimer>
 #include <QObject>
 #include <QSet>
 #include <QString>
@@ -45,11 +46,15 @@ private:
     struct NativeState;
 
     void reconcileWindows();
+    void advanceAnimation();
     void restoreWindows();
+    void finishRestoreWindows();
     void setTiledWindowCount(int count);
 
     std::unique_ptr<NativeState> m_native;
     QTimer m_reconcileTimer;
+    QTimer m_animationTimer;
+    QElapsedTimer m_animationClock;
     bool m_enabled = false;
     int m_tiledWindowCount = 0;
 };
