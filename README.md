@@ -37,6 +37,8 @@ Workspace tiling is off by default. When enabled, a native Win32 engine arranges
 
 Resize a tiled window from an internal edge to change the adjacent split; the chosen proportion is preserved across automatic retiles. Drag a tiled window by its title bar and release it over another tile to swap their locations without changing the slot sizes. Minimum-size constraints still take priority when an application cannot accept the requested geometry.
 
+Tiling and restoration use a short smoothstep transition, atomic multi-window placement, and Desktop Window Manager frame synchronization. Geometry updates follow the active display cadence and duplicate frames are discarded before they can trigger unnecessary application reflow.
+
 Every window placement is captured before the engine moves it. Disabling tiling, pressing `Win+Alt+T` again, or closing Dynamic Island restores surviving windows to their original normal, maximized, or minimized placement.
 
 Exclusive DirectX fullscreen can bypass the normal Desktop Window Manager composition path, so no conventional desktop overlay can guarantee visibility above every exclusive-mode game.

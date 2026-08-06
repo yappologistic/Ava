@@ -380,6 +380,8 @@ struct WindowTilingManager::NativeState
         QRect startNative;
         QRect targetNative;
         QRect targetVisible;
+        QRect lastAppliedNative;
+        bool hasAppliedFrame = false;
     };
 
     HWND islandWindow = nullptr;
@@ -1023,7 +1025,9 @@ void WindowTilingManager::reconcileWindows()
         m_native->animationItems.append({window,
                                          startNative,
                                          nativeRectForVisibleFrame(window, targetVisible),
-                                         targetVisible});
+                                         targetVisible,
+                                         {},
+                                         false});
     }
     m_native->targetVisibleFrames = nextTargets;
 
@@ -1049,8 +1053,10 @@ void WindowTilingManager::advanceAnimation()
                                                 / static_cast<qreal>(kAnimationDurationMs),
                                             0.0,
                                             1.0);
-    const qreal inverse = 1.0 - linearProgress;
-    const qreal progress = 1.0 - inverse * inverse * inverse;
+    // Smoothstep keeps the 165 ms response fast while eliminating the large
+    // first-frame jump of an ease-out cubic. Both endpoint velocities are zero.
+    const qreal progress = linearProgress * linearProgress
+        * (3.0 - 2.0 * linearProgress);
 
     struct FrameStep
     {
@@ -1059,7 +1065,7 @@ void WindowTilingManager::advanceAnimation()
     };
     QVector<FrameStep> frameSteps;
     frameSteps.reserve(m_native->animationItems.size());
-    for (const NativeState::AnimationItem &item : std::as_const(m_native->animationItems)) {
+    for (NativeState::AnimationItem &item : m_native->animationItems) {
         if (!IsWindow(item.window)) {
             continue;
         }
@@ -1072,36 +1078,50 @@ void WindowTilingManager::advanceAnimation()
                                               item.targetNative.width())),
                           qMax(1, interpolate(item.startNative.height(),
                                               item.targetNative.height())));
+        if (item.hasAppliedFrame && item.lastAppliedNative == frame) {
+            continue;
+        }
+        item.lastAppliedNative = frame;
+        item.hasAppliedFrame = true;
         frameSteps.append({item.window, frame});
     }
 
-    HDWP deferred = BeginDeferWindowPos(frameSteps.size());
-    bool deferSucceeded = deferred != nullptr;
-    for (const FrameStep &step : std::as_const(frameSteps)) {
-        if (!deferSucceeded) {
-            break;
-        }
-        deferred = DeferWindowPos(deferred,
-                                  step.window,
-                                  nullptr,
-                                  step.frame.x(),
-                                  step.frame.y(),
-                                  step.frame.width(),
-                                  step.frame.height(),
-                                  SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
-        deferSucceeded = deferred != nullptr;
-    }
-    if (deferSucceeded) {
-        EndDeferWindowPos(deferred);
-    } else {
+    if (!frameSteps.isEmpty()) {
+        HDWP deferred = BeginDeferWindowPos(frameSteps.size());
+        bool deferSucceeded = deferred != nullptr;
         for (const FrameStep &step : std::as_const(frameSteps)) {
-            SetWindowPos(step.window,
-                         nullptr,
-                         step.frame.x(),
-                         step.frame.y(),
-                         step.frame.width(),
-                         step.frame.height(),
-                         SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
+            if (!deferSucceeded) {
+                break;
+            }
+            deferred = DeferWindowPos(deferred,
+                                      step.window,
+                                      nullptr,
+                                      step.frame.x(),
+                                      step.frame.y(),
+                                      step.frame.width(),
+                                      step.frame.height(),
+                                      SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER
+                                          | SWP_DEFERERASE);
+            deferSucceeded = deferred != nullptr;
+        }
+        if (deferSucceeded) {
+            EndDeferWindowPos(deferred);
+        } else {
+            for (const FrameStep &step : std::as_const(frameSteps)) {
+                SetWindowPos(step.window,
+                             nullptr,
+                             step.frame.x(),
+                             step.frame.y(),
+                             step.frame.width(),
+                             step.frame.height(),
+                             SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER
+                                 | SWP_DEFERERASE);
+            }
+        }
+
+        BOOL compositionEnabled = FALSE;
+        if (SUCCEEDED(DwmIsCompositionEnabled(&compositionEnabled)) && compositionEnabled) {
+            DwmFlush();
         }
     }
 
@@ -1170,7 +1190,9 @@ void WindowTilingManager::restoreWindows()
                                                nativeBounds.right - nativeBounds.left,
                                                nativeBounds.bottom - nativeBounds.top),
                                          nativeRectForVisibleFrame(window, iterator.value()),
-                                         iterator.value()});
+                                         iterator.value(),
+                                         {},
+                                         false});
     }
     setTiledWindowCount(0);
     if (!m_native->animationItems.isEmpty()) {
