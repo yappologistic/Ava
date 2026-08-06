@@ -10,7 +10,7 @@ Window {
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint
     title: "Ava"
 
-    readonly property string uiFont: "Geist"
+    readonly property string uiFont: "Inter"
     readonly property string iconFont: "Segoe Fluent Icons"
     readonly property int compactWidth: 150
     readonly property int compactHeight: 39

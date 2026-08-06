@@ -46,8 +46,8 @@ qt_add_qml_module(Ava
         assets/icons/timer-light.svg
         assets/icons/timer-dark.svg
         assets/icons/timer-orange.svg
-        assets/fonts/Geist[wght].ttf
-        assets/fonts/OFL-Geist.txt
+        assets/fonts/Inter[opsz,wght].ttf
+        assets/fonts/OFL-Inter.txt
 )
 
 target_link_libraries(Ava
