@@ -20,6 +20,10 @@ Button {
     property bool reducedMotion: controller.reducedMotion
     property bool motionReady: false
     property bool rotatesOnSelection: false
+    property bool playbackMorph: false
+    property bool playbackPlaying: false
+    property string transportKind: ""
+    property real pressShiftX: 0
     property real focusProgress: visualFocus ? 1 : 0
     readonly property string visualToken: glyph + "|" + iconSource + "|" + invertedIconSource
 
@@ -106,8 +110,21 @@ Button {
         Row {
             id: labelRow
             anchors.centerIn: parent
-            spacing: control.glyph.length > 0 && control.text.length > 0 ? 7 : 0
-            transform: Translate { id: feedbackShift }
+            spacing: (control.glyph.length > 0 || control.playbackMorph
+                      || control.transportKind.length > 0)
+                     && control.text.length > 0 ? 7 : 0
+            transform: [
+                Translate { id: feedbackShift },
+                Translate {
+                    x: control.down ? control.pressShiftX : 0
+                    Behavior on x {
+                        NumberAnimation {
+                            duration: control.reducedMotion ? 0 : MotionTokens.press
+                            easing.type: MotionTokens.easeOut
+                        }
+                    }
+                }
+            ]
 
             ParallelAnimation {
                 id: iconSwap
@@ -147,7 +164,9 @@ Button {
             }
 
             Text {
-                visible: control.iconSource.toString().length === 0 && control.glyph.length > 0
+                visible: !control.playbackMorph && control.transportKind.length === 0
+                         && control.iconSource.toString().length === 0
+                         && control.glyph.length > 0
                 text: control.glyph
                 color: control.accented || control.selected ? "#000000" : "#f5f5f7"
                 font.family: "Segoe Fluent Icons"
@@ -158,7 +177,9 @@ Button {
             }
 
             Image {
-                visible: control.iconSource.toString().length > 0
+                visible: !control.playbackMorph
+                         && control.transportKind.length === 0
+                         && control.iconSource.toString().length > 0
                 width: control.iconSize
                 height: control.iconSize
                 sourceSize.width: Math.ceil(control.iconSize * 2)
@@ -169,6 +190,17 @@ Button {
                 fillMode: Image.PreserveAspectFit
                 smooth: true
                 mipmap: true
+            }
+
+            PlaybackMorphIcon {
+                visible: control.playbackMorph || control.transportKind.length > 0
+                width: control.iconSize
+                height: control.iconSize
+                kind: control.transportKind.length > 0
+                      ? control.transportKind : "playback"
+                playing: control.playbackPlaying
+                color: control.accented || control.selected ? "#000000" : "#f5f5f7"
+                reducedMotion: control.reducedMotion
             }
 
             Text {

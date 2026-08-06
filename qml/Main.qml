@@ -1075,6 +1075,7 @@ Window {
             expanded: controller.expanded
             dragActive: window.dragActive
             reducedMotion: controller.reducedMotion
+            morphProgress: window.morphProgress
             tilingFeedbackActive: window.tilingFeedbackActive
         }
 

@@ -13,6 +13,7 @@ Item {
     property int selectedMinutes: 15
     property real visualTimerProgress: controller.timerProgress
     property real cancelProgressOverride: -1
+    property real timerLaunchProgress: 0
     property int lastObservedRemaining: controller.timerRemainingSeconds
     readonly property real effectiveTimerProgress: cancelProgressOverride >= 0
                                                    ? cancelProgressOverride
@@ -79,6 +80,10 @@ Item {
             flickDeceleration: 5200
             maximumFlickVelocity: 1700
             interactive: true
+            opacity: 1 - root.timerLaunchProgress
+            scale: 1 - root.timerLaunchProgress * 0.12
+            transformOrigin: Item.Bottom
+            transform: Translate { y: root.timerLaunchProgress * 7 }
 
             onContentXChanged: {
                 if (!snapAnimation.running) {
@@ -158,10 +163,13 @@ Item {
         Item {
             id: selectionIndicator
             anchors.horizontalCenter: ruler.horizontalCenter
-            y: ruler.moving || snapAnimation.running ? 66 : 64
+            y: (ruler.moving || snapAnimation.running ? 65 : 64)
+               + root.timerLaunchProgress * 8
             width: 14
-            height: 10
-            scale: ruler.moving || snapAnimation.running ? 0.88 : 1
+            height: ruler.moving || snapAnimation.running ? 12 : 10
+            opacity: 1 - root.timerLaunchProgress
+            scale: (ruler.moving || snapAnimation.running ? 1.10 : 1)
+                   * (1 - root.timerLaunchProgress * 0.12)
 
             Behavior on y {
                 NumberAnimation {
@@ -175,9 +183,18 @@ Item {
                     easing.type: MotionTokens.settle
                 }
             }
+            Behavior on height {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.hover
+                    easing.type: MotionTokens.easeOut
+                }
+            }
 
             Canvas {
+                id: selectionCanvas
                 anchors.fill: parent
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
                 onPaint: {
                     const context = getContext("2d")
                     context.reset()
@@ -200,7 +217,9 @@ Item {
             height: 39
             radius: height / 2
             color: startTap.pressed ? "#492b0b" : (startHover.hovered ? "#3d250c" : "#311e0a")
-            scale: startTap.pressed ? 0.965 : (startHover.hovered ? 1.018 : 1)
+            opacity: 1 - root.timerLaunchProgress
+            scale: (startTap.pressed ? 0.965 : (startHover.hovered ? 1.018 : 1))
+                   * (1 - root.timerLaunchProgress * 0.04)
             Accessible.name: "Start " + root.selectedMinutes + " minute timer"
             Accessible.role: Accessible.Button
 
@@ -237,34 +256,47 @@ Item {
             letterSpacing: -1.5
             reducedMotion: root.reducedMotion
             rollDirection: 1
-            transform: Translate { id: selectedTimeShift }
+            opacity: 1 - root.timerLaunchProgress * 0.18
+            scale: 1 - root.timerLaunchProgress * 0.38
+            transformOrigin: Item.Center
+            transform: Translate {
+                id: selectedTimeShift
+                x: -150 * root.timerLaunchProgress
+                y: -36 * root.timerLaunchProgress
+            }
         }
 
         SequentialAnimation {
             id: startCommitAnimation
-            ParallelAnimation {
-                NumberAnimation {
-                    target: startButton
-                    property: "scale"
-                    to: 0.94
-                    duration: MotionTokens.press
-                    easing.type: Easing.InCubic
-                }
-                NumberAnimation {
-                    target: selectedTimeShift
-                    property: "y"
-                    to: -4
-                    duration: MotionTokens.press
-                    easing.type: Easing.InCubic
-                }
+            NumberAnimation {
+                target: root
+                property: "timerLaunchProgress"
+                from: 0
+                to: 0.72
+                duration: root.reducedMotion ? 0 : 140
+                easing.type: Easing.InCubic
             }
             ScriptAction {
                 script: {
                     controller.startTimer(root.selectedMinutes * 60)
-                    selectedTimeShift.y = 0
                     collapseDelay.restart()
+                    launchReset.restart()
                 }
             }
+            NumberAnimation {
+                target: root
+                property: "timerLaunchProgress"
+                to: 1
+                duration: root.reducedMotion ? 0 : MotionTokens.press
+                easing.type: MotionTokens.easeOut
+            }
+        }
+
+        Timer {
+            id: launchReset
+            interval: root.reducedMotion ? 0 : 420
+            repeat: false
+            onTriggered: root.timerLaunchProgress = 0
         }
     }
 
