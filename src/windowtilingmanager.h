@@ -3,6 +3,8 @@
 #include <QAbstractNativeEventFilter>
 #include <QElapsedTimer>
 #include <QObject>
+#include <QPoint>
+#include <QRect>
 #include <QSet>
 #include <QString>
 #include <QTimer>
@@ -14,6 +16,7 @@ class WindowTilingManager final : public QObject, public QAbstractNativeEventFil
     Q_OBJECT
 
     Q_PROPERTY(bool enabled READ enabled WRITE setEnabled NOTIFY enabledChanged)
+    Q_PROPERTY(bool adjusting READ adjusting NOTIFY stateChanged)
     Q_PROPERTY(int tiledWindowCount READ tiledWindowCount NOTIFY stateChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
     Q_PROPERTY(QString shortcutText READ shortcutText CONSTANT)
@@ -23,6 +26,7 @@ public:
     ~WindowTilingManager() override;
 
     bool enabled() const { return m_enabled; }
+    bool adjusting() const { return m_adjusting; }
     int tiledWindowCount() const { return m_tiledWindowCount; }
     QString statusText() const;
     QString shortcutText() const { return QStringLiteral("Win+Alt+T"); }
@@ -46,6 +50,10 @@ private:
     struct NativeState;
 
     void reconcileWindows();
+    void beginWindowInteraction(quintptr nativeHandle);
+    void endWindowInteraction(quintptr nativeHandle);
+    bool adoptUserResize(quintptr nativeHandle, const QRect &currentFrame);
+    bool swapWindowAtPoint(quintptr nativeHandle, const QPoint &dropPoint);
     void advanceAnimation();
     void restoreWindows();
     void finishRestoreWindows();
@@ -56,5 +64,6 @@ private:
     QTimer m_animationTimer;
     QElapsedTimer m_animationClock;
     bool m_enabled = false;
+    bool m_adjusting = false;
     int m_tiledWindowCount = 0;
 };

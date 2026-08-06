@@ -35,6 +35,8 @@ The frameless Qt window is created with `WS_EX_TOPMOST`, `WS_EX_TOOLWINDOW`, and
 
 Workspace tiling is off by default. When enabled, a native Win32 engine arranges eligible application windows independently on each monitor using a recursive Dwindle split. It respects each monitor's working area, preserves the taskbar, leaves compact-island clearance on the island display, and maintains consistent outer and inner gaps. New windows enter the layout automatically, minimized windows remain untouched, and tool, owned, cloaked, topmost, fullscreen-style, or unresponsive surfaces are excluded.
 
+Resize a tiled window from an internal edge to change the adjacent split; the chosen proportion is preserved across automatic retiles. Drag a tiled window by its title bar and release it over another tile to swap their locations without changing the slot sizes. Minimum-size constraints still take priority when an application cannot accept the requested geometry.
+
 Every window placement is captured before the engine moves it. Disabling tiling, pressing `Win+Alt+T` again, or closing Dynamic Island restores surviving windows to their original normal, maximized, or minimized placement.
 
 Exclusive DirectX fullscreen can bypass the normal Desktop Window Manager composition path, so no conventional desktop overlay can guarantee visibility above every exclusive-mode game.

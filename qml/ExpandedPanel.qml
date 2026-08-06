@@ -381,13 +381,15 @@ Item {
                         font.letterSpacing: 1
                     }
                     Text {
-                        text: !tilingManager.enabled
+                        text: tilingManager.adjusting
+                              ? "ARRANGING"
+                              : (!tilingManager.enabled
                               ? "OFF"
                               : (tilingManager.tiledWindowCount === 0
                               ? "READY"
                               : (tilingManager.tiledWindowCount === 1
                                  ? "1 WINDOW"
-                                 : tilingManager.tiledWindowCount + " WINDOWS"))
+                                 : tilingManager.tiledWindowCount + " WINDOWS")))
                         color: root.colors.tertiary
                         font.family: root.uiFont
                         font.pixelSize: 8
