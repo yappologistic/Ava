@@ -16,7 +16,6 @@ class IslandController final : public QObject
     Q_PROPERTY(bool reducedMotion READ reducedMotion NOTIFY reducedMotionChanged)
 
     Q_PROPERTY(QString timeText READ timeText NOTIFY clockChanged)
-    Q_PROPERTY(QString meridiemText READ meridiemText NOTIFY clockChanged)
     Q_PROPERTY(QString compactDateText READ compactDateText NOTIFY clockChanged)
     Q_PROPERTY(QString dateText READ dateText NOTIFY clockChanged)
 
@@ -67,7 +66,6 @@ public:
     bool reducedMotion() const { return m_reducedMotion; }
 
     QString timeText() const { return m_timeText; }
-    QString meridiemText() const { return m_meridiemText; }
     QString compactDateText() const { return m_compactDateText; }
     QString dateText() const { return m_dateText; }
 
@@ -177,7 +175,6 @@ private:
     bool m_reducedMotion = false;
 
     QString m_timeText;
-    QString m_meridiemText;
     QString m_compactDateText;
     QString m_dateText;
 

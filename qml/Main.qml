@@ -100,6 +100,8 @@ Window {
         readonly property color tertiary: "#6e6e73"
         readonly property color accent: "#5ac8fa"
         readonly property color green: "#63e6a5"
+        readonly property color calendarAccent: "#9ad9cc"
+        readonly property color calendarSelection: "#17382f"
         readonly property color timer: "#ff9f0a"
     }
 
@@ -474,16 +476,6 @@ Window {
                     reducedMotion: controller.reducedMotion
                     rollDirection: 1
                 }
-                MorphingLabel {
-                    anchors.verticalCenter: compactClockDigits.verticalCenter
-                    anchors.verticalCenterOffset: 3
-                    text: controller.meridiemText
-                    color: colors.secondary
-                    fontFamily: window.uiFont
-                    fontPixelSize: 9
-                    fontWeight: Font.DemiBold
-                    reducedMotion: controller.reducedMotion
-                }
             }
 
             Row {
@@ -687,7 +679,7 @@ Window {
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: controller.timeText + " " + controller.meridiemText
+                    text: controller.timeText
                     color: colors.secondary
                     font.family: window.uiFont
                     font.pixelSize: 12
@@ -872,15 +864,6 @@ Window {
                             font.weight: Font.DemiBold
                             font.letterSpacing: -1.5
                             font.features: { "tnum": 1 }
-                        }
-                        Text {
-                            anchors.bottom: parent.children[0].bottom
-                            anchors.bottomMargin: 7
-                            text: controller.meridiemText
-                            color: colors.secondary
-                            font.family: window.uiFont
-                            font.pixelSize: 14
-                            font.weight: Font.DemiBold
                         }
                     }
 

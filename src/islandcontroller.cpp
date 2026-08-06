@@ -857,16 +857,14 @@ void IslandController::refreshForegroundFullscreen()
 void IslandController::updateClock()
 {
     const QDateTime now = QDateTime::currentDateTime();
-    const QString nextTime = now.toString(QStringLiteral("h:mm"));
-    const QString nextMeridiem = now.toString(QStringLiteral("AP"));
+    const QString nextTime = now.toString(QStringLiteral("HH:mm"));
     const QString nextCompactDate = now.toString(QStringLiteral("ddd, MMM d")).toUpper();
     const QString nextDate = now.toString(QStringLiteral("dddd, MMMM d"));
-    if (m_timeText == nextTime && m_meridiemText == nextMeridiem
-        && m_compactDateText == nextCompactDate && m_dateText == nextDate) {
+    if (m_timeText == nextTime && m_compactDateText == nextCompactDate
+        && m_dateText == nextDate) {
         return;
     }
     m_timeText = nextTime;
-    m_meridiemText = nextMeridiem;
     m_compactDateText = nextCompactDate;
     m_dateText = nextDate;
     emit clockChanged();
