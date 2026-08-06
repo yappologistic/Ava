@@ -35,6 +35,7 @@ class IslandController final : public QObject
     Q_PROPERTY(QString mediaSource READ mediaSource NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaAppIconUrl READ mediaAppIconUrl NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaArtworkUrl READ mediaArtworkUrl NOTIFY mediaChanged)
+    Q_PROPERTY(QString mediaArtworkAccent READ mediaArtworkAccent NOTIFY mediaChanged)
     Q_PROPERTY(bool mediaPlaying READ mediaPlaying NOTIFY mediaChanged)
     Q_PROPERTY(bool mediaCanPrevious READ mediaCanPrevious NOTIFY mediaChanged)
     Q_PROPERTY(bool mediaCanNext READ mediaCanNext NOTIFY mediaChanged)
@@ -82,6 +83,7 @@ public:
     QString mediaSource() const { return m_mediaSource; }
     QString mediaAppIconUrl() const { return m_mediaAppIconUrl; }
     QString mediaArtworkUrl() const { return m_mediaArtworkUrl; }
+    QString mediaArtworkAccent() const { return m_mediaArtworkAccent; }
     bool mediaPlaying() const { return m_mediaPlaying; }
     bool mediaCanPrevious() const { return m_mediaCanPrevious; }
     bool mediaCanNext() const { return m_mediaCanNext; }
@@ -186,6 +188,7 @@ private:
     QString m_mediaAppIconUrl;
     QString m_mediaIconSource;
     QString m_mediaArtworkUrl;
+    QString m_mediaArtworkAccent;
     QString m_mediaIdentity;
     bool m_mediaPlaying = false;
     bool m_mediaCanPrevious = false;
@@ -193,7 +196,7 @@ private:
     double m_mediaProgress = 0.0;
     QString m_mediaPositionText = QStringLiteral("0:00");
     QString m_mediaDurationText = QStringLiteral("0:00");
-    QVariantList m_audioPeakLevels{0.0, 0.0, 0.0, 0.0};
+    QVariantList m_audioPeakLevels{0.0, 0.0, 0.0, 0.0, 0.0};
 
     QString m_networkName;
     QString m_networkStatus = QStringLiteral("Offline");

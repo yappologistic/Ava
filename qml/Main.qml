@@ -435,7 +435,7 @@ Window {
                     spacing: 2
 
                     Repeater {
-                        model: 4
+                        model: 5
                         Rectangle {
                             required property int index
                             readonly property real audioLevel:
@@ -444,7 +444,8 @@ Window {
                             width: 2
                             height: 13
                             radius: 1
-                            color: colors.green
+                            color: controller.mediaArtworkAccent.length > 0
+                                   ? controller.mediaArtworkAccent : colors.green
                             transformOrigin: Item.Center
                             scale: controller.mediaPlaying
                                    ? 0.22 + Math.pow(audioLevel, 0.62) * 0.78 : 0.22
@@ -452,6 +453,12 @@ Window {
                             Behavior on scale {
                                 NumberAnimation {
                                     duration: controller.reducedMotion ? 0 : 135 + index * 17
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: controller.reducedMotion ? 0 : MotionTokens.content
                                     easing.type: Easing.OutCubic
                                 }
                             }

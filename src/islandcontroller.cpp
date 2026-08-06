@@ -1,6 +1,7 @@
 #include "islandcontroller.h"
 
 #include <QCryptographicHash>
+#include <QColor>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
@@ -14,6 +15,7 @@
 #include <QtGlobal>
 
 #include <atomic>
+#include <array>
 #include <cstring>
 #include <iterator>
 #include <mutex>
@@ -54,6 +56,90 @@ struct __declspec(uuid("905a0fef-bc53-11df-8c49-001e4fc686da")) IBufferByteAcces
 QString toQString(const winrt::hstring &value)
 {
     return QString::fromWCharArray(value.c_str(), static_cast<qsizetype>(value.size()));
+}
+
+QString artworkAccentColor(const QImage &source)
+{
+    if (source.isNull()) {
+        return {};
+    }
+
+    struct ColorBucket {
+        double red = 0;
+        double green = 0;
+        double blue = 0;
+        double weight = 0;
+    };
+    std::array<ColorBucket, 18> buckets{};
+    const QImage image = source.scaled(36, 36, Qt::IgnoreAspectRatio,
+                                       Qt::SmoothTransformation)
+                             .convertToFormat(QImage::Format_ARGB32);
+    double neutralRed = 0;
+    double neutralGreen = 0;
+    double neutralBlue = 0;
+    double neutralWeight = 0;
+
+    for (int y = 0; y < image.height(); ++y) {
+        const auto *scanLine = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor color = QColor::fromRgba(scanLine[x]);
+            if (color.alpha() < 96) {
+                continue;
+            }
+            int hue = 0;
+            int saturation = 0;
+            int value = 0;
+            color.getHsv(&hue, &saturation, &value);
+            if (value < 32) {
+                continue;
+            }
+
+            const double neutralPixelWeight = 0.25 + value / 255.0;
+            neutralRed += color.red() * neutralPixelWeight;
+            neutralGreen += color.green() * neutralPixelWeight;
+            neutralBlue += color.blue() * neutralPixelWeight;
+            neutralWeight += neutralPixelWeight;
+
+            if (hue < 0 || saturation < 44) {
+                continue;
+            }
+            const int bucketIndex = qBound(0, hue * static_cast<int>(buckets.size()) / 360,
+                                           static_cast<int>(buckets.size()) - 1);
+            const double weight = (0.35 + saturation / 255.0)
+                * (0.30 + value / 255.0);
+            buckets[static_cast<size_t>(bucketIndex)].red += color.red() * weight;
+            buckets[static_cast<size_t>(bucketIndex)].green += color.green() * weight;
+            buckets[static_cast<size_t>(bucketIndex)].blue += color.blue() * weight;
+            buckets[static_cast<size_t>(bucketIndex)].weight += weight;
+        }
+    }
+
+    const ColorBucket *bestBucket = nullptr;
+    for (const ColorBucket &bucket : buckets) {
+        if (bucket.weight > 0 && (!bestBucket || bucket.weight > bestBucket->weight)) {
+            bestBucket = &bucket;
+        }
+    }
+
+    QColor accent;
+    if (bestBucket) {
+        accent = QColor(qRound(bestBucket->red / bestBucket->weight),
+                        qRound(bestBucket->green / bestBucket->weight),
+                        qRound(bestBucket->blue / bestBucket->weight));
+    } else if (neutralWeight > 0) {
+        accent = QColor(qRound(neutralRed / neutralWeight),
+                        qRound(neutralGreen / neutralWeight),
+                        qRound(neutralBlue / neutralWeight));
+    } else {
+        return {};
+    }
+
+    int hue = 0;
+    int saturation = 0;
+    int value = 0;
+    accent.getHsv(&hue, &saturation, &value);
+    accent.setHsv(hue, saturation, qMax(value, 145));
+    return accent.name(QColor::HexRgb);
 }
 
 QImage imageFromStreamReference(const StorageStreams::RandomAccessStreamReference &reference)
@@ -731,7 +817,7 @@ void IslandController::soundTimerAlert()
 void IslandController::updateAudioPeak()
 {
 #ifdef Q_OS_WIN
-    QVariantList nextLevels{0.0, 0.0, 0.0, 0.0};
+    QVariantList nextLevels{0.0, 0.0, 0.0, 0.0, 0.0};
     if (m_mediaAvailable && m_mediaPlaying && !m_muted) {
         if (!m_platform->audioMeter) {
             ComPtr<IMMDeviceEnumerator> enumerator;
@@ -764,8 +850,9 @@ void IslandController::updateAudioPeak()
                 const double master = qBound(0.0, static_cast<double>(masterPeak), 1.0);
                 nextLevels = {
                     left,
-                    qBound(0.0, left * 0.68 + master * 0.32, 1.0),
-                    qBound(0.0, right * 0.68 + master * 0.32, 1.0),
+                    qBound(0.0, left * 0.62 + master * 0.38, 1.0),
+                    master,
+                    qBound(0.0, right * 0.62 + master * 0.38, 1.0),
                     right
                 };
             } else {
@@ -810,6 +897,7 @@ void IslandController::refreshMedia()
         QString source;
         QString appIconUrl;
         QString artworkUrl;
+        QString artworkAccent;
         QString identity;
         bool playing = false;
         bool canPrevious = false;
@@ -824,10 +912,12 @@ void IslandController::refreshMedia()
     const QString previousIconSource = m_mediaIconSource;
     const QString previousAppIconUrl = m_mediaAppIconUrl;
     const QString previousArtworkUrl = m_mediaArtworkUrl;
+    const QString previousArtworkAccent = m_mediaArtworkAccent;
     const QPointer<IslandController> self(this);
 
     QThreadPool::globalInstance()->start([platform, previousIdentity, previousIconSource,
-                                          previousAppIconUrl, previousArtworkUrl, self]() {
+                                          previousAppIconUrl, previousArtworkUrl,
+                                          previousArtworkAccent, self]() {
         MediaSnapshot snapshot;
         bool apartmentInitialized = false;
         try {
@@ -900,6 +990,7 @@ void IslandController::refreshMedia()
 
                 if (snapshot.identity == previousIdentity) {
                     snapshot.artworkUrl = previousArtworkUrl;
+                    snapshot.artworkAccent = previousArtworkAccent;
                 } else if (const auto thumbnail = properties.Thumbnail()) {
                     const auto stream = thumbnail.OpenReadAsync().get();
                     const auto size = static_cast<uint32_t>(
@@ -913,6 +1004,7 @@ void IslandController::refreshMedia()
                         if (SUCCEEDED(byteAccess->Buffer(&bytes)) && bytes) {
                             QImage image;
                             if (image.loadFromData(bytes, static_cast<int>(readBuffer.Length()))) {
+                                snapshot.artworkAccent = artworkAccentColor(image);
                                 const QString cacheDir = QStandardPaths::writableLocation(
                                     QStandardPaths::CacheLocation);
                                 QDir().mkpath(cacheDir);
@@ -957,6 +1049,7 @@ void IslandController::refreshMedia()
                 || self->m_mediaSource != snapshot.source
                 || self->m_mediaAppIconUrl != snapshot.appIconUrl
                 || self->m_mediaArtworkUrl != snapshot.artworkUrl
+                || self->m_mediaArtworkAccent != snapshot.artworkAccent
                 || self->m_mediaPlaying != snapshot.playing
                 || self->m_mediaCanPrevious != snapshot.canPrevious
                 || self->m_mediaCanNext != snapshot.canNext
@@ -971,6 +1064,7 @@ void IslandController::refreshMedia()
             self->m_mediaAppIconUrl = snapshot.appIconUrl;
             self->m_mediaIconSource = snapshot.source;
             self->m_mediaArtworkUrl = snapshot.artworkUrl;
+            self->m_mediaArtworkAccent = snapshot.artworkAccent;
             self->m_mediaIdentity = snapshot.identity;
             self->m_mediaPlaying = snapshot.playing;
             self->m_mediaCanPrevious = snapshot.canPrevious;
