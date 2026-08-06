@@ -10,6 +10,7 @@
 #include <QStandardPaths>
 #include <QThreadPool>
 #include <QUrl>
+#include <QVector>
 #include <QtGlobal>
 
 #include <atomic>
@@ -352,6 +353,7 @@ struct IslandController::PlatformState
 #ifdef Q_OS_WIN
     MediaControl::GlobalSystemMediaTransportControlsSessionManager mediaManager{nullptr};
     MediaControl::GlobalSystemMediaTransportControlsSession mediaSession{nullptr};
+    ComPtr<IAudioMeterInformation> audioMeter;
     std::mutex mediaMutex;
     std::atomic_bool mediaRefreshInFlight{false};
 #endif
@@ -371,6 +373,9 @@ IslandController::IslandController(QObject *parent)
     m_countdownTimer.setTimerType(Qt::PreciseTimer);
     m_countdownTimer.setInterval(33);
     connect(&m_countdownTimer, &QTimer::timeout, this, &IslandController::updateTimer);
+    m_audioMeterTimer.setTimerType(Qt::PreciseTimer);
+    m_audioMeterTimer.setInterval(50);
+    connect(&m_audioMeterTimer, &QTimer::timeout, this, &IslandController::updateAudioPeak);
     m_alarmTimer.setTimerType(Qt::CoarseTimer);
     m_alarmTimer.setInterval(1100);
     connect(&m_alarmTimer, &QTimer::timeout, this, &IslandController::soundTimerAlert);
@@ -378,6 +383,7 @@ IslandController::IslandController(QObject *parent)
     refreshSystemState();
     QTimer::singleShot(0, this, &IslandController::refreshMedia);
     m_timer.start(1000);
+    m_audioMeterTimer.start();
 }
 
 IslandController::~IslandController() = default;
@@ -719,6 +725,74 @@ void IslandController::soundTimerAlert()
 {
 #ifdef Q_OS_WIN
     MessageBeep(MB_ICONEXCLAMATION);
+#endif
+}
+
+void IslandController::updateAudioPeak()
+{
+#ifdef Q_OS_WIN
+    QVariantList nextLevels{0.0, 0.0, 0.0, 0.0};
+    if (m_mediaAvailable && m_mediaPlaying && !m_muted) {
+        if (!m_platform->audioMeter) {
+            ComPtr<IMMDeviceEnumerator> enumerator;
+            ComPtr<IMMDevice> device;
+            if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                           IID_PPV_ARGS(&enumerator)))
+                && SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &device))) {
+                device->Activate(__uuidof(IAudioMeterInformation), CLSCTX_ALL, nullptr,
+                                 reinterpret_cast<void **>(
+                                     m_platform->audioMeter.GetAddressOf()));
+            }
+        }
+
+        if (m_platform->audioMeter) {
+            UINT channelCount = 0;
+            float masterPeak = 0.0f;
+            if (SUCCEEDED(m_platform->audioMeter->GetMeteringChannelCount(&channelCount))
+                && SUCCEEDED(m_platform->audioMeter->GetPeakValue(&masterPeak))) {
+                QVector<float> channelPeaks(static_cast<qsizetype>(qMax<UINT>(1, channelCount)),
+                                            masterPeak);
+                if (channelCount > 0) {
+                    m_platform->audioMeter->GetChannelsPeakValues(channelCount,
+                                                                  channelPeaks.data());
+                }
+                const double left = qBound(0.0, static_cast<double>(channelPeaks.constFirst()), 1.0);
+                const double right = qBound(
+                    0.0,
+                    static_cast<double>(channelPeaks.at(channelPeaks.size() > 1 ? 1 : 0)),
+                    1.0);
+                const double master = qBound(0.0, static_cast<double>(masterPeak), 1.0);
+                nextLevels = {
+                    left,
+                    qBound(0.0, left * 0.68 + master * 0.32, 1.0),
+                    qBound(0.0, right * 0.68 + master * 0.32, 1.0),
+                    right
+                };
+            } else {
+                m_platform->audioMeter.Reset();
+            }
+        }
+    }
+
+    for (qsizetype index = 0; index < nextLevels.size(); ++index) {
+        const double previous = m_audioPeakLevels.at(index).toDouble();
+        const double raw = nextLevels.at(index).toDouble();
+        const double response = raw > previous ? 0.34 : 0.14;
+        nextLevels[index] = previous + (raw - previous) * response;
+    }
+
+    bool changed = false;
+    for (qsizetype index = 0; index < nextLevels.size(); ++index) {
+        if (qAbs(nextLevels.at(index).toDouble() - m_audioPeakLevels.at(index).toDouble())
+            > 0.004) {
+            changed = true;
+            break;
+        }
+    }
+    if (changed) {
+        m_audioPeakLevels = nextLevels;
+        emit audioPeakChanged();
+    }
 #endif
 }
 

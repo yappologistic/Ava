@@ -348,16 +348,20 @@ Window {
                 visible: !controller.timerActive && !controller.timerRinging
                          && !window.mediaPeekActive
 
-                Text {
+                RollingDigits {
+                    id: compactClockDigits
                     text: controller.timeText
                     color: colors.text
-                    font.family: window.uiFont
-                    font.pixelSize: 16
-                    font.weight: Font.DemiBold
-                    font.letterSpacing: -0.2
+                    fontFamily: window.uiFont
+                    fontPixelSize: 16
+                    fontWeight: Font.DemiBold
+                    letterSpacing: -0.2
+                    reducedMotion: controller.reducedMotion
+                    rollDirection: 1
                 }
                 Text {
-                    anchors.baseline: parent.children[0].baseline
+                    anchors.verticalCenter: compactClockDigits.verticalCenter
+                    anchors.verticalCenterOffset: 3
                     text: controller.meridiemText
                     color: colors.secondary
                     font.family: window.uiFont
@@ -434,25 +438,21 @@ Window {
                         model: 4
                         Rectangle {
                             required property int index
+                            readonly property real audioLevel:
+                                controller.audioPeakLevels.length > index
+                                ? controller.audioPeakLevels[index] : 0
                             width: 2
                             height: 13
                             radius: 1
                             color: colors.green
                             transformOrigin: Item.Center
+                            scale: controller.mediaPlaying
+                                   ? 0.22 + Math.pow(audioLevel, 0.62) * 0.78 : 0.22
 
-                            SequentialAnimation on scale {
-                                running: compactMediaPeek.visible && controller.mediaPlaying
-                                         && !controller.reducedMotion
-                                loops: Animation.Infinite
+                            Behavior on scale {
                                 NumberAnimation {
-                                    to: 0.30 + index * 0.08
-                                    duration: 155 + index * 24
-                                    easing.type: Easing.InOutSine
-                                }
-                                NumberAnimation {
-                                    to: 1
-                                    duration: 190 + (3 - index) * 22
-                                    easing.type: Easing.InOutSine
+                                    duration: controller.reducedMotion ? 0 : 135 + index * 17
+                                    easing.type: Easing.OutCubic
                                 }
                             }
                         }
@@ -477,15 +477,26 @@ Window {
                     smooth: true
                     mipmap: true
                 }
+                RollingDigits {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: !controller.timerRinging
+                    text: controller.timerRemainingText
+                    color: colors.text
+                    fontFamily: window.uiFont
+                    fontPixelSize: 16
+                    fontWeight: Font.DemiBold
+                    letterSpacing: -0.2
+                    reducedMotion: controller.reducedMotion
+                    rollDirection: -1
+                }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: controller.timerRinging ? "Time's up" : controller.timerRemainingText
-                    color: controller.timerRinging ? colors.timer : colors.text
+                    visible: controller.timerRinging
+                    text: "Time's up"
+                    color: colors.timer
                     font.family: window.uiFont
-                    font.pixelSize: controller.timerRinging ? 13 : 16
+                    font.pixelSize: 13
                     font.weight: Font.DemiBold
-                    font.letterSpacing: -0.2
-                    font.features: { "tnum": 1 }
                 }
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
