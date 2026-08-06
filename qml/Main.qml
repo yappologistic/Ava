@@ -8,7 +8,7 @@ Window {
     visible: true
     color: "transparent"
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint
-    title: "Dynamic Island"
+    title: "Ava"
 
     readonly property string uiFont: "Geist"
     readonly property string iconFont: "Segoe Fluent Icons"
@@ -234,7 +234,7 @@ Window {
             acceptedButtons: Qt.LeftButton
             cursorShape: Qt.PointingHandCursor
             enabled: !window.dragActive
-            Accessible.name: controller.expanded ? "Dynamic Island" : "Open Dynamic Island"
+            Accessible.name: controller.expanded ? "Ava" : "Open Ava"
             Accessible.role: Accessible.Button
             onClicked: {
                 if (!controller.expanded)

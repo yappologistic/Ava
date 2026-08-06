@@ -1,10 +1,10 @@
-# Design QA
+# Ava Design QA
 
 ## Sources
 
 - Primary motion/visual source: <https://youtu.be/nKomstQedmE>
 - Structural reference: <https://github.com/Ebullioscopic/Atoll>
-- User-supplied video: `C:\Users\LENOVO\Downloads\g1aRy_BeCMhKsdF4.mp4`
+- User-supplied local reference video (not distributed with the repository).
 - Preserved primary-video frames: `.reference/frame_analysis/reference-compact-frame-00049.png`, `.reference/frame_analysis/reference-expanded-frame-00061.png`, and `.reference/frame_analysis/reference-control-center-frame-15258.png`
 - Full frame metrics: `.reference/frame_analysis/video-frame-metrics.csv`
 - Same-scale visual comparison: `design-comparison-final.png`
@@ -44,7 +44,6 @@
 - Motion-report mode succeeds and stays inside the 60 Hz frame budget on the development machine.
 - Media, artwork, timeline state, previous/play/next, audio mute/volume, network, battery, clock, file drop/reveal, pinning, and collapse are backed by real Windows APIs or local filesystem state.
 - The native window is topmost, non-activating, and click-through outside the animated silhouette.
-- Live Computer Use verification was unavailable because its Windows host returned `EnumWindows failed: 0x80070003` after the prescribed recovery cycle. Native screenshots and telemetry were used for final visual and motion verification.
 
 ## Result
 
