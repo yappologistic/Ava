@@ -11,6 +11,7 @@ Item {
     property string iconFont: "Segoe Fluent Icons"
     property bool reducedMotion: false
     property int selectedMinutes: 15
+    property real visualTimerProgress: controller.timerProgress
     readonly property color timerOrange: "#ff9f0a"
     readonly property color timerOrangePressed: "#e98700"
     readonly property int tickSpacing: 16
@@ -18,6 +19,13 @@ Item {
     readonly property bool setupActive: !controller.timerActive && !controller.timerRinging
     readonly property bool runningActive: controller.timerActive
     readonly property bool ringingActive: controller.timerRinging
+
+    Behavior on visualTimerProgress {
+        NumberAnimation {
+            duration: root.reducedMotion ? 0 : 110
+            easing.type: Easing.OutCubic
+        }
+    }
 
     function snapRuler() {
         const minute = Math.max(1, Math.min(maximumMinutes,
@@ -109,9 +117,16 @@ Item {
                             radius: width / 2
                             color: root.timerOrange
                             opacity: Math.max(0.10, 1 - minuteMark.distance / 20)
+                            scale: 1 + Math.max(0, 1 - minuteMark.distance) * 0.08
 
                             Behavior on width { NumberAnimation { duration: root.reducedMotion ? 0 : 90 } }
                             Behavior on height {
+                                NumberAnimation {
+                                    duration: root.reducedMotion ? 0 : MotionTokens.hover
+                                    easing.type: MotionTokens.easeOut
+                                }
+                            }
+                            Behavior on scale {
                                 NumberAnimation {
                                     duration: root.reducedMotion ? 0 : MotionTokens.hover
                                     easing.type: MotionTokens.easeOut
@@ -266,8 +281,8 @@ Item {
                         anchors.fill: parent
 
                         Connections {
-                            target: controller
-                            function onTimerChanged() { progressCanvas.requestPaint() }
+                            target: root
+                            function onVisualTimerProgressChanged() { progressCanvas.requestPaint() }
                         }
 
                         onPaint: {
@@ -282,21 +297,27 @@ Item {
                             context.strokeStyle = root.timerOrange
                             context.beginPath()
                             context.arc(width / 2, height / 2, 24, -Math.PI / 2,
-                                        -Math.PI / 2 + Math.PI * 2 * controller.timerProgress)
+                                        -Math.PI / 2 + Math.PI * 2 * root.visualTimerProgress)
                             context.stroke()
                         }
+                        opacity: controller.timerPaused ? 0.58 : 1
+                        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
                     }
 
-                    Image {
+                    Item {
+                        id: timerGlyphHost
                         anchors.centerIn: parent
                         width: 20
                         height: 20
-                        source: Qt.resolvedUrl("../assets/icons/timer-orange.svg")
-                        sourceSize.width: 40
-                        sourceSize.height: 40
-                        fillMode: Image.PreserveAspectFit
-                        smooth: true
-                        mipmap: true
+                        Image {
+                            anchors.fill: parent
+                            source: Qt.resolvedUrl("../assets/icons/timer-orange.svg")
+                            sourceSize.width: 40
+                            sourceSize.height: 40
+                            fillMode: Image.PreserveAspectFit
+                            smooth: true
+                            mipmap: true
+                        }
                     }
                 }
             }
@@ -355,6 +376,7 @@ Item {
             }
 
             Rectangle {
+                id: addMinuteButton
                 width: 80
                 height: 39
                 radius: 20
@@ -363,7 +385,14 @@ Item {
                 Accessible.name: "Add one minute"
                 Accessible.role: Accessible.Button
                 HoverHandler { id: addHover }
-                TapHandler { id: addTap; onTapped: controller.addTimerMinute() }
+                TapHandler {
+                    id: addTap
+                    onTapped: {
+                        controller.addTimerMinute()
+                        if (!root.reducedMotion)
+                            addMinuteFeedback.restart()
+                    }
+                }
                 Text {
                     anchors.centerIn: parent
                     text: "+1 min"
@@ -374,6 +403,41 @@ Item {
                 }
                 Behavior on color { ColorAnimation { duration: 100 } }
                 Behavior on scale { NumberAnimation { duration: 100 } }
+
+                Rectangle {
+                    id: addMinuteBadge
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: -20
+                    width: 44
+                    height: 18
+                    radius: 9
+                    color: "#3a260c"
+                    opacity: 0
+                    scale: 0.88
+                    Text {
+                        anchors.centerIn: parent
+                        text: "+1:00"
+                        color: root.timerOrange
+                        font.family: root.uiFont
+                        font.pixelSize: 9
+                        font.weight: Font.DemiBold
+                        font.features: { "tnum": 1 }
+                    }
+                }
+
+                SequentialAnimation {
+                    id: addMinuteFeedback
+                    ParallelAnimation {
+                        NumberAnimation { target: addMinuteBadge; property: "opacity"; from: 0; to: 1; duration: MotionTokens.press }
+                        NumberAnimation { target: addMinuteBadge; property: "scale"; from: 0.88; to: 1; duration: MotionTokens.hover; easing.type: MotionTokens.settle }
+                        NumberAnimation { target: addMinuteBadge; property: "y"; from: -12; to: -22; duration: MotionTokens.content; easing.type: MotionTokens.easeOut }
+                    }
+                    PauseAnimation { duration: 250 }
+                    ParallelAnimation {
+                        NumberAnimation { target: addMinuteBadge; property: "opacity"; to: 0; duration: MotionTokens.state }
+                        NumberAnimation { target: addMinuteBadge; property: "y"; to: -28; duration: MotionTokens.state; easing.type: Easing.InCubic }
+                    }
+                }
             }
 
             Rectangle {
@@ -385,7 +449,14 @@ Item {
                 Accessible.name: controller.timerPaused ? "Resume timer" : "Pause timer"
                 Accessible.role: Accessible.Button
                 HoverHandler { id: pauseHover }
-                TapHandler { id: pauseTap; onTapped: controller.toggleTimerPaused() }
+                TapHandler {
+                    id: pauseTap
+                    onTapped: {
+                        controller.toggleTimerPaused()
+                        if (!root.reducedMotion)
+                            timerPauseRelease.restart()
+                    }
+                }
                 Text {
                     anchors.centerIn: parent
                     text: controller.timerPaused ? "Resume" : "Pause"
@@ -396,6 +467,25 @@ Item {
                 }
                 Behavior on color { ColorAnimation { duration: 100 } }
                 Behavior on scale { NumberAnimation { duration: 100 } }
+            }
+        }
+
+        SequentialAnimation {
+            id: timerPauseRelease
+            NumberAnimation {
+                target: timerGlyphHost
+                property: "scale"
+                from: 0.9
+                to: 1.08
+                duration: MotionTokens.press
+                easing.type: MotionTokens.easeOut
+            }
+            NumberAnimation {
+                target: timerGlyphHost
+                property: "scale"
+                to: 1
+                duration: MotionTokens.directSettle
+                easing.type: MotionTokens.settle
             }
         }
     }

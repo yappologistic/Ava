@@ -8,12 +8,12 @@ There is no demo or placeholder state. Ava reads and controls real Windows servi
 
 - Compact always-on-top clock using the bundled Inter typeface.
 - Apple-inspired timer with a snapping minute ruler, compact countdown, progress ring, pause/resume, cancel, add-one-minute, and a real Windows completion alert.
-- Live media title, artist, artwork, source-app icon, playback state, timeline, transport controls, and a five-bar real Windows output-level indicator colored from the current artwork.
+- Live media title, artist, artwork, source-app icon, playback state, seekable timeline, transport controls, directional track handoffs, and a five-bar real Windows output-level indicator colored from the current artwork.
 - Windows Core Audio volume and mute controls.
 - Current network, battery, date, time, and week-calendar state.
 - Local file drop shelf with File Explorer reveal.
-- Optional native Dwindle tiling with adjustable splits, title-bar drag swapping, application minimum-size handling, animated placement, and exact window restoration.
-- A shared motion system for shell morphing, media handoffs, timer values, calendar changes, controls, and tiling, with reduced-motion support and display synchronization on 60 Hz, 120 Hz, 144 Hz, and higher-refresh monitors.
+- Optional native Dwindle tiling with adjustable splits, live resize and swap feedback, title-bar drag swapping, application minimum-size handling, animated placement, and exact window restoration.
+- A shared motion system for shell morphing, activity handoffs, media seeking, timer adjustments, calendar changes, file drops, controls, fullscreen retreat, and tiling, with reduced-motion support and display synchronization on 60 Hz, 120 Hz, 144 Hz, and higher-refresh monitors.
 
 ## Interaction
 
@@ -24,6 +24,7 @@ There is no demo or placeholder state. Ava reads and controls real Windows servi
 - Resize a tiled window along an internal edge to adjust its split.
 - Drag one tiled window by its title bar and release it over another to swap their positions.
 - Drop a local file over Ava to add it to the temporary local file shelf.
+- Hover or drag the media timeline to preview and seek when the active Windows media session supports playback-position changes.
 
 ## Native window behavior
 

@@ -17,7 +17,9 @@ Item {
 
     readonly property real digitWidth: Math.ceil(digitMetrics.advanceWidth)
     readonly property real colonWidth: Math.ceil(colonMetrics.advanceWidth)
-    readonly property real rollDistance: Math.max(8, Math.round(implicitHeight * 0.84))
+    // Keep both glyphs within one optical line during multi-digit boundaries
+    // (for example 15:00 -> 14:59) so the value reads as a morph, not two rows.
+    readonly property real rollDistance: Math.max(3, Math.round(implicitHeight * 0.12))
 
     function isDigit(character) {
         return character >= "0" && character <= "9"
@@ -151,28 +153,28 @@ Item {
                         target: outgoing
                         property: "y"
                         to: -root.rollDirection * root.rollDistance
-                        duration: MotionTokens.content
-                        easing.type: Easing.InOutCubic
+                        duration: MotionTokens.state
+                        easing.type: Easing.InCubic
                     }
                     NumberAnimation {
                         target: outgoing
                         property: "opacity"
                         to: 0
-                        duration: MotionTokens.content
-                        easing.type: Easing.InOutCubic
+                        duration: MotionTokens.state
+                        easing.type: Easing.InCubic
                     }
                     NumberAnimation {
                         target: incoming
                         property: "y"
                         to: 0
-                        duration: MotionTokens.content
+                        duration: MotionTokens.state
                         easing.type: MotionTokens.easeOut
                     }
                     NumberAnimation {
                         target: incoming
                         property: "opacity"
                         to: 1
-                        duration: MotionTokens.content
+                        duration: MotionTokens.state
                         easing.type: MotionTokens.easeOut
                     }
 

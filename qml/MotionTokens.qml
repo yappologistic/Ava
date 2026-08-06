@@ -9,6 +9,8 @@ QtObject {
     readonly property int content: 220
     readonly property int reveal: 280
     readonly property int island: 340
+    readonly property int directSettle: 160
+    readonly property int activityHandoff: 210
 
     readonly property int easeOut: Easing.OutCubic
     readonly property int easeInOut: Easing.InOutCubic

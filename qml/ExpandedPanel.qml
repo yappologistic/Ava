@@ -24,15 +24,31 @@ Item {
     property string pendingMediaSource: ""
     property url pendingMediaAppIcon: ""
     property url pendingArtwork: ""
-    readonly property date currentDate: {
-        const clockToken = controller.dateText
-        return new Date()
-    }
+    property int mediaTransitionDirection: 0
+    property bool mediaScrubbing: false
+    property real mediaScrubProgress: 0
+    property date displayedCalendarDate: new Date()
+    property string displayedCalendarToken: ""
+    property int observedLayoutRevision: 0
+    property int observedShortcutRevision: 0
+    readonly property date currentDate: displayedCalendarDate
     readonly property int currentDayIndex: currentDate.getDay()
 
     function weekDate(index) {
         return new Date(currentDate.getFullYear(), currentDate.getMonth(),
                         currentDate.getDate() - currentDayIndex + index)
+    }
+
+    function formatMediaTime(progress) {
+        const totalSeconds = Math.max(0, Math.round(
+            controller.mediaDurationMilliseconds * progress / 1000))
+        const hours = Math.floor(totalSeconds / 3600)
+        const minutes = Math.floor((totalSeconds % 3600) / 60)
+        const seconds = totalSeconds % 60
+        if (hours > 0)
+            return hours + ":" + String(minutes).padStart(2, "0")
+                + ":" + String(seconds).padStart(2, "0")
+        return minutes + ":" + String(seconds).padStart(2, "0")
     }
 
     function syncMediaImmediately() {
@@ -45,6 +61,10 @@ Item {
 
     Component.onCompleted: {
         syncMediaImmediately()
+        displayedCalendarToken = controller.dateText
+        displayedCalendarDate = new Date()
+        observedLayoutRevision = tilingManager.layoutRevision
+        observedShortcutRevision = tilingManager.shortcutRevision
         mediaMotionReady = true
     }
 
@@ -72,12 +92,37 @@ Item {
                 artworkTransition.restart()
             }
         }
+        function onClockChanged() {
+            if (root.displayedCalendarToken.length === 0) {
+                root.displayedCalendarToken = controller.dateText
+                root.displayedCalendarDate = new Date()
+            } else if (root.displayedCalendarToken !== controller.dateText) {
+                if (root.reducedMotion) {
+                    root.displayedCalendarToken = controller.dateText
+                    root.displayedCalendarDate = new Date()
+                } else {
+                    calendarDateTransition.restart()
+                }
+            }
+        }
+        function onDroppedFilesChanged() {
+            if (!root.reducedMotion && controller.droppedFileCount > 0)
+                fileShelfLanding.restart()
+        }
     }
 
     Connections {
         target: tilingManager
         function onStateChanged() {
             if (!root.reducedMotion && tilingStatusView.opacity > 0)
+                tilingStatusPulse.restart()
+        }
+        function onInteractionChanged() {
+            const meaningfulChange = root.observedLayoutRevision !== tilingManager.layoutRevision
+                    || root.observedShortcutRevision !== tilingManager.shortcutRevision
+            root.observedLayoutRevision = tilingManager.layoutRevision
+            root.observedShortcutRevision = tilingManager.shortcutRevision
+            if (meaningfulChange && !root.reducedMotion && tilingStatusView.opacity > 0)
                 tilingStatusPulse.restart()
         }
     }
@@ -102,11 +147,20 @@ Item {
     // the left third, while the middle stays visually quiet.
     Item {
         id: mediaPane
-        visible: !controller.timerPanelOpen
+        enabled: !controller.timerPanelOpen
+        visible: opacity > 0.001
+        opacity: enabled ? 1 : 0
+        scale: enabled ? 1 : 0.94
         x: 18
         y: 22
         width: 292
         height: 110
+        transform: Translate {
+            y: mediaPane.enabled ? 0 : -5
+            Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
+        }
+        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
+        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
 
         Item {
             anchors.fill: parent
@@ -119,6 +173,7 @@ Item {
                 radius: 14
                 color: root.colors.raised
                 clip: true
+                transform: Translate { id: artworkShift }
 
                 Image {
                     id: artworkImage
@@ -213,11 +268,24 @@ Item {
                 ParallelAnimation {
                     NumberAnimation { target: artworkImage; property: "opacity"; to: 0.18; duration: MotionTokens.press }
                     NumberAnimation { target: artworkImage; property: "scale"; to: 0.955; duration: MotionTokens.press; easing.type: Easing.InCubic }
+                    NumberAnimation {
+                        target: artworkShift
+                        property: "x"
+                        to: -root.mediaTransitionDirection * 10
+                        duration: MotionTokens.press
+                        easing.type: Easing.InCubic
+                    }
                 }
-                ScriptAction { script: root.displayedArtwork = root.pendingArtwork }
+                ScriptAction {
+                    script: {
+                        root.displayedArtwork = root.pendingArtwork
+                        artworkShift.x = root.mediaTransitionDirection * 10
+                    }
+                }
                 ParallelAnimation {
                     NumberAnimation { target: artworkImage; property: "opacity"; to: 1; duration: MotionTokens.content }
                     NumberAnimation { target: artworkImage; property: "scale"; to: 1; duration: MotionTokens.content; easing.type: MotionTokens.easeOut }
+                    NumberAnimation { target: artworkShift; property: "x"; to: 0; duration: MotionTokens.content; easing.type: MotionTokens.easeOut }
                 }
             }
 
@@ -225,32 +293,47 @@ Item {
                 id: metadataTransition
                 ParallelAnimation {
                     NumberAnimation { target: metadataColumn; property: "opacity"; to: 0; duration: MotionTokens.press }
-                    NumberAnimation { target: metadataShift; property: "y"; to: -4; duration: MotionTokens.press; easing.type: Easing.InCubic }
+                    NumberAnimation {
+                        target: metadataShift
+                        property: "x"
+                        to: root.mediaTransitionDirection === 0 ? -4 : -root.mediaTransitionDirection * 9
+                        duration: MotionTokens.press
+                        easing.type: Easing.InCubic
+                    }
                 }
                 ScriptAction {
                     script: {
                         root.displayedMediaTitle = root.pendingMediaTitle
                         root.displayedMediaArtist = root.pendingMediaArtist
-                        metadataShift.y = 5
+                        metadataShift.x = root.mediaTransitionDirection === 0
+                            ? 5 : root.mediaTransitionDirection * 9
                     }
                 }
                 ParallelAnimation {
                     NumberAnimation { target: metadataColumn; property: "opacity"; to: 1; duration: MotionTokens.state }
-                    NumberAnimation { target: metadataShift; property: "y"; to: 0; duration: MotionTokens.state; easing.type: MotionTokens.easeOut }
+                    NumberAnimation { target: metadataShift; property: "x"; to: 0; duration: MotionTokens.state; easing.type: MotionTokens.easeOut }
                 }
+                ScriptAction { script: root.mediaTransitionDirection = 0 }
             }
 
             SequentialAnimation {
                 id: sourceTransition
                 ParallelAnimation {
                     NumberAnimation { target: mediaSourceRow; property: "opacity"; to: 0; duration: MotionTokens.press }
-                    NumberAnimation { target: mediaSourceShift; property: "x"; to: -5; duration: MotionTokens.press; easing.type: Easing.InCubic }
+                    NumberAnimation {
+                        target: mediaSourceShift
+                        property: "x"
+                        to: root.mediaTransitionDirection === 0 ? -5 : -root.mediaTransitionDirection * 7
+                        duration: MotionTokens.press
+                        easing.type: Easing.InCubic
+                    }
                 }
                 ScriptAction {
                     script: {
                         root.displayedMediaSource = root.pendingMediaSource
                         root.displayedMediaAppIcon = root.pendingMediaAppIcon
-                        mediaSourceShift.x = 6
+                        mediaSourceShift.x = root.mediaTransitionDirection === 0
+                            ? 6 : root.mediaTransitionDirection * 7
                     }
                 }
                 ParallelAnimation {
@@ -273,7 +356,10 @@ Item {
                     iconSize: 12
                     enabled: controller.mediaCanPrevious
                     accessibleName: "Previous track"
-                    onClicked: controller.previousTrack()
+                    onClicked: {
+                        root.mediaTransitionDirection = -1
+                        controller.previousTrack()
+                    }
                 }
                 IslandButton {
                     width: 24
@@ -296,7 +382,106 @@ Item {
                     iconSize: 12
                     enabled: controller.mediaCanNext
                     accessibleName: "Next track"
-                    onClicked: controller.nextTrack()
+                    onClicked: {
+                        root.mediaTransitionDirection = 1
+                        controller.nextTrack()
+                    }
+                }
+            }
+
+            Item {
+                id: seekSurface
+                x: 104
+                y: 91
+                width: 174
+                height: 17
+                enabled: controller.mediaSeekable
+
+                Rectangle {
+                    id: seekTrack
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    height: seekArea.containsMouse || seekArea.pressed ? 4 : 2
+                    radius: height / 2
+                    color: root.colors.raised
+
+                    Rectangle {
+                        width: parent.width * (root.mediaScrubbing
+                                               ? root.mediaScrubProgress
+                                               : controller.mediaProgress)
+                        height: parent.height
+                        radius: height / 2
+                        color: controller.mediaArtworkAccent.length > 0
+                               ? controller.mediaArtworkAccent : root.colors.text
+                        Behavior on width {
+                            enabled: !seekArea.pressed
+                            NumberAnimation { duration: root.reducedMotion ? 0 : 130; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on color {
+                            ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: seekThumb
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: Math.max(0, Math.min(parent.width - width,
+                        (root.mediaScrubbing ? root.mediaScrubProgress
+                                             : controller.mediaProgress) * parent.width - width / 2))
+                    width: seekArea.containsMouse || seekArea.pressed ? 8 : 0
+                    height: width
+                    radius: width / 2
+                    color: root.colors.text
+                    Behavior on width { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
+                }
+
+                Rectangle {
+                    visible: seekArea.containsMouse || seekArea.pressed
+                    opacity: visible ? 1 : 0
+                    x: Math.max(0, Math.min(parent.width - width, seekArea.mouseX - width / 2))
+                    y: -17
+                    width: seekPreviewText.implicitWidth + 10
+                    height: 15
+                    radius: 7.5
+                    color: "#252527"
+                    Text {
+                        id: seekPreviewText
+                        anchors.centerIn: parent
+                        text: root.formatMediaTime(root.mediaScrubbing
+                                                   ? root.mediaScrubProgress
+                                                   : Math.max(0, Math.min(1, seekArea.mouseX / seekSurface.width)))
+                        color: root.colors.text
+                        font.family: root.uiFont
+                        font.pixelSize: 8
+                        font.features: { "tnum": 1 }
+                    }
+                }
+
+                MouseArea {
+                    id: seekArea
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: controller.mediaSeekable
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    function updateProgress(pointerX) {
+                        root.mediaScrubProgress = Math.max(0, Math.min(1, pointerX / width))
+                    }
+                    onPressed: function(mouse) {
+                        root.mediaScrubbing = true
+                        updateProgress(mouse.x)
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (pressed)
+                            updateProgress(mouse.x)
+                    }
+                    onReleased: function(mouse) {
+                        updateProgress(mouse.x)
+                        controller.seekMedia(root.mediaScrubProgress)
+                        root.mediaScrubbing = false
+                    }
+                    onCanceled: root.mediaScrubbing = false
                 }
             }
         }
@@ -345,11 +530,20 @@ Item {
     // the source. Hovering this cluster crossfades to utility actions.
     Item {
         id: clockPane
-        visible: !controller.timerPanelOpen
+        enabled: !controller.timerPanelOpen
+        visible: opacity > 0.001
+        opacity: enabled ? 1 : 0
+        scale: enabled ? 1 : 0.94
         x: 390
         y: 17
         width: 175
         height: 106
+        transform: Translate {
+            y: clockPane.enabled ? 0 : -5
+            Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
+        }
+        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
+        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
         Accessible.name: controller.timeText + " " + controller.meridiemText
                          + ". " + (controller.networkName.length > 0
                                    ? controller.networkName + ". " : "")
@@ -393,6 +587,7 @@ Item {
                      || root.tilingFeedbackActive ? 0 : 1
             scale: actionHover.hovered || tilingManager.adjusting
                    || root.tilingFeedbackActive ? 0.96 : 1
+            transform: Translate { id: calendarShift }
 
             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
             Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
@@ -493,6 +688,25 @@ Item {
             }
         }
 
+        SequentialAnimation {
+            id: calendarDateTransition
+            ParallelAnimation {
+                NumberAnimation { target: calendarView; property: "opacity"; to: 0; duration: MotionTokens.press }
+                NumberAnimation { target: calendarShift; property: "x"; to: -8; duration: MotionTokens.press; easing.type: Easing.InCubic }
+            }
+            ScriptAction {
+                script: {
+                    root.displayedCalendarToken = controller.dateText
+                    root.displayedCalendarDate = new Date()
+                    calendarShift.x = 8
+                }
+            }
+            ParallelAnimation {
+                NumberAnimation { target: calendarView; property: "opacity"; to: 1; duration: MotionTokens.state }
+                NumberAnimation { target: calendarShift; property: "x"; to: 0; duration: MotionTokens.state; easing.type: MotionTokens.easeOut }
+            }
+        }
+
         Item {
             id: tilingStatusView
             y: 48
@@ -520,23 +734,35 @@ Item {
                         radius: 6
                         color: "transparent"
                         border.width: 1
-                        border.color: root.colors.divider
+                        border.color: tilingManager.previewSlot >= 0
+                                      ? root.colors.text : root.colors.divider
+                        Behavior on border.color { ColorAnimation { duration: MotionTokens.hover } }
                     }
                     Rectangle {
+                        id: firstTilePreview
                         x: 3
                         y: 3
                         width: 14
                         height: 22
                         radius: 3
-                        color: root.colors.text
+                        color: tilingManager.previewSlot === 0
+                               ? root.colors.accent
+                               : (tilingManager.layoutRevision % 2 === 0
+                                  ? root.colors.text : root.colors.secondary)
+                        Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
                     }
                     Rectangle {
+                        id: secondTilePreview
                         x: 20
                         y: 3
                         width: 15
                         height: 10
                         radius: 3
-                        color: root.colors.secondary
+                        color: tilingManager.previewSlot === 1
+                               ? root.colors.accent
+                               : (tilingManager.layoutRevision % 2 === 0
+                                  ? root.colors.secondary : root.colors.text)
+                        Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
                     }
                     Rectangle {
                         x: 20
@@ -544,7 +770,24 @@ Item {
                         width: 15
                         height: 9
                         radius: 3
-                        color: root.colors.tertiary
+                        color: tilingManager.previewSlot === 2
+                               ? root.colors.accent : root.colors.tertiary
+                        Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
+                    }
+                    Rectangle {
+                        visible: tilingManager.adjusting
+                                 && tilingManager.interactionKind === "RESIZING"
+                        x: Math.max(2, Math.min(parent.width - 3,
+                            tilingManager.interactionProgress * parent.width))
+                        y: 2
+                        width: 2
+                        height: parent.height - 4
+                        radius: 1
+                        color: root.colors.accent
+                        Behavior on x {
+                            enabled: !root.reducedMotion
+                            NumberAnimation { duration: 45; easing.type: Easing.OutCubic }
+                        }
                     }
                 }
 
@@ -562,7 +805,7 @@ Item {
                     }
                     Text {
                         text: tilingManager.adjusting
-                              ? "ARRANGING"
+                              ? tilingManager.interactionKind
                               : (!tilingManager.enabled
                               ? "OFF"
                               : (tilingManager.tiledWindowCount === 0
@@ -685,13 +928,71 @@ Item {
         }
     }
 
+    Rectangle {
+        id: fileShelfChip
+        visible: !controller.timerPanelOpen && controller.droppedFileCount > 0
+        x: 318
+        y: 75
+        width: 62
+        height: 28
+        radius: 14
+        color: fileShelfHover.hovered ? "#252527" : root.colors.raised
+        scale: fileShelfTap.pressed ? 0.97 : (fileShelfHover.hovered ? 1.018 : 1)
+        Accessible.name: controller.droppedFileCount + " files in shelf. Show latest file"
+        Accessible.role: Accessible.Button
+
+        HoverHandler { id: fileShelfHover }
+        TapHandler { id: fileShelfTap; onTapped: controller.revealLastDroppedFile() }
+
+        Row {
+            anchors.centerIn: parent
+            spacing: 5
+            Text {
+                text: "\uE8B7"
+                color: root.colors.accent
+                font.family: root.iconFont
+                font.pixelSize: 12
+            }
+            Text {
+                anchors.verticalCenter: parent.children[0].verticalCenter
+                text: controller.droppedFileCount
+                color: root.colors.text
+                font.family: root.uiFont
+                font.pixelSize: 9
+                font.weight: Font.DemiBold
+                font.features: { "tnum": 1 }
+            }
+        }
+
+        Behavior on color { ColorAnimation { duration: MotionTokens.hover } }
+        Behavior on scale { NumberAnimation { duration: MotionTokens.hover; easing.type: MotionTokens.easeOut } }
+
+        SequentialAnimation {
+            id: fileShelfLanding
+            NumberAnimation { target: fileShelfChip; property: "scale"; from: 0.88; to: 1.06; duration: MotionTokens.press; easing.type: MotionTokens.easeOut }
+            NumberAnimation { target: fileShelfChip; property: "scale"; to: 1; duration: MotionTokens.directSettle; easing.type: MotionTokens.settle }
+        }
+    }
+
     TimerPanel {
+        id: timerPanelHost
         z: 20
         anchors.fill: parent
-        visible: controller.timerPanelOpen
+        enabled: controller.timerPanelOpen
+        visible: opacity > 0.001
+        opacity: enabled ? 1 : 0
+        scale: enabled ? 1 : 0.94
         colors: root.colors
         uiFont: root.uiFont
         iconFont: root.iconFont
         reducedMotion: root.reducedMotion
+        transformOrigin: Item.Top
+        Behavior on opacity {
+            SequentialAnimation {
+                PauseAnimation { duration: timerPanelHost.enabled && !root.reducedMotion ? 55 : 0 }
+                NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: MotionTokens.easeOut }
+            }
+        }
+        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
     }
 }
