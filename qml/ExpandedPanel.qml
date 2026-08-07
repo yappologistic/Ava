@@ -8,12 +8,14 @@ Item {
 
     property var colors
     property string uiFont: "Inter"
+    property string monoFont: "Geist Mono"
     property string iconFont: "Segoe Fluent Icons"
     property bool expanded: false
     property bool dragActive: false
     property bool reducedMotion: false
     property real morphProgress: 1
     property bool tilingFeedbackActive: false
+    property bool codexOpen: false
     property bool mediaMotionReady: false
     property string displayedMediaTitle: ""
     property string displayedMediaArtist: ""
@@ -213,7 +215,7 @@ Item {
         }
     }
 
-    enabled: expanded && !dragActive
+    enabled: expanded && !dragActive && !codexOpen
     opacity: enabled ? 1 : 0
     scale: enabled ? 1 : 0.975
     transformOrigin: Item.Top
@@ -1110,7 +1112,7 @@ Item {
 
             Row {
                 anchors.centerIn: parent
-                spacing: 6
+                spacing: 3
                 opacity: actionHover.hovered ? 1 : 0
                 scale: actionHover.hovered ? 1 : 0.94
                 enabled: opacity > 0.5
@@ -1119,8 +1121,18 @@ Item {
                 Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 150; easing.type: Easing.OutBack } }
 
                 IslandButton {
-                    width: 30
-                    height: 30
+                    width: 27
+                    height: 27
+                    iconOnly: true
+                    bare: true
+                    iconSource: Qt.resolvedUrl("../assets/icons/codex-terminal-light.svg")
+                    iconSize: 15
+                    accessibleName: "Open Codex"
+                    onClicked: codexBridge.setPanelOpen(true)
+                }
+                IslandButton {
+                    width: 27
+                    height: 27
                     iconOnly: true
                     quiet: true
                     iconSource: Qt.resolvedUrl("../assets/icons/timer-light.svg")
@@ -1131,8 +1143,8 @@ Item {
                     onClicked: controller.openTimer()
                 }
                 IslandButton {
-                    width: 30
-                    height: 30
+                    width: 27
+                    height: 27
                     iconOnly: true
                     quiet: true
                     iconSource: Qt.resolvedUrl("../assets/icons/grid-light.svg")
@@ -1145,8 +1157,8 @@ Item {
                     onClicked: tilingManager.toggleEnabled()
                 }
                 IslandButton {
-                    width: 30
-                    height: 30
+                    width: 27
+                    height: 27
                     iconOnly: true
                     quiet: true
                     iconSource: Qt.resolvedUrl("../assets/icons/speaker-light.svg")
@@ -1157,8 +1169,8 @@ Item {
                     onClicked: controller.toggleMute()
                 }
                 IslandButton {
-                    width: 30
-                    height: 30
+                    width: 27
+                    height: 27
                     iconOnly: true
                     quiet: true
                     iconSource: Qt.resolvedUrl("../assets/icons/pin-light.svg")
@@ -1170,8 +1182,8 @@ Item {
                     onClicked: controller.togglePinned()
                 }
                 IslandButton {
-                    width: 30
-                    height: 30
+                    width: 27
+                    height: 27
                     iconOnly: true
                     bare: true
                     iconSource: Qt.resolvedUrl("../assets/icons/dismiss-light.svg")

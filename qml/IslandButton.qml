@@ -16,6 +16,7 @@ Button {
     property int fixedWidth: 0
     property string accessibleName: ""
     property string uiFont: "Inter"
+    property string glyphFont: "Segoe Fluent Icons"
     property color accentColor: "#5ac8fa"
     property bool reducedMotion: controller.reducedMotion
     property bool motionReady: false
@@ -169,7 +170,7 @@ Button {
                          && control.glyph.length > 0
                 text: control.glyph
                 color: control.accented || control.selected ? "#000000" : "#f5f5f7"
-                font.family: "Segoe Fluent Icons"
+                font.family: control.glyphFont
                 font.pixelSize: control.iconOnly ? 15 : 13
                 font.weight: Font.Normal
                 horizontalAlignment: Text.AlignHCenter
