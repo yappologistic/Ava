@@ -25,6 +25,8 @@ Item {
     readonly property bool setupActive: !controller.timerActive && !controller.timerRinging
     readonly property bool runningActive: controller.timerActive
     readonly property bool ringingActive: controller.timerRinging
+    readonly property real handoffProgress: Math.max(timerLaunchProgress,
+                                                       runningActive ? 1 : 0)
 
     Behavior on visualTimerProgress {
         NumberAnimation {
@@ -167,9 +169,13 @@ Item {
                + root.timerLaunchProgress * 8
             width: 14
             height: ruler.moving || snapAnimation.running ? 12 : 10
-            opacity: 1 - root.timerLaunchProgress
+            opacity: 1 - root.handoffProgress
             scale: (ruler.moving || snapAnimation.running ? 1.10 : 1)
                    * (1 - root.timerLaunchProgress * 0.12)
+            transform: Translate {
+                x: -44 * root.timerLaunchProgress
+                y: -21 * root.timerLaunchProgress
+            }
 
             Behavior on y {
                 NumberAnimation {
@@ -261,8 +267,10 @@ Item {
             transformOrigin: Item.Center
             transform: Translate {
                 id: selectedTimeShift
-                x: -150 * root.timerLaunchProgress
-                y: -36 * root.timerLaunchProgress
+                x: ((root.width / 2 + 40)
+                    - (root.width - 28 - selectedTimeText.width / 2))
+                   * root.timerLaunchProgress
+                y: -41 * root.timerLaunchProgress
             }
         }
 
@@ -312,9 +320,13 @@ Item {
         Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 220; easing.type: Easing.OutCubic } }
 
         Row {
+            id: runningHeader
             anchors.horizontalCenter: parent.horizontalCenter
             y: 14
             spacing: 17
+            opacity: runningView.opacity
+            scale: 0.94 + runningView.opacity * 0.06
+            transform: Translate { y: 4 * (1 - runningView.opacity) }
 
             Item {
                 width: 58

@@ -28,7 +28,10 @@ Item {
     property string pendingMediaSource: ""
     property url pendingMediaAppIcon: ""
     property url pendingArtwork: ""
+    property string displayedArtworkAccent: ""
+    property string pendingArtworkAccent: ""
     property int mediaTransitionDirection: 0
+    property real mediaDetailsProgress: 1
     property bool mediaScrubbing: false
     property real mediaScrubProgress: 0
     property date displayedCalendarDate: new Date()
@@ -41,6 +44,7 @@ Item {
     property real tilingCommitProgress: 0
     property real calendarAccentPulseProgress: 0
     property string observedArtworkAccent: ""
+    property real utilityRevealProgress: actionHover.hovered ? 1 : 0
     readonly property date currentDate: displayedCalendarDate
     readonly property int currentDayIndex: 3
     readonly property int calendarCellWidth: 31
@@ -48,9 +52,9 @@ Item {
     readonly property int calendarSelectionWidth: 29
     readonly property int calendarSelectionHeight: 25
     readonly property bool calendarUsesMediaAccent: controller.mediaPlaying
-                                                        && controller.mediaArtworkAccent.length > 0
+                                                        && displayedArtworkAccent.length > 0
     readonly property color calendarActiveAccent: calendarUsesMediaAccent
-                                                    ? controller.mediaArtworkAccent
+                                                    ? displayedArtworkAccent
                                                     : colors.calendarAccent
     readonly property color calendarActiveSelection: calendarUsesMediaAccent
                                                        ? Qt.rgba(calendarActiveAccent.r,
@@ -61,6 +65,13 @@ Item {
                                                ? (expanded ? 1 : 0)
                                                : Math.max(0, Math.min(1,
                                                    (morphProgress - 0.04) / 0.82))
+
+    Behavior on utilityRevealProgress {
+        NumberAnimation {
+            duration: root.reducedMotion ? 0 : MotionTokens.state
+            easing.type: MotionTokens.easeOut
+        }
+    }
 
     function calendarDateAt(index) {
         return new Date(currentDate.getFullYear(), currentDate.getMonth(),
@@ -85,12 +96,26 @@ Item {
         return 0.28
     }
 
+    function calendarLabelSize(index) {
+        return 11 - Math.abs(index - currentDayIndex)
+    }
+
+    function calendarDateSize(index) {
+        return 15 - Math.abs(index - currentDayIndex)
+    }
+
     function utilityIconOpacity(distance, hovered, selected, enabled) {
         if (!enabled)
             return 0.22
         if (hovered || selected || distance === 0)
             return 1
         return distance === 1 ? 0.64 : 0.34
+    }
+
+    function utilityIconScale(distance) {
+        if (distance === 0)
+            return 1
+        return distance === 1 ? 0.92 : 0.84
     }
 
     function formatMediaTime(progress) {
@@ -111,6 +136,7 @@ Item {
         displayedMediaSource = controller.mediaSource
         displayedMediaAppIcon = controller.mediaAppIconUrl
         displayedArtwork = controller.mediaArtworkUrl
+        displayedArtworkAccent = controller.mediaArtworkAccent
     }
 
     Component.onCompleted: {
@@ -122,6 +148,7 @@ Item {
         observedTilingConstraint = tilingManager.interactionConstrained
         displayedFileCount = controller.droppedFileCount
         observedArtworkAccent = controller.mediaArtworkAccent
+        displayedArtworkAccent = controller.mediaArtworkAccent
         mediaMotionReady = true
     }
 
@@ -129,9 +156,16 @@ Item {
         target: controller
         function onMediaChanged() {
             const accentChanged = root.observedArtworkAccent !== controller.mediaArtworkAccent
+            const artworkChanged = controller.mediaArtworkUrl !== root.displayedArtwork.toString()
             root.observedArtworkAccent = controller.mediaArtworkAccent
-            if (accentChanged && controller.mediaPlaying && !root.reducedMotion)
-                calendarAccentPulse.restart()
+            if (accentChanged) {
+                root.pendingArtworkAccent = controller.mediaArtworkAccent
+                if (root.reducedMotion) {
+                    root.displayedArtworkAccent = root.pendingArtworkAccent
+                } else {
+                    accentHandoffDelay.restart()
+                }
+            }
             if (!root.mediaMotionReady || root.reducedMotion) {
                 root.syncMediaImmediately()
                 return
@@ -140,17 +174,24 @@ Item {
                     || controller.mediaArtist !== root.displayedMediaArtist) {
                 root.pendingMediaTitle = controller.mediaTitle
                 root.pendingMediaArtist = controller.mediaArtist
-                metadataTransition.restart()
+                if (artworkChanged)
+                    metadataHandoffDelay.restart()
+                else
+                    metadataTransition.restart()
             }
             if (controller.mediaSource !== root.displayedMediaSource
                     || controller.mediaAppIconUrl !== root.displayedMediaAppIcon.toString()) {
                 root.pendingMediaSource = controller.mediaSource
                 root.pendingMediaAppIcon = controller.mediaAppIconUrl
-                sourceTransition.restart()
+                if (artworkChanged)
+                    sourceHandoffDelay.restart()
+                else
+                    sourceTransition.restart()
             }
-            if (controller.mediaArtworkUrl !== root.displayedArtwork.toString()) {
+            if (artworkChanged) {
                 root.pendingArtwork = controller.mediaArtworkUrl
                 artworkTransition.restart()
+                mediaDetailsTrail.restart()
             }
         }
         function onClockChanged() {
@@ -197,6 +238,51 @@ Item {
                 nextButton.reject()
             else if (command === "playback")
                 playbackButton.reject()
+        }
+    }
+
+    Timer {
+        id: metadataHandoffDelay
+        interval: root.reducedMotion ? 0 : 38
+        repeat: false
+        onTriggered: metadataTransition.restart()
+    }
+
+    Timer {
+        id: sourceHandoffDelay
+        interval: root.reducedMotion ? 0 : 62
+        repeat: false
+        onTriggered: sourceTransition.restart()
+    }
+
+    Timer {
+        id: accentHandoffDelay
+        interval: root.reducedMotion ? 0 : 96
+        repeat: false
+        onTriggered: {
+            root.displayedArtworkAccent = root.pendingArtworkAccent
+            if (controller.mediaPlaying)
+                calendarAccentPulse.restart()
+        }
+    }
+
+    SequentialAnimation {
+        id: mediaDetailsTrail
+        NumberAnimation {
+            target: root
+            property: "mediaDetailsProgress"
+            from: 1
+            to: 0.72
+            duration: root.reducedMotion ? 0 : MotionTokens.press
+            easing.type: Easing.InCubic
+        }
+        PauseAnimation { duration: root.reducedMotion ? 0 : 34 }
+        NumberAnimation {
+            target: root
+            property: "mediaDetailsProgress"
+            to: 1
+            duration: root.reducedMotion ? 0 : MotionTokens.content
+            easing.type: MotionTokens.easeOut
         }
     }
 
@@ -471,7 +557,9 @@ Item {
                 y: 56
                 spacing: 8
                 opacity: Math.max(0, Math.min(1, (root.revealProgress - 0.20) / 0.80))
-                scale: 0.88 + root.revealProgress * 0.12
+                         * root.mediaDetailsProgress
+                scale: (0.88 + root.revealProgress * 0.12)
+                       * (0.96 + root.mediaDetailsProgress * 0.04)
                 transformOrigin: Item.Left
 
                 IslandButton {
@@ -528,7 +616,9 @@ Item {
                 height: 17
                 enabled: controller.mediaSeekable
                 opacity: Math.max(0, Math.min(1, (root.revealProgress - 0.28) / 0.72))
-                scale: 0.90 + root.revealProgress * 0.10
+                         * root.mediaDetailsProgress
+                scale: (0.90 + root.revealProgress * 0.10)
+                       * (0.96 + root.mediaDetailsProgress * 0.04)
                 transformOrigin: Item.Left
                 transform: Translate { id: seekFeedbackShift }
 
@@ -547,8 +637,8 @@ Item {
                                                : controller.mediaProgress)
                         height: parent.height
                         radius: height / 2
-                        color: controller.mediaArtworkAccent.length > 0
-                               ? controller.mediaArtworkAccent : root.colors.text
+                        color: root.displayedArtworkAccent.length > 0
+                               ? root.displayedArtworkAccent : root.colors.text
                         Behavior on width {
                             enabled: !seekArea.pressed
                             NumberAnimation { duration: root.reducedMotion ? 0 : 130; easing.type: Easing.OutCubic }
@@ -725,11 +815,13 @@ Item {
             y: 48
             width: parent.width
             height: 62
-            opacity: actionHover.hovered || tilingManager.adjusting
-                     || root.tilingFeedbackActive ? 0 : 1
-            scale: actionHover.hovered || tilingManager.adjusting
-                   || root.tilingFeedbackActive ? 0.96 : 1
-            transform: Translate { id: calendarShift }
+            opacity: tilingManager.adjusting || root.tilingFeedbackActive
+                     ? 0 : 1 - root.utilityRevealProgress
+            scale: 1 - root.utilityRevealProgress * 0.09
+            transform: Translate {
+                id: calendarShift
+                y: root.utilityRevealProgress * 3
+            }
 
             Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
             Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
@@ -784,7 +876,7 @@ Item {
                                              root.colors.tertiary.b,
                                              root.calendarLabelAlpha(dayCell.index))
                             font.family: root.uiFont
-                            font.pixelSize: dayCell.index === root.currentDayIndex ? 11 : 10
+                            font.pixelSize: root.calendarLabelSize(dayCell.index)
                             font.weight: Font.DemiBold
                             font.letterSpacing: dayCell.index === root.currentDayIndex ? 0.4 : 0
                         }
@@ -817,7 +909,7 @@ Item {
                                                  root.colors.tertiary.b,
                                                  root.calendarDateAlpha(dayCell.index))
                                 font.family: root.uiFont
-                                font.pixelSize: dayCell.index === root.currentDayIndex ? 15 : 13
+                                font.pixelSize: root.calendarDateSize(dayCell.index)
                                 font.weight: Font.Medium
                                 font.features: { "tnum": 1 }
 
@@ -1120,11 +1212,13 @@ Item {
             HoverHandler { id: actionHover }
 
             Row {
+                id: utilityRow
                 anchors.centerIn: parent
                 spacing: 3
-                opacity: actionHover.hovered ? 1 : 0
-                scale: actionHover.hovered ? 1 : 0.94
+                opacity: root.utilityRevealProgress
+                scale: 0.88 + root.utilityRevealProgress * 0.12
                 enabled: opacity > 0.5
+                transform: Translate { y: 4 * (1 - root.utilityRevealProgress) }
 
                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
                 Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 150; easing.type: Easing.OutBack } }
@@ -1136,6 +1230,8 @@ Item {
                     bare: true
                     iconSource: Qt.resolvedUrl("../assets/icons/codex-terminal-light.svg")
                     iconSize: 15
+                    baseScale: root.utilityIconScale(2)
+                               * (0.90 + root.utilityRevealProgress * 0.10)
                     opacity: root.utilityIconOpacity(2, hovered, selected, enabled)
                     accessibleName: "Open Codex"
                     onClicked: codexBridge.setPanelOpen(true)
@@ -1149,6 +1245,8 @@ Item {
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/timer-dark.svg")
                     iconSize: 16
                     selected: controller.timerPanelOpen
+                    baseScale: root.utilityIconScale(1)
+                               * (0.90 + root.utilityRevealProgress * 0.10)
                     opacity: root.utilityIconOpacity(1, hovered, selected, enabled)
                     accessibleName: "Open timer"
                     onClicked: controller.openTimer()
@@ -1158,10 +1256,11 @@ Item {
                     height: 27
                     iconOnly: true
                     quiet: true
-                    iconSource: Qt.resolvedUrl("../assets/icons/grid-light.svg")
-                    invertedIconSource: Qt.resolvedUrl("../assets/icons/grid-dark.svg")
+                    dwindleMorph: true
                     iconSize: 16
                     selected: tilingManager.enabled
+                    baseScale: root.utilityIconScale(0)
+                               * (0.90 + root.utilityRevealProgress * 0.10)
                     opacity: root.utilityIconOpacity(0, hovered, selected, enabled)
                     accessibleName: tilingManager.enabled
                                     ? "Disable Dwindle tiling"
@@ -1177,6 +1276,8 @@ Item {
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/speaker-muted-dark.svg")
                     iconSize: 16
                     selected: controller.muted
+                    baseScale: root.utilityIconScale(1)
+                               * (0.90 + root.utilityRevealProgress * 0.10)
                     opacity: root.utilityIconOpacity(1, hovered, selected, enabled)
                     accessibleName: (controller.muted ? "Unmute" : "Mute") + ", " + controller.volume + "%"
                     onClicked: controller.toggleMute()
@@ -1190,6 +1291,8 @@ Item {
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/pin-off-dark.svg")
                     iconSize: 15
                     selected: controller.pinned
+                    baseScale: root.utilityIconScale(2)
+                               * (0.90 + root.utilityRevealProgress * 0.10)
                     opacity: root.utilityIconOpacity(2, hovered, selected, enabled)
                     rotatesOnSelection: true
                     accessibleName: controller.pinned ? "Unpin island" : "Keep island open"

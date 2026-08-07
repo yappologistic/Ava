@@ -34,7 +34,7 @@ Item {
                                                       + currentContentView.contentBottom) / 2
 
     function restingOffset(rank) {
-        return visualStateRank > rank ? -4 : 4
+        return visualStateRank > rank ? -6 : 6
     }
 
     function submit() {
@@ -99,11 +99,50 @@ Item {
             iconWidth: 20
             iconHeight: 20
             reducedMotion: root.reducedMotion
+            opacity: codexBridge.active && !codexBridge.awaitingApproval ? 0 : 1
+            scale: codexBridge.active && !codexBridge.awaitingApproval ? 0.82 : 1
             source: codexBridge.awaitingApproval
                     ? Qt.resolvedUrl("../assets/icons/codex-approval-amber.svg")
                     : (codexBridge.phase === "completed"
                        ? Qt.resolvedUrl("../assets/icons/codex-complete-green.svg")
                        : Qt.resolvedUrl("../assets/icons/codex-terminal-blue.svg"))
+
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.state
+                    easing.type: MotionTokens.easeOut
+                }
+            }
+            Behavior on scale {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.content
+                    easing.type: MotionTokens.settle
+                }
+            }
+        }
+
+        OpenTuiSpinner {
+            anchors.centerIn: parent
+            color: "#a8c7fa"
+            fontFamily: root.monoFont
+            running: codexBridge.active && !codexBridge.awaitingApproval
+            reducedMotion: root.reducedMotion
+            fontPixelSize: 17
+            opacity: running ? 1 : 0
+            scale: running ? 1 : 0.82
+
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.state
+                    easing.type: MotionTokens.easeOut
+                }
+            }
+            Behavior on scale {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.content
+                    easing.type: MotionTokens.settle
+                }
+            }
         }
     }
 
@@ -269,13 +308,6 @@ Item {
                 fontFamily: root.uiFont
                 fontPixelSize: 13
                 fontWeight: Font.DemiBold
-                reducedMotion: root.reducedMotion
-            }
-            OpenTuiSpinner {
-                anchors.verticalCenter: parent.verticalCenter
-                color: "#a8c7fa"
-                fontFamily: root.monoFont
-                running: activityView.enabled
                 reducedMotion: root.reducedMotion
             }
         }

@@ -7,6 +7,7 @@ Item {
     property string fontFamily: "Geist Mono"
     property bool running: true
     property bool reducedMotion: false
+    property int fontPixelSize: 12
     property int frameIndex: 0
     readonly property var frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
@@ -19,7 +20,7 @@ Item {
         color: root.color
         renderType: Text.NativeRendering
         font.family: root.fontFamily
-        font.pixelSize: 12
+        font.pixelSize: root.fontPixelSize
         font.weight: Font.Medium
     }
 

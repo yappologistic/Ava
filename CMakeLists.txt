@@ -38,6 +38,7 @@ qt_add_qml_module(Ava
         qml/MorphingLabel.qml
         qml/MorphingIcon.qml
         qml/PlaybackMorphIcon.qml
+        qml/DwindleMorphIcon.qml
         qml/CodexPanel.qml
         qml/OpenTuiSpinner.qml
     RESOURCES
