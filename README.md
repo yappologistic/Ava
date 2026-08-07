@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/ava-hero.png" alt="Ava expanded on the Windows 11 desktop with live media controls and calendar" width="100%">
+</p>
+
 # Ava
 
 Ava is a native Windows 11 live-activity island built with Qt 6, QML, C++, and Win32. It sits at the top-center of the desktop as a compact clock and fluidly expands into media controls, Codex activity, a timer, a calendar, system actions, and an optional Dwindle tiling workspace.

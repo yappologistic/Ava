@@ -23,8 +23,10 @@ Button {
     property bool rotatesOnSelection: false
     property bool playbackMorph: false
     property bool playbackPlaying: false
+    property bool dwindleMorph: false
     property string transportKind: ""
     property real pressShiftX: 0
+    property real baseScale: 1
     property real focusProgress: visualFocus ? 1 : 0
     readonly property string visualToken: glyph + "|" + iconSource + "|" + invertedIconSource
 
@@ -39,7 +41,7 @@ Button {
     hoverEnabled: true
     focusPolicy: Qt.StrongFocus
     opacity: enabled ? 1 : 0.32
-    scale: down ? 0.97 : (hovered ? 1.018 : 1.0)
+    scale: baseScale * (down ? 0.97 : (hovered ? 1.018 : 1.0))
 
     Accessible.name: text.length > 0 ? text : accessibleName
     Accessible.role: Accessible.Button
@@ -112,6 +114,7 @@ Button {
             id: labelRow
             anchors.centerIn: parent
             spacing: (control.glyph.length > 0 || control.playbackMorph
+                      || control.dwindleMorph
                       || control.transportKind.length > 0)
                      && control.text.length > 0 ? 7 : 0
             transform: [
@@ -165,7 +168,8 @@ Button {
             }
 
             Text {
-                visible: !control.playbackMorph && control.transportKind.length === 0
+                visible: !control.playbackMorph && !control.dwindleMorph
+                         && control.transportKind.length === 0
                          && control.iconSource.toString().length === 0
                          && control.glyph.length > 0
                 text: control.glyph
@@ -178,7 +182,7 @@ Button {
             }
 
             Image {
-                visible: !control.playbackMorph
+                visible: !control.playbackMorph && !control.dwindleMorph
                          && control.transportKind.length === 0
                          && control.iconSource.toString().length > 0
                 width: control.iconSize
@@ -194,12 +198,22 @@ Button {
             }
 
             PlaybackMorphIcon {
-                visible: control.playbackMorph || control.transportKind.length > 0
+                visible: !control.dwindleMorph
+                         && (control.playbackMorph || control.transportKind.length > 0)
                 width: control.iconSize
                 height: control.iconSize
                 kind: control.transportKind.length > 0
                       ? control.transportKind : "playback"
                 playing: control.playbackPlaying
+                color: control.accented || control.selected ? "#000000" : "#f5f5f7"
+                reducedMotion: control.reducedMotion
+            }
+
+            DwindleMorphIcon {
+                visible: control.dwindleMorph
+                width: control.iconSize
+                height: control.iconSize
+                active: control.selected
                 color: control.accented || control.selected ? "#000000" : "#f5f5f7"
                 reducedMotion: control.reducedMotion
             }
