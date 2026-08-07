@@ -2,6 +2,7 @@
 
 #include <QAbstractNativeEventFilter>
 #include <QElapsedTimer>
+#include <QHash>
 #include <QObject>
 #include <QPoint>
 #include <QRect>
@@ -67,6 +68,11 @@ private:
     void endWindowInteraction(quintptr nativeHandle);
     bool adoptUserResize(quintptr nativeHandle, const QRect &currentFrame);
     bool swapWindowAtPoint(quintptr nativeHandle, const QPoint &dropPoint);
+    void retargetWindows(const QHash<quintptr, QRect> &targets,
+                         quintptr excludedHandle = 0);
+    void retargetLiveResize();
+    void updateAnimationCadence();
+    void updateDesktopSwapPreview(const QRect &frame = {});
     void advanceAnimation();
     void restoreWindows();
     void finishRestoreWindows();

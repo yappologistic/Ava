@@ -29,14 +29,83 @@ constexpr int kCompactIslandHeightDip = 39;
 constexpr int kIslandWindowGapDip = 18;
 constexpr int kMinimumTileWidthDip = 220;
 constexpr int kMinimumTileHeightDip = 140;
-constexpr int kAnimationDurationMs = 150;
-constexpr int kAnimationIntervalMs = 8;
+constexpr int kFallbackFrameIntervalMs = 8;
+constexpr qreal kSpringFrequency = 27.0;
+constexpr qreal kSpringDamping = 1.0;
 constexpr UINT kMoveSizeEventMessage = WM_APP + 0x359;
 constexpr UINT kKeyboardShortcutMessage = WM_APP + 0x35A;
 constexpr ULONGLONG kShortcutDebounceMs = 120;
+constexpr wchar_t kSwapPreviewClassName[] = L"AvaDwindleSwapPreview";
 
 HWND gMoveSizeEventSink = nullptr;
 bool gShortcutKeyDown = false;
+
+int compositionFrameIntervalMs()
+{
+    DWM_TIMING_INFO timing{};
+    timing.cbSize = sizeof(timing);
+    if (SUCCEEDED(DwmGetCompositionTimingInfo(nullptr, &timing))
+        && timing.rateRefresh.uiNumerator > 0
+        && timing.rateRefresh.uiDenominator > 0) {
+        const qreal interval = 1000.0 * timing.rateRefresh.uiDenominator
+            / timing.rateRefresh.uiNumerator;
+        return qBound(5, qRound(interval), 20);
+    }
+    return kFallbackFrameIntervalMs;
+}
+
+LRESULT CALLBACK swapPreviewWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message) {
+    case WM_NCHITTEST:
+        return HTTRANSPARENT;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT paint{};
+        HDC device = BeginPaint(window, &paint);
+        RECT bounds{};
+        GetClientRect(window, &bounds);
+        HBRUSH brush = CreateSolidBrush(RGB(112, 214, 198));
+        FillRect(device, &bounds, brush);
+        DeleteObject(brush);
+        EndPaint(window, &paint);
+        return 0;
+    }
+    default:
+        break;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+HWND createSwapPreviewWindow()
+{
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    WNDCLASSEXW windowClass{};
+    windowClass.cbSize = sizeof(windowClass);
+    windowClass.hInstance = instance;
+    windowClass.lpfnWndProc = swapPreviewWindowProc;
+    windowClass.lpszClassName = kSwapPreviewClassName;
+    windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    if (!RegisterClassExW(&windowClass)
+        && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        return nullptr;
+    }
+
+    return CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT
+                               | WS_EX_TOPMOST,
+                           kSwapPreviewClassName,
+                           L"",
+                           WS_POPUP,
+                           0,
+                           0,
+                           1,
+                           1,
+                           nullptr,
+                           nullptr,
+                           instance,
+                           nullptr);
+}
 
 struct FrameInsets
 {
@@ -406,7 +475,14 @@ struct WindowTilingManager::NativeState
     struct AnimationItem
     {
         HWND window = nullptr;
-        QRect startNative;
+        qreal x = 0;
+        qreal y = 0;
+        qreal width = 1;
+        qreal height = 1;
+        qreal velocityX = 0;
+        qreal velocityY = 0;
+        qreal velocityWidth = 0;
+        qreal velocityHeight = 0;
         QRect targetNative;
         QRect targetVisible;
         QRect lastAppliedNative;
@@ -415,6 +491,8 @@ struct WindowTilingManager::NativeState
 
     HWND islandWindow = nullptr;
     HWND interactionWindow = nullptr;
+    HWND lastFocusedTiledWindow = nullptr;
+    HWND swapPreviewWindow = nullptr;
     HWINEVENTHOOK moveSizeHook = nullptr;
     HHOOK keyboardHook = nullptr;
     bool hotkeyRegistered = false;
@@ -424,10 +502,12 @@ struct WindowTilingManager::NativeState
     QHash<quintptr, WINDOWPLACEMENT> originalPlacements;
     QHash<quintptr, QRect> originalVisibleFrames;
     QHash<quintptr, QSize> learnedMinimums;
+    QHash<quintptr, QSize> cachedMinimums;
     QHash<quintptr, QRect> targetVisibleFrames;
     QHash<quintptr, qreal> splitRatios;
     QSet<DWORD> processAllowList;
     QRect interactionStartFrame;
+    QRect swapPreviewFrame;
     bool interactionIsMove = false;
     bool restoring = false;
 #endif
@@ -443,14 +523,14 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
             this,
             &WindowTilingManager::reconcileWindows);
 
-    m_animationTimer.setInterval(kAnimationIntervalMs);
+    updateAnimationCadence();
     m_animationTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_animationTimer,
             &QTimer::timeout,
             this,
             &WindowTilingManager::advanceAnimation);
 
-    m_interactionTimer.setInterval(kAnimationIntervalMs);
+    m_interactionTimer.setInterval(m_animationTimer.interval());
     m_interactionTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_interactionTimer, &QTimer::timeout, this, [this]() {
 #ifdef Q_OS_WIN
@@ -465,6 +545,7 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
         }
         const QPoint point(cursor.x, cursor.y);
         int nextSlot = -1;
+        QRect nextPreviewFrame;
         bool nextConstrained = false;
         if (m_native->interactionIsMove) {
             const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
@@ -473,9 +554,11 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
                 if (MonitorFromWindow(candidate, MONITOR_DEFAULTTONEAREST) != monitor) {
                     continue;
                 }
-                if (m_native->targetVisibleFrames.value(
-                        reinterpret_cast<quintptr>(candidate)).contains(point)) {
+                const QRect candidateFrame = m_native->targetVisibleFrames.value(
+                    reinterpret_cast<quintptr>(candidate));
+                if (candidate != window && candidateFrame.contains(point)) {
                     nextSlot = slot;
+                    nextPreviewFrame = candidateFrame;
                     break;
                 }
                 ++slot;
@@ -507,6 +590,15 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
                 nextProgress = qBound(0.08, (cursor.y - info.rcWork.top) / double(available), 0.92);
             }
         }
+        bool liveLayoutChanged = false;
+        if (!m_native->interactionIsMove) {
+            const QRect current = visibleFrame(window);
+            liveLayoutChanged = adoptUserResize(reinterpret_cast<quintptr>(window), current);
+            if (liveLayoutChanged) {
+                retargetLiveResize();
+            }
+        }
+        updateDesktopSwapPreview(nextPreviewFrame);
         if (nextSlot != m_previewSlot
             || nextConstrained != m_interactionConstrained
             || qAbs(nextProgress - m_interactionProgress) > 0.002) {
@@ -542,6 +634,10 @@ WindowTilingManager::~WindowTilingManager()
     if (m_native->keyboardHook) {
         UnhookWindowsHookEx(m_native->keyboardHook);
         m_native->keyboardHook = nullptr;
+    }
+    if (m_native->swapPreviewWindow) {
+        DestroyWindow(m_native->swapPreviewWindow);
+        m_native->swapPreviewWindow = nullptr;
     }
     if (gMoveSizeEventSink == m_native->islandWindow) {
         gMoveSizeEventSink = nullptr;
@@ -683,6 +779,7 @@ void WindowTilingManager::setEnabled(bool enabled)
 
     m_enabled = enabled;
     if (m_enabled) {
+        updateAnimationCadence();
         if (m_native->restoring) {
             m_animationTimer.stop();
             m_native->animationItems.clear();
@@ -691,6 +788,7 @@ void WindowTilingManager::setEnabled(bool enabled)
         reconcileWindows();
         m_reconcileTimer.start();
     } else {
+        updateDesktopSwapPreview();
         m_reconcileTimer.stop();
         m_animationTimer.stop();
         m_native->animationItems.clear();
@@ -715,10 +813,6 @@ void WindowTilingManager::toggleEnabled()
 void WindowTilingManager::retile()
 {
     if (m_enabled) {
-        if (m_animationTimer.isActive()) {
-            m_animationTimer.stop();
-            m_native->animationItems.clear();
-        }
         reconcileWindows();
     }
 }
@@ -743,10 +837,6 @@ void WindowTilingManager::beginWindowInteraction(quintptr nativeHandle)
         return;
     }
 
-    if (m_animationTimer.isActive()) {
-        m_animationTimer.stop();
-        m_native->animationItems.clear();
-    }
     m_native->interactionWindow = window;
     m_native->interactionStartFrame = visibleFrame(window);
     POINT cursor{};
@@ -765,6 +855,7 @@ void WindowTilingManager::beginWindowInteraction(quintptr nativeHandle)
     m_previewSlot = -1;
     m_interactionProgress = 0.5;
     m_interactionConstrained = false;
+    updateDesktopSwapPreview();
     m_interactionTimer.start();
     emit interactionChanged();
     if (!m_adjusting) {
@@ -791,6 +882,7 @@ void WindowTilingManager::endWindowInteraction(quintptr nativeHandle)
     m_native->interactionStartFrame = {};
     m_native->interactionIsMove = false;
     m_interactionTimer.stop();
+    updateDesktopSwapPreview();
     m_interactionKind.clear();
     m_previewSlot = -1;
     m_interactionConstrained = false;
@@ -985,9 +1077,14 @@ bool WindowTilingManager::adoptUserResize(quintptr nativeHandle, const QRect &cu
 void WindowTilingManager::reconcileWindows()
 {
 #ifdef Q_OS_WIN
-    if (!m_enabled || !m_native->islandWindow || m_animationTimer.isActive()
-        || m_native->interactionWindow) {
+    if (!m_enabled || !m_native->islandWindow || m_native->interactionWindow) {
         return;
+    }
+    updateAnimationCadence();
+
+    const HWND foregroundWindow = GetForegroundWindow();
+    if (foregroundWindow && m_native->windowOrder.contains(foregroundWindow)) {
+        m_native->lastFocusedTiledWindow = foregroundWindow;
     }
 
     QVector<HWND> enumerated;
@@ -1053,9 +1150,20 @@ void WindowTilingManager::reconcileWindows()
             nextOrder.append(window);
         }
     }
+    int focusedInsertionIndex = nextOrder.indexOf(m_native->lastFocusedTiledWindow);
     for (HWND window : std::as_const(eligible)) {
         if (!nextOrder.contains(window)) {
-            nextOrder.append(window);
+            const bool focusedWindowIsUsable = focusedInsertionIndex >= 0
+                && focusedInsertionIndex < nextOrder.size()
+                && MonitorFromWindow(nextOrder.at(focusedInsertionIndex),
+                                     MONITOR_DEFAULTTONEAREST)
+                    == MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+            if (focusedWindowIsUsable) {
+                nextOrder.insert(++focusedInsertionIndex, window);
+            } else {
+                nextOrder.append(window);
+                focusedInsertionIndex = nextOrder.size() - 1;
+            }
         }
         const quintptr handle = reinterpret_cast<quintptr>(window);
         if (!m_native->originalPlacements.contains(handle)) {
@@ -1073,6 +1181,7 @@ void WindowTilingManager::reconcileWindows()
          iterator != m_native->originalPlacements.end();) {
         if (!IsWindow(reinterpret_cast<HWND>(iterator.key()))) {
             m_native->learnedMinimums.remove(iterator.key());
+            m_native->cachedMinimums.remove(iterator.key());
             m_native->targetVisibleFrames.remove(iterator.key());
             m_native->originalVisibleFrames.remove(iterator.key());
             m_native->splitRatios.remove(iterator.key());
@@ -1080,6 +1189,10 @@ void WindowTilingManager::reconcileWindows()
         } else {
             ++iterator;
         }
+    }
+    if (m_native->lastFocusedTiledWindow
+        && !m_native->windowOrder.contains(m_native->lastFocusedTiledWindow)) {
+        m_native->lastFocusedTiledWindow = nullptr;
     }
 
     QHash<quintptr, QVector<HWND>> windowsByMonitor;
@@ -1124,6 +1237,7 @@ void WindowTilingManager::reconcileWindows()
             minimums.append(minimumVisibleSize(window,
                                                dpi,
                                                m_native->learnedMinimums.value(handle)));
+            m_native->cachedMinimums.insert(handle, minimums.constLast());
         }
         const QVector<QRect> layout = makeDwindleLayout(available,
                                                         minimums,
@@ -1141,7 +1255,6 @@ void WindowTilingManager::reconcileWindows()
         return;
     }
 
-    m_native->animationItems.clear();
     for (HWND window : std::as_const(m_native->windowOrder)) {
         const quintptr handle = reinterpret_cast<quintptr>(window);
         if (!nextTargets.contains(handle)) {
@@ -1151,8 +1264,50 @@ void WindowTilingManager::reconcileWindows()
             ShowWindow(window, SW_RESTORE);
         }
 
+    }
+    m_native->targetVisibleFrames = nextTargets;
+    retargetWindows(nextTargets);
+#else
+    setTiledWindowCount(0);
+#endif
+}
+
+void WindowTilingManager::retargetWindows(const QHash<quintptr, QRect> &targets,
+                                          quintptr excludedHandle)
+{
+#ifdef Q_OS_WIN
+    m_native->animationItems.erase(
+        std::remove_if(m_native->animationItems.begin(),
+                       m_native->animationItems.end(),
+                       [&](const NativeState::AnimationItem &item) {
+                           const quintptr handle = reinterpret_cast<quintptr>(item.window);
+                           return !IsWindow(item.window) || handle == excludedHandle
+                               || !targets.contains(handle);
+                       }),
+        m_native->animationItems.end());
+
+    for (auto iterator = targets.cbegin(); iterator != targets.cend(); ++iterator) {
+        if (iterator.key() == excludedHandle) {
+            continue;
+        }
+        HWND window = reinterpret_cast<HWND>(iterator.key());
+        if (!IsWindow(window)) {
+            continue;
+        }
+        const QRect targetVisible = iterator.value();
+        const QRect targetNative = nativeRectForVisibleFrame(window, targetVisible);
+        auto item = std::find_if(m_native->animationItems.begin(),
+                                 m_native->animationItems.end(),
+                                 [window](const NativeState::AnimationItem &candidate) {
+                                     return candidate.window == window;
+                                 });
+        if (item != m_native->animationItems.end()) {
+            item->targetNative = targetNative;
+            item->targetVisible = targetVisible;
+            continue;
+        }
+
         const QRect currentVisible = visibleFrame(window);
-        const QRect targetVisible = nextTargets.value(handle);
         if (!rectDiffers(currentVisible, targetVisible)) {
             continue;
         }
@@ -1160,26 +1315,145 @@ void WindowTilingManager::reconcileWindows()
         if (!GetWindowRect(window, &nativeBounds)) {
             continue;
         }
-        const QRect startNative(nativeBounds.left,
-                                nativeBounds.top,
-                                nativeBounds.right - nativeBounds.left,
-                                nativeBounds.bottom - nativeBounds.top);
-        m_native->animationItems.append({window,
-                                         startNative,
-                                         nativeRectForVisibleFrame(window, targetVisible),
-                                         targetVisible,
-                                         {},
-                                         false});
+        NativeState::AnimationItem next;
+        next.window = window;
+        next.x = nativeBounds.left;
+        next.y = nativeBounds.top;
+        next.width = qMax(1L, nativeBounds.right - nativeBounds.left);
+        next.height = qMax(1L, nativeBounds.bottom - nativeBounds.top);
+        next.targetNative = targetNative;
+        next.targetVisible = targetVisible;
+        m_native->animationItems.append(next);
     }
-    m_native->targetVisibleFrames = nextTargets;
 
-    if (!m_native->animationItems.isEmpty()) {
-        m_animationClock.restart();
+    if (!m_native->animationItems.isEmpty() && !m_animationTimer.isActive()) {
+        m_animationClock.start();
         m_animationTimer.start();
         advanceAnimation();
     }
 #else
-    setTiledWindowCount(0);
+    Q_UNUSED(targets)
+    Q_UNUSED(excludedHandle)
+#endif
+}
+
+void WindowTilingManager::retargetLiveResize()
+{
+#ifdef Q_OS_WIN
+    HWND resizedWindow = m_native->interactionWindow;
+    if (!resizedWindow || m_native->interactionIsMove) {
+        return;
+    }
+    const HMONITOR monitor = MonitorFromWindow(resizedWindow, MONITOR_DEFAULTTONEAREST);
+    QVector<HWND> monitorWindows;
+    for (HWND window : std::as_const(m_native->windowOrder)) {
+        if (MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST) == monitor
+            && m_native->targetVisibleFrames.contains(reinterpret_cast<quintptr>(window))) {
+            monitorWindows.append(window);
+        }
+    }
+    if (monitorWindows.size() < 2) {
+        return;
+    }
+
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (!GetMonitorInfoW(monitor, &monitorInfo)) {
+        return;
+    }
+    const HMONITOR islandMonitor = MonitorFromWindow(m_native->islandWindow,
+                                                     MONITOR_DEFAULTTONEAREST);
+    const UINT dpi = monitorDpi(monitor, resizedWindow);
+    const int outerGap = scaleDip(kOuterGapDip, dpi);
+    const int innerGap = scaleDip(kInnerGapDip, dpi);
+    const int topGap = monitor == islandMonitor
+        ? scaleDip(kCompactIslandHeightDip + kIslandWindowGapDip, dpi)
+        : outerGap;
+    const RECT work = monitorInfo.rcWork;
+    const QRect available(work.left + outerGap,
+                          work.top + topGap,
+                          qMax(1, work.right - work.left - outerGap * 2),
+                          qMax(1, work.bottom - work.top - topGap - outerGap));
+
+    QVector<QSize> minimums;
+    minimums.reserve(monitorWindows.size());
+    for (HWND window : std::as_const(monitorWindows)) {
+        const quintptr handle = reinterpret_cast<quintptr>(window);
+        minimums.append(m_native->cachedMinimums.value(
+            handle,
+            QSize(scaleDip(kMinimumTileWidthDip, dpi),
+                  scaleDip(kMinimumTileHeightDip, dpi))));
+    }
+    const QVector<QRect> layout = makeDwindleLayout(available,
+                                                    minimums,
+                                                    monitorWindows,
+                                                    m_native->splitRatios,
+                                                    innerGap);
+    QHash<quintptr, QRect> nextTargets = m_native->targetVisibleFrames;
+    for (int index = 0; index < monitorWindows.size() && index < layout.size(); ++index) {
+        nextTargets.insert(reinterpret_cast<quintptr>(monitorWindows.at(index)),
+                           layout.at(index));
+    }
+    m_native->targetVisibleFrames = nextTargets;
+    retargetWindows(nextTargets, reinterpret_cast<quintptr>(resizedWindow));
+#endif
+}
+
+void WindowTilingManager::updateAnimationCadence()
+{
+#ifdef Q_OS_WIN
+    const int frameInterval = compositionFrameIntervalMs();
+    m_animationTimer.setInterval(frameInterval);
+    m_interactionTimer.setInterval(frameInterval);
+#endif
+}
+
+void WindowTilingManager::updateDesktopSwapPreview(const QRect &frame)
+{
+#ifdef Q_OS_WIN
+    if (frame.isEmpty()) {
+        m_native->swapPreviewFrame = {};
+        if (m_native->swapPreviewWindow) {
+            ShowWindow(m_native->swapPreviewWindow, SW_HIDE);
+        }
+        return;
+    }
+    if (!m_native->swapPreviewWindow) {
+        m_native->swapPreviewWindow = createSwapPreviewWindow();
+    }
+    if (!m_native->swapPreviewWindow || m_native->swapPreviewFrame == frame) {
+        return;
+    }
+    m_native->swapPreviewFrame = frame;
+    const RECT previewBounds{frame.left(), frame.top(), frame.right() + 1,
+                             frame.bottom() + 1};
+    const HMONITOR monitor = MonitorFromRect(&previewBounds, MONITOR_DEFAULTTONEAREST);
+    const UINT dpi = monitorDpi(monitor, m_native->islandWindow);
+    const int thickness = qMax(2, scaleDip(3, dpi));
+    const int diameter = qMax(12, scaleDip(18, dpi));
+    HRGN outer = CreateRoundRectRgn(0, 0, frame.width() + 1, frame.height() + 1,
+                                    diameter, diameter);
+    HRGN inner = CreateRoundRectRgn(thickness,
+                                    thickness,
+                                    qMax(thickness + 1, frame.width() - thickness + 1),
+                                    qMax(thickness + 1, frame.height() - thickness + 1),
+                                    qMax(2, diameter - thickness * 2),
+                                    qMax(2, diameter - thickness * 2));
+    CombineRgn(outer, outer, inner, RGN_DIFF);
+    DeleteObject(inner);
+    if (!SetWindowRgn(m_native->swapPreviewWindow, outer, FALSE)) {
+        DeleteObject(outer);
+    }
+    SetWindowPos(m_native->swapPreviewWindow,
+                 HWND_TOPMOST,
+                 frame.x(),
+                 frame.y(),
+                 frame.width(),
+                 frame.height(),
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(m_native->swapPreviewWindow, nullptr, TRUE);
+#else
+    Q_UNUSED(frame)
 #endif
 }
 
@@ -1191,15 +1465,12 @@ void WindowTilingManager::advanceAnimation()
         return;
     }
 
-    const qreal linearProgress = std::clamp(m_animationClock.elapsed()
-                                                / static_cast<qreal>(kAnimationDurationMs),
-                                            0.0,
-                                            1.0);
-    // Quintic smootherstep keeps position, velocity, and acceleration continuous
-    // at both ends. At an 8 ms sampling interval this remains fluid on 120 Hz
-    // displays while completing quickly enough to feel attached to the gesture.
-    const qreal progress = linearProgress * linearProgress * linearProgress
-        * (linearProgress * (linearProgress * 6.0 - 15.0) + 10.0);
+    qreal elapsedSeconds = m_animationClock.isValid()
+        ? m_animationClock.restart() / 1000.0
+        : m_animationTimer.interval() / 1000.0;
+    elapsedSeconds = std::clamp(elapsedSeconds, 0.001, 0.032);
+    const int substeps = qMax(1, qCeil(elapsedSeconds * 240.0));
+    const qreal stepSeconds = elapsedSeconds / substeps;
 
     struct FrameStep
     {
@@ -1207,26 +1478,64 @@ void WindowTilingManager::advanceAnimation()
         QRect frame;
     };
     QVector<FrameStep> frameSteps;
+    QVector<NativeState::AnimationItem> completedItems;
     frameSteps.reserve(m_native->animationItems.size());
+
     for (NativeState::AnimationItem &item : m_native->animationItems) {
         if (!IsWindow(item.window)) {
+            completedItems.append(item);
             continue;
         }
-        const auto interpolate = [progress](int start, int target) {
-            return qRound(start + (target - start) * progress);
+        for (int step = 0; step < substeps; ++step) {
+            const qreal accelerationX = kSpringFrequency * kSpringFrequency
+                    * (item.targetNative.x() - item.x)
+                - 2.0 * kSpringDamping * kSpringFrequency * item.velocityX;
+            const qreal accelerationY = kSpringFrequency * kSpringFrequency
+                    * (item.targetNative.y() - item.y)
+                - 2.0 * kSpringDamping * kSpringFrequency * item.velocityY;
+            const qreal accelerationWidth = kSpringFrequency * kSpringFrequency
+                    * (item.targetNative.width() - item.width)
+                - 2.0 * kSpringDamping * kSpringFrequency * item.velocityWidth;
+            const qreal accelerationHeight = kSpringFrequency * kSpringFrequency
+                    * (item.targetNative.height() - item.height)
+                - 2.0 * kSpringDamping * kSpringFrequency * item.velocityHeight;
+            item.velocityX += accelerationX * stepSeconds;
+            item.velocityY += accelerationY * stepSeconds;
+            item.velocityWidth += accelerationWidth * stepSeconds;
+            item.velocityHeight += accelerationHeight * stepSeconds;
+            item.x += item.velocityX * stepSeconds;
+            item.y += item.velocityY * stepSeconds;
+            item.width += item.velocityWidth * stepSeconds;
+            item.height += item.velocityHeight * stepSeconds;
+        }
+
+        const auto settled = [](qreal value, qreal velocity, qreal target) {
+            return qAbs(target - value) < 0.35 && qAbs(velocity) < 3.0;
         };
-        const QRect frame(interpolate(item.startNative.x(), item.targetNative.x()),
-                          interpolate(item.startNative.y(), item.targetNative.y()),
-                          qMax(1, interpolate(item.startNative.width(),
-                                              item.targetNative.width())),
-                          qMax(1, interpolate(item.startNative.height(),
-                                              item.targetNative.height())));
-        if (item.hasAppliedFrame && item.lastAppliedNative == frame) {
-            continue;
+        const bool isSettled = settled(item.x, item.velocityX, item.targetNative.x())
+            && settled(item.y, item.velocityY, item.targetNative.y())
+            && settled(item.width, item.velocityWidth, item.targetNative.width())
+            && settled(item.height, item.velocityHeight, item.targetNative.height());
+        if (isSettled) {
+            item.x = item.targetNative.x();
+            item.y = item.targetNative.y();
+            item.width = item.targetNative.width();
+            item.height = item.targetNative.height();
+            item.velocityX = item.velocityY = 0;
+            item.velocityWidth = item.velocityHeight = 0;
         }
-        item.lastAppliedNative = frame;
-        item.hasAppliedFrame = true;
-        frameSteps.append({item.window, frame});
+        const QRect frame(qRound(item.x),
+                          qRound(item.y),
+                          qMax(1, qRound(item.width)),
+                          qMax(1, qRound(item.height)));
+        if (!item.hasAppliedFrame || item.lastAppliedNative != frame) {
+            item.lastAppliedNative = frame;
+            item.hasAppliedFrame = true;
+            frameSteps.append({item.window, frame});
+        }
+        if (isSettled) {
+            completedItems.append(item);
+        }
     }
 
     if (!frameSteps.isEmpty()) {
@@ -1261,25 +1570,14 @@ void WindowTilingManager::advanceAnimation()
                                  | SWP_DEFERERASE);
             }
         }
-
         BOOL compositionEnabled = FALSE;
         if (SUCCEEDED(DwmIsCompositionEnabled(&compositionEnabled)) && compositionEnabled) {
             DwmFlush();
         }
     }
 
-    if (linearProgress < 1.0) {
-        return;
-    }
-
-    m_animationTimer.stop();
-    if (m_native->restoring) {
-        m_native->animationItems.clear();
-        finishRestoreWindows();
-        return;
-    }
     bool learnedNewConstraint = false;
-    for (const NativeState::AnimationItem &item : std::as_const(m_native->animationItems)) {
+    for (const NativeState::AnimationItem &item : std::as_const(completedItems)) {
         if (!IsWindow(item.window)) {
             continue;
         }
@@ -1300,7 +1598,27 @@ void WindowTilingManager::advanceAnimation()
             m_native->learnedMinimums.insert(handle, learned);
         }
     }
-    m_native->animationItems.clear();
+    m_native->animationItems.erase(
+        std::remove_if(m_native->animationItems.begin(),
+                       m_native->animationItems.end(),
+                       [&](const NativeState::AnimationItem &item) {
+                           return !IsWindow(item.window)
+                               || std::any_of(completedItems.cbegin(),
+                                              completedItems.cend(),
+                                              [&](const NativeState::AnimationItem &completed) {
+                                                  return completed.window == item.window;
+                                              });
+                       }),
+        m_native->animationItems.end());
+
+    if (!m_native->animationItems.isEmpty()) {
+        return;
+    }
+    m_animationTimer.stop();
+    if (m_native->restoring) {
+        finishRestoreWindows();
+        return;
+    }
     if (learnedNewConstraint) {
         QTimer::singleShot(0, this, &WindowTilingManager::reconcileWindows);
     }
@@ -1312,6 +1630,7 @@ void WindowTilingManager::restoreWindows()
 #ifdef Q_OS_WIN
     m_native->restoring = true;
     m_native->animationItems.clear();
+    QHash<quintptr, QRect> restoreTargets;
     for (auto iterator = m_native->originalVisibleFrames.cbegin();
          iterator != m_native->originalVisibleFrames.cend();
          ++iterator) {
@@ -1319,29 +1638,15 @@ void WindowTilingManager::restoreWindows()
         if (!IsWindow(window)) {
             continue;
         }
-        RECT nativeBounds{};
-        if (!GetWindowRect(window, &nativeBounds)) {
-            continue;
-        }
         const QRect currentVisible = visibleFrame(window);
         if (!rectDiffers(currentVisible, iterator.value())) {
             continue;
         }
-        m_native->animationItems.append({window,
-                                         QRect(nativeBounds.left,
-                                               nativeBounds.top,
-                                               nativeBounds.right - nativeBounds.left,
-                                               nativeBounds.bottom - nativeBounds.top),
-                                         nativeRectForVisibleFrame(window, iterator.value()),
-                                         iterator.value(),
-                                         {},
-                                         false});
+        restoreTargets.insert(iterator.key(), iterator.value());
     }
     setTiledWindowCount(0);
+    retargetWindows(restoreTargets);
     if (!m_native->animationItems.isEmpty()) {
-        m_animationClock.restart();
-        m_animationTimer.start();
-        advanceAnimation();
         return;
     }
     finishRestoreWindows();
@@ -1369,9 +1674,11 @@ void WindowTilingManager::finishRestoreWindows()
     m_native->originalPlacements.clear();
     m_native->originalVisibleFrames.clear();
     m_native->learnedMinimums.clear();
+    m_native->cachedMinimums.clear();
     m_native->targetVisibleFrames.clear();
     m_native->splitRatios.clear();
     m_native->interactionWindow = nullptr;
+    m_native->lastFocusedTiledWindow = nullptr;
     m_native->interactionStartFrame = {};
     m_native->restoring = false;
 #endif
