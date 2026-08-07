@@ -13,6 +13,8 @@ Item {
     property bool reducedMotion: false
     property bool open: false
     property string promptText: promptInput.text
+    property bool stateMotionReady: false
+    property real stateSettleProgress: 0
     readonly property bool composerReady: open && codexBridge.connected
                                                    && !codexBridge.active
                                                    && !codexBridge.awaitingApproval
@@ -21,7 +23,18 @@ Item {
     readonly property int visualStateRank: composerReady ? 0
                                            : (codexBridge.active && !codexBridge.awaitingApproval ? 1
                                               : (codexBridge.awaitingApproval ? 2
-                                                 : (codexBridge.phase === "completed" ? 3 : 4)))
+                                                  : (codexBridge.phase === "completed" ? 3 : 4)))
+    readonly property string visualStateKey: composerReady ? "ready"
+                                              : (codexBridge.active && !codexBridge.awaitingApproval
+                                                 ? "working"
+                                                 : (codexBridge.awaitingApproval
+                                                    ? "approval"
+                                                    : (codexBridge.phase === "completed"
+                                                       ? "completed" : "error")))
+    readonly property color visualStateColor: visualStateKey === "approval" ? "#d1b37b"
+                                               : (visualStateKey === "completed" ? "#63e6a5"
+                                                  : (visualStateKey === "error" ? "#ff7b72"
+                                                     : "#a8c7fa"))
     readonly property Item currentContentView: composerReady ? readyView
                                                 : (codexBridge.active && !codexBridge.awaitingApproval
                                                    ? activityView
@@ -43,6 +56,13 @@ Item {
             return
         codexBridge.submitTask(value)
     }
+
+    onVisualStateKeyChanged: {
+        if (stateMotionReady && !reducedMotion)
+            stateSettle.restart()
+    }
+
+    Component.onCompleted: stateMotionReady = true
 
     enabled: open
     opacity: enabled ? 1 : 0
@@ -83,12 +103,27 @@ Item {
         y: root.currentContentCenterY - height / 2
         width: 34
         height: 34
-        scale: attentionPulse.value
+        scale: attentionPulse.value * (1 + root.stateSettleProgress * 0.045)
 
         Behavior on y {
             NumberAnimation {
                 duration: root.reducedMotion ? 0 : MotionTokens.content
                 easing.type: MotionTokens.easeOut
+            }
+        }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: 30 + root.stateSettleProgress * 6
+            height: width
+            radius: width / 2
+            color: root.visualStateColor
+            opacity: 0.07 + root.stateSettleProgress * 0.11
+
+            Behavior on color {
+                ColorAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.content
+                }
             }
         }
 
@@ -147,6 +182,25 @@ Item {
     }
 
     QtObject { id: attentionPulse; property real value: 1 }
+
+    SequentialAnimation {
+        id: stateSettle
+        NumberAnimation {
+            target: root
+            property: "stateSettleProgress"
+            from: 0
+            to: 1
+            duration: MotionTokens.press
+            easing.type: MotionTokens.easeOut
+        }
+        NumberAnimation {
+            target: root
+            property: "stateSettleProgress"
+            to: 0
+            duration: MotionTokens.directSettle
+            easing.type: MotionTokens.easeOut
+        }
+    }
 
     SequentialAnimation {
         id: attentionAnimation

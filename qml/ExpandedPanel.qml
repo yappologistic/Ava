@@ -47,6 +47,10 @@ Item {
     property real utilityRevealProgress: qaUtilityMenu
                                          ? 1 : (actionHover.hovered ? 1 : 0)
     property int utilityMenuIndex: 2
+    readonly property real calendarHandoffProgress: Math.min(1,
+        utilityRevealProgress * 1.14)
+    readonly property real utilityMenuProgress: Math.max(0, Math.min(1,
+        (utilityRevealProgress - 0.08) / 0.92))
     readonly property date currentDate: displayedCalendarDate
     readonly property int currentDayIndex: 3
     readonly property int calendarCellWidth: 31
@@ -70,9 +74,17 @@ Item {
 
     Behavior on utilityRevealProgress {
         NumberAnimation {
-            duration: root.reducedMotion ? 0 : MotionTokens.state
+            duration: root.reducedMotion ? 0 : MotionTokens.content
             easing.type: MotionTokens.easeOut
         }
+    }
+
+    function utilityItemReveal(index) {
+        if (reducedMotion)
+            return utilityMenuProgress
+        const offset = index * 0.035
+        return Math.max(0, Math.min(1,
+            (utilityMenuProgress - offset) / (1 - offset)))
     }
 
     function calendarDateAt(index) {
@@ -858,15 +870,12 @@ Item {
             width: parent.width
             height: 62
             opacity: tilingManager.adjusting || root.tilingFeedbackActive
-                     ? 0 : 1 - root.utilityRevealProgress
-            scale: 1 - root.utilityRevealProgress * 0.09
+                     ? 0 : 1 - root.calendarHandoffProgress
+            scale: 1 - root.calendarHandoffProgress * 0.055
             transform: Translate {
                 id: calendarShift
-                y: root.utilityRevealProgress * 3
+                y: root.calendarHandoffProgress * 3
             }
-
-            Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
-            Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 140; easing.type: Easing.OutCubic } }
 
             Row {
                 id: calendarDays
@@ -883,26 +892,6 @@ Item {
                         readonly property date calendarDate: root.calendarDateAt(index)
                         width: root.calendarCellWidth
                         height: 44
-                        opacity: calendarView.opacity > 0.5 ? 1 : 0
-                        scale: calendarView.opacity > 0.5 ? 1 : 0.94
-
-                        Behavior on opacity {
-                            SequentialAnimation {
-                                PauseAnimation {
-                                    duration: root.reducedMotion ? 0 : dayCell.index * 14
-                                }
-                                NumberAnimation {
-                                    duration: root.reducedMotion ? 0 : MotionTokens.state
-                                    easing.type: MotionTokens.easeOut
-                                }
-                            }
-                        }
-                        Behavior on scale {
-                            NumberAnimation {
-                                duration: root.reducedMotion ? 0 : MotionTokens.state
-                                easing.type: MotionTokens.easeOut
-                            }
-                        }
 
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
@@ -1266,13 +1255,10 @@ Item {
             Item {
                 id: utilityCarousel
                 anchors.fill: parent
-                opacity: root.utilityRevealProgress
-                scale: 0.9 + root.utilityRevealProgress * 0.1
+                opacity: root.utilityMenuProgress
+                scale: 0.97 + root.utilityMenuProgress * 0.03
                 enabled: opacity > 0.5
-                transform: Translate { y: 4 * (1 - root.utilityRevealProgress) }
-
-                Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
-                Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 150; easing.type: MotionTokens.settle } }
+                transform: Translate { y: 3 * (1 - root.utilityMenuProgress) }
 
                 IslandButton {
                     id: utilityPrevious
@@ -1302,6 +1288,22 @@ Item {
                     boundsBehavior: Flickable.StopAtBounds
                     model: utilityMenu
                     currentIndex: root.utilityMenuIndex
+                    highlightFollowsCurrentItem: true
+                    highlightMoveDuration: root.reducedMotion ? 0 : MotionTokens.directSettle
+                    highlightResizeDuration: root.reducedMotion ? 0 : MotionTokens.hover
+                    highlight: Rectangle {
+                        z: 10
+                        radius: height / 2
+                        color: "transparent"
+                        border.width: 1
+                        border.color: Qt.rgba(root.calendarActiveAccent.r,
+                                              root.calendarActiveAccent.g,
+                                              root.calendarActiveAccent.b, 0.64)
+
+                        Behavior on border.color {
+                            ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content }
+                        }
+                    }
 
                     delegate: IslandButton {
                         id: utilityDelegate
@@ -1321,10 +1323,14 @@ Item {
                         iconSize: usesDwindle ? 15 : 14
                         selected: root.utilityMenuIsActive(utilityIndex)
                         baseScale: root.utilityIconScale(menuDistance)
-                                   * (0.90 + root.utilityRevealProgress * 0.10)
+                                   * (0.92 + root.utilityItemReveal(index) * 0.08)
                         opacity: root.utilityIconOpacity(menuDistance, hovered,
                                                          selected || index === root.utilityMenuIndex,
                                                          enabled)
+                                 * root.utilityItemReveal(index)
+                        transform: Translate {
+                            y: 3 * (1 - root.utilityItemReveal(utilityDelegate.index))
+                        }
                         rotatesOnSelection: utilityIndex === 4
                         accessibleName: root.utilityMenuName(utilityIndex)
                         onClicked: {
@@ -1362,6 +1368,7 @@ Item {
                     letterSpacing: 0.45
                     horizontalAlignment: Text.AlignHCenter
                     reducedMotion: root.reducedMotion
+                    motionOffset: 0
                 }
 
                 WheelHandler {
