@@ -105,7 +105,7 @@ public:
         }
 
         constexpr qreal earKappa = 0.54;
-        constexpr qreal continuousKappa = 0.72;
+        constexpr qreal roundKappa = 0.5522847498;
         const qreal left = (m_window->width() - bodyWidth) / 2.0 - earWidth;
         const qreal right = left + bodyWidth + earWidth * 2.0;
         const qreal bodyLeft = left + earWidth;
@@ -122,16 +122,16 @@ public:
                      earDepth);
         path.lineTo(bodyRight, height - radius);
         path.cubicTo(bodyRight,
-                     height - radius + continuousKappa * radius,
-                     bodyRight - radius + continuousKappa * radius,
+                     height - radius + roundKappa * radius,
+                     bodyRight - radius + roundKappa * radius,
                      height,
                      bodyRight - radius,
                      height);
         path.lineTo(bodyLeft + radius, height);
-        path.cubicTo(bodyLeft + radius - continuousKappa * radius,
+        path.cubicTo(bodyLeft + radius - roundKappa * radius,
                      height,
                      bodyLeft,
-                     height - radius + continuousKappa * radius,
+                     height - radius + roundKappa * radius,
                      bodyLeft,
                      height - radius);
         path.lineTo(bodyLeft, earDepth);

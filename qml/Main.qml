@@ -1170,6 +1170,7 @@ Window {
             dragActive: window.dragActive
             reducedMotion: controller.reducedMotion
             morphProgress: window.morphProgress
+            shellCornerRadius: window.dynamicCornerRadius
             tilingFeedbackActive: window.tilingFeedbackActive
             codexOpen: codexBridge.panelOpen
             monoFont: window.monoFont

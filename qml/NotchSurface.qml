@@ -9,8 +9,9 @@ Item {
     property real earWidth: 16
     property real earDepth: 20
 
-    // Longer lower tangents approximate Apple's continuous-corner treatment.
-    readonly property real continuousKappa: 0.72
+    // Exact cubic approximation of a circular quarter arc. The previous longer
+    // tangents produced a pinched, almost-square transition at the lower edges.
+    readonly property real roundKappa: 0.5522847498
     readonly property real earKappa: 0.54
 
     Shape {
@@ -45,9 +46,9 @@ Item {
                 y: root.height
                 control1X: root.width - root.earWidth
                 control1Y: root.height - root.bottomRadius
-                           + root.continuousKappa * root.bottomRadius
+                           + root.roundKappa * root.bottomRadius
                 control2X: root.width - root.earWidth - root.bottomRadius
-                           + root.continuousKappa * root.bottomRadius
+                           + root.roundKappa * root.bottomRadius
                 control2Y: root.height
             }
 
@@ -60,11 +61,11 @@ Item {
                 x: root.earWidth
                 y: root.height - root.bottomRadius
                 control1X: root.earWidth + root.bottomRadius
-                           - root.continuousKappa * root.bottomRadius
+                           - root.roundKappa * root.bottomRadius
                 control1Y: root.height
                 control2X: root.earWidth
                 control2Y: root.height - root.bottomRadius
-                           + root.continuousKappa * root.bottomRadius
+                           + root.roundKappa * root.bottomRadius
             }
 
             // Left side and matching reverse-curve ear back to the top edge.
