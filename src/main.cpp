@@ -9,7 +9,6 @@
 #include <QPainterPath>
 #include <QQuickStyle>
 #include <QQuickWindow>
-#include <QRegion>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QPointer>
@@ -31,6 +30,55 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <winrt/base.h>
+
+static QPainterPath islandSurfacePath(QQuickWindow *window, QObject *root)
+{
+    const qreal bodyWidth = root->property("islandVisualWidth").toReal();
+    const qreal height = root->property("surfaceHeight").toReal();
+    const qreal radius = root->property("dynamicCornerRadius").toReal();
+    const qreal earWidth = root->property("dynamicEarWidth").toReal();
+    const qreal earDepth = root->property("dynamicEarDepth").toReal();
+
+    constexpr qreal earKappa = 0.54;
+    constexpr qreal roundKappa = 0.5522847498;
+    const qreal left = (window->width() - bodyWidth) / 2.0 - earWidth;
+    const qreal right = left + bodyWidth + earWidth * 2.0;
+    const qreal bodyLeft = left + earWidth;
+    const qreal bodyRight = right - earWidth;
+
+    QPainterPath path;
+    path.moveTo(left, 0.0);
+    path.lineTo(right, 0.0);
+    path.cubicTo(right - earWidth * earKappa,
+                 0.0,
+                 bodyRight,
+                 earDepth * (1.0 - earKappa),
+                 bodyRight,
+                 earDepth);
+    path.lineTo(bodyRight, height - radius);
+    path.cubicTo(bodyRight,
+                 height - radius + roundKappa * radius,
+                 bodyRight - radius + roundKappa * radius,
+                 height,
+                 bodyRight - radius,
+                 height);
+    path.lineTo(bodyLeft + radius, height);
+    path.cubicTo(bodyLeft + radius - roundKappa * radius,
+                 height,
+                 bodyLeft,
+                 height - radius + roundKappa * radius,
+                 bodyLeft,
+                 height - radius);
+    path.lineTo(bodyLeft, earDepth);
+    path.cubicTo(bodyLeft,
+                 earDepth * (1.0 - earKappa),
+                 left + earWidth * earKappa,
+                 0.0,
+                 left,
+                 0.0);
+    path.closeSubpath();
+    return path;
+}
 
 class IslandHitTestFilter final : public QAbstractNativeEventFilter
 {
@@ -66,93 +114,6 @@ public:
 private:
     QPointer<QQuickWindow> m_window;
     QPointer<QObject> m_root;
-};
-
-class IslandWindowMask final
-{
-public:
-    IslandWindowMask(QQuickWindow *window, QObject *root)
-        : m_window(window), m_root(root)
-    {
-    }
-
-    void update()
-    {
-        if (!m_window || !m_root) {
-            return;
-        }
-
-        if (!m_root->property("nativeInputMaskEnabled").toBool()) {
-            if (!m_maskCleared) {
-                m_window->setMask(QRegion());
-                m_maskCleared = true;
-            }
-            return;
-        }
-
-        const qreal bodyWidth = m_root->property("islandVisualWidth").toReal();
-        const qreal height = m_root->property("surfaceHeight").toReal();
-        const qreal radius = m_root->property("dynamicCornerRadius").toReal();
-        const qreal earWidth = m_root->property("dynamicEarWidth").toReal();
-        const qreal earDepth = m_root->property("dynamicEarDepth").toReal();
-
-        const QRect geometryKey(qRound(bodyWidth * 100.0),
-                                qRound(height * 100.0),
-                                qRound(radius * 100.0),
-                                qRound(earWidth * 100.0 + earDepth));
-        if (!m_maskCleared && geometryKey == m_geometryKey) {
-            return;
-        }
-
-        constexpr qreal earKappa = 0.54;
-        constexpr qreal roundKappa = 0.5522847498;
-        const qreal left = (m_window->width() - bodyWidth) / 2.0 - earWidth;
-        const qreal right = left + bodyWidth + earWidth * 2.0;
-        const qreal bodyLeft = left + earWidth;
-        const qreal bodyRight = right - earWidth;
-
-        QPainterPath path;
-        path.moveTo(left, 0.0);
-        path.lineTo(right, 0.0);
-        path.cubicTo(right - earWidth * earKappa,
-                     0.0,
-                     bodyRight,
-                     earDepth * (1.0 - earKappa),
-                     bodyRight,
-                     earDepth);
-        path.lineTo(bodyRight, height - radius);
-        path.cubicTo(bodyRight,
-                     height - radius + roundKappa * radius,
-                     bodyRight - radius + roundKappa * radius,
-                     height,
-                     bodyRight - radius,
-                     height);
-        path.lineTo(bodyLeft + radius, height);
-        path.cubicTo(bodyLeft + radius - roundKappa * radius,
-                     height,
-                     bodyLeft,
-                     height - radius + roundKappa * radius,
-                     bodyLeft,
-                     height - radius);
-        path.lineTo(bodyLeft, earDepth);
-        path.cubicTo(bodyLeft,
-                     earDepth * (1.0 - earKappa),
-                     left + earWidth * earKappa,
-                     0.0,
-                     left,
-                     0.0);
-        path.closeSubpath();
-
-        m_window->setMask(QRegion(path.toFillPolygon().toPolygon(), Qt::WindingFill));
-        m_geometryKey = geometryKey;
-        m_maskCleared = false;
-    }
-
-private:
-    QPointer<QQuickWindow> m_window;
-    QPointer<QObject> m_root;
-    QRect m_geometryKey;
-    bool m_maskCleared = true;
 };
 #endif
 
@@ -320,11 +281,53 @@ int main(int argc, char *argv[])
     IslandHitTestFilter hitTestFilter(rootWindow, rootObject);
     app.installNativeEventFilter(&hitTestFilter);
 
-    auto inputMask = std::make_shared<IslandWindowMask>(rootWindow, rootObject);
-    inputMask->update();
-    QObject::connect(rootWindow, &QQuickWindow::frameSwapped, rootWindow, [inputMask]() {
-        inputMask->update();
-    });
+    auto pointerPassThrough = std::make_shared<bool>(false);
+    const auto updatePointerPassThrough = [rootWindow, rootObject, pointerPassThrough]() {
+        const HWND hwnd = reinterpret_cast<HWND>(rootWindow->winId());
+        bool shouldPassThrough = false;
+        if (rootObject->property("nativeInputMaskEnabled").toBool()) {
+            POINT nativePoint{};
+            if (GetCursorPos(&nativePoint)) {
+                ScreenToClient(hwnd, &nativePoint);
+                const qreal scale = qMax<qreal>(1.0, rootWindow->devicePixelRatio());
+                const QPointF localPoint(nativePoint.x / scale,
+                                         nativePoint.y / scale);
+                shouldPassThrough = !islandSurfacePath(rootWindow, rootObject)
+                                         .contains(localPoint);
+            }
+        }
+
+        if (shouldPassThrough == *pointerPassThrough) {
+            return;
+        }
+
+        LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if (shouldPassThrough) {
+            style |= WS_EX_TRANSPARENT;
+        } else {
+            style &= ~WS_EX_TRANSPARENT;
+        }
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
+        SetWindowPos(hwnd,
+                     nullptr,
+                     0,
+                     0,
+                     0,
+                     0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+                         | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        *pointerPassThrough = shouldPassThrough;
+    };
+
+    QTimer pointerHitTimer;
+    pointerHitTimer.setTimerType(Qt::PreciseTimer);
+    pointerHitTimer.setInterval(8);
+    QObject::connect(&pointerHitTimer,
+                     &QTimer::timeout,
+                     rootWindow,
+                     updatePointerPassThrough);
+    pointerHitTimer.start();
+    QTimer::singleShot(0, rootWindow, updatePointerPassThrough);
 
     const auto keepTopmost = [rootWindow, rootObject, automationMode]() {
         const HWND hwnd = reinterpret_cast<HWND>(rootWindow->winId());
