@@ -6,11 +6,13 @@ Window {
     id: window
 
     visible: true
-    color: "transparent"
-    flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.NoDropShadowWindowHint
+    color: automationMode ? "#5f6974" : "transparent"
+    flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint
+           | (automationMode ? Qt.Window : Qt.Tool)
     title: "Ava"
 
     readonly property string uiFont: "Inter"
+    readonly property string monoFont: "Geist Mono"
     readonly property string iconFont: "Segoe Fluent Icons"
     readonly property int compactWidth: 150
     readonly property int compactHeight: 39
@@ -20,6 +22,7 @@ Window {
     readonly property int dragWidth: Math.min(420, expandedWidth)
     readonly property int dragHeight: 116
     readonly property int mediaPeekWidth: 230
+    readonly property int codexPeekWidth: 242
     readonly property int canvasWidth: expandedWidth + 40
     readonly property int canvasHeight: expandedHeight + 10
     readonly property bool dragActive: dropTarget.containsDrag
@@ -29,10 +32,12 @@ Window {
     readonly property int islandTargetWidth: dragActive ? dragWidth
         : (shellExpandedVisual ? expandedWidth + Math.round(ringingPulse * 8)
                                 + Math.round(pinPulse * 4)
-                               : (mediaPeekActive && controller.mediaAvailable
+                               : (codexBridge.compactVisible
+                                  ? codexPeekWidth
+                                  : (mediaPeekActive && controller.mediaAvailable
                                   && !controller.timerActive && !controller.timerRinging
                                   ? mediaPeekWidth
-                                  : compactWidth + Math.round(hoverTension * 4)))
+                                  : compactWidth + Math.round(hoverTension * 4))))
     readonly property int islandTargetHeight: dragActive ? dragHeight
         : (shellExpandedVisual ? expandedHeight + Math.round(ringingPulse * 3)
                                : compactHeight + Math.round(hoverTension))
@@ -50,10 +55,12 @@ Window {
     property real pinPulse: 0
     property int lastDroppedFileCount: 0
     property real dropTraceProgress: 0
-    readonly property string compactActivity: controller.timerActive || controller.timerRinging
+    readonly property string compactActivity: codexBridge.compactVisible
+                                              ? "codex"
+                                              : (controller.timerActive || controller.timerRinging
                                               ? "timer"
                                               : (window.mediaPeekActive && controller.mediaAvailable
-                                                 ? "media" : "clock")
+                                                 ? "media" : "clock"))
 
     // A lightly underdamped, axis-staggered response measured against the reference.
     // Height leads while opening; width leads while closing. Angular frequency keeps
@@ -76,7 +83,13 @@ Window {
     readonly property real dynamicEarDepth: 9 + 9 * Math.sqrt(morphProgress)
     readonly property real islandCaptureWidth: islandVisualWidth + dynamicEarWidth * 2
     readonly property real islandCaptureHeight: islandVisualHeight + 8
-    readonly property bool nativeInputMaskEnabled: !qaMode
+    readonly property bool nativeInputMaskEnabled: !qaMode && !automationMode
+    readonly property bool keyboardCaptureArmed: codexBridge.panelOpen
+                                                  && codexBridge.connected
+                                                  && !codexBridge.active
+                                                  && !codexBridge.awaitingApproval
+                                                  && codexBridge.phase !== "completed"
+                                                  && codexBridge.phase !== "error"
 
     Behavior on hoverTension {
         NumberAnimation {
@@ -224,6 +237,23 @@ Window {
                 window.mediaPeekActive = false
                 if (!controller.timerRinging)
                     controller.setExpanded(false)
+            }
+        }
+    }
+
+    Connections {
+        target: codexBridge
+        function onAttentionRequested() {
+            if (codexBridge.awaitingApproval) {
+                controller.closeTimer()
+                codexBridge.setPanelOpen(true)
+                controller.setExpanded(true)
+            }
+        }
+        function onPanelOpenChanged() {
+            if (codexBridge.panelOpen) {
+                controller.closeTimer()
+                controller.setExpanded(true)
             }
         }
     }
@@ -637,6 +667,70 @@ Window {
                     opacity: controller.timerPaused ? 0.38 : 1
 
                     Behavior on opacity { NumberAnimation { duration: MotionTokens.state } }
+                }
+            }
+
+            Row {
+                id: compactCodex
+                anchors.centerIn: parent
+                anchors.verticalCenterOffset: -1
+                spacing: 8
+                enabled: window.compactActivity === "codex"
+                visible: opacity > 0.001
+                opacity: enabled ? 1 : 0
+                scale: enabled ? 1 : 0.9
+                transform: Translate {
+                    y: compactCodex.enabled ? 0 : 4
+                    Behavior on y { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
+                }
+                Behavior on opacity { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state } }
+                Behavior on scale { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
+
+                MorphingIcon {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 14
+                    height: 14
+                    iconWidth: 14
+                    iconHeight: 14
+                    reducedMotion: controller.reducedMotion
+                    source: codexBridge.awaitingApproval
+                            ? Qt.resolvedUrl("../assets/icons/codex-approval-amber.svg")
+                            : (codexBridge.phase === "completed"
+                               ? Qt.resolvedUrl("../assets/icons/codex-complete-green.svg")
+                               : Qt.resolvedUrl("../assets/icons/codex-terminal-blue.svg"))
+                }
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 0
+                    MorphingLabel {
+                        width: 158
+                        text: codexBridge.statusText
+                        color: colors.text
+                        elide: Text.ElideRight
+                        fontFamily: window.uiFont
+                        fontPixelSize: 10
+                        fontWeight: Font.DemiBold
+                        reducedMotion: controller.reducedMotion
+                    }
+                    MorphingLabel {
+                        width: 158
+                        text: codexBridge.activityText
+                        color: colors.tertiary
+                        elide: Text.ElideRight
+                        fontFamily: window.monoFont
+                        fontPixelSize: 8
+                        fontWeight: Font.Normal
+                        reducedMotion: controller.reducedMotion
+                    }
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: codexBridge.active
+                    text: codexBridge.elapsedText
+                    color: colors.tertiary
+                    font.family: window.monoFont
+                    font.pixelSize: 8
+                    font.features: { "tnum": 1 }
                 }
             }
         }
@@ -1077,6 +1171,20 @@ Window {
             reducedMotion: controller.reducedMotion
             morphProgress: window.morphProgress
             tilingFeedbackActive: window.tilingFeedbackActive
+            codexOpen: codexBridge.panelOpen
+            monoFont: window.monoFont
+        }
+
+        CodexPanel {
+            id: codexPanel
+            z: 20
+            anchors.fill: parent
+            colors: window.colors
+            uiFont: window.uiFont
+            monoFont: window.monoFont
+            iconFont: window.iconFont
+            reducedMotion: controller.reducedMotion
+            open: controller.expanded && codexBridge.panelOpen && !window.dragActive
         }
 
         Item {

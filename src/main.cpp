@@ -22,6 +22,7 @@
 #include <cmath>
 
 #include "islandcontroller.h"
+#include "codexbridge.h"
 #include "windowtilingmanager.h"
 
 #ifdef Q_OS_WIN
@@ -48,7 +49,15 @@ public:
         auto *nativeMessage = static_cast<MSG *>(message);
         if (nativeMessage->message == WM_MOUSEACTIVATE
             && nativeMessage->hwnd == reinterpret_cast<HWND>(m_window->winId())) {
-            *result = MA_NOACTIVATE;
+            if (m_root->property("keyboardCaptureArmed").toBool()) {
+                const HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
+                LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                style &= ~WS_EX_NOACTIVATE;
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
+                *result = MA_ACTIVATE;
+            } else {
+                *result = MA_NOACTIVATE;
+            }
             return true;
         }
         return false;
@@ -160,6 +169,7 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("Ava"));
     app.setApplicationDisplayName(QStringLiteral("Ava"));
     app.setOrganizationName(QStringLiteral("Ava"));
+    app.setApplicationVersion(QStringLiteral("0.1.0"));
     const int interFontId = QFontDatabase::addApplicationFont(
         QStringLiteral(":/qt/qml/Ava/assets/fonts/Inter[opsz,wght].ttf"));
     if (interFontId >= 0) {
@@ -170,6 +180,8 @@ int main(int argc, char *argv[])
             app.setFont(appFont);
         }
     }
+    QFontDatabase::addApplicationFont(
+        QStringLiteral(":/qt/qml/Ava/assets/fonts/GeistMono[wght].ttf"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     QCommandLineParser parser;
@@ -194,6 +206,17 @@ int main(int argc, char *argv[])
     const QCommandLineOption timerOption(
         QStringLiteral("timer"),
         QStringLiteral("Open the timer chooser."));
+    const QCommandLineOption codexOption(
+        QStringLiteral("codex"),
+        QStringLiteral("Open the Codex activity panel."));
+    const QCommandLineOption codexWorkspaceOption(
+        QStringLiteral("codex-workspace"),
+        QStringLiteral("Set the workspace used by Codex tasks."),
+        QStringLiteral("path"));
+    const QCommandLineOption codexVisualStateOption(
+        QStringLiteral("codex-visual-state"),
+        QStringLiteral("Render a Codex state for screenshot QA."),
+        QStringLiteral("state"));
     const QCommandLineOption startTimerOption(
         QStringLiteral("start-timer"),
         QStringLiteral("Start a timer for the given number of seconds."),
@@ -208,12 +231,36 @@ int main(int argc, char *argv[])
     parser.addOption(motionReportOption);
     parser.addOption(tilingOption);
     parser.addOption(timerOption);
+    parser.addOption(codexOption);
+    parser.addOption(codexWorkspaceOption);
+    parser.addOption(codexVisualStateOption);
     parser.addOption(startTimerOption);
     parser.addOption(tilingProcessOption);
     parser.process(app);
 
+    // Keeps the shipping island behavior unchanged while allowing UI test tools
+    // to discover and focus the frameless surface during local motion QA.
+#ifdef AVA_FORCE_AUTOMATION_MODE
+    const bool automationMode = true;
+#else
+    const bool automationMode = qEnvironmentVariableIntValue("AVA_AUTOMATION_MODE") == 1;
+#endif
+
     IslandController controller;
+    CodexBridge codexBridge;
     WindowTilingManager tilingManager;
+    if (parser.isSet(codexWorkspaceOption)) {
+        codexBridge.setWorkspacePath(parser.value(codexWorkspaceOption));
+    }
+    if (parser.isSet(codexVisualStateOption) && parser.isSet(screenshotOption)) {
+        codexBridge.setVisualTestState(parser.value(codexVisualStateOption));
+    }
+    const bool compactCodexVisual = parser.value(codexVisualStateOption)
+                                        == QStringLiteral("compact");
+    if ((parser.isSet(codexOption) || parser.isSet(codexVisualStateOption))
+        && !compactCodexVisual) {
+        codexBridge.setPanelOpen(true);
+    }
     QSet<quint32> tilingProcessIds;
     for (const QString &value : parser.values(tilingProcessOption)) {
         bool valid = false;
@@ -223,7 +270,10 @@ int main(int argc, char *argv[])
         }
     }
     tilingManager.setProcessAllowList(tilingProcessIds);
-    controller.setExpanded(parser.isSet(expandedOption) || parser.isSet(pinnedOption));
+    controller.setExpanded(parser.isSet(expandedOption) || parser.isSet(pinnedOption)
+                           || parser.isSet(codexOption)
+                           || (parser.isSet(codexVisualStateOption)
+                               && !compactCodexVisual));
     controller.setPinned(parser.isSet(pinnedOption));
     if (parser.isSet(timerOption)) {
         controller.openTimer();
@@ -238,12 +288,14 @@ int main(int argc, char *argv[])
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
+    engine.rootContext()->setContextProperty(QStringLiteral("codexBridge"), &codexBridge);
     engine.rootContext()->setContextProperty(QStringLiteral("tilingManager"), &tilingManager);
     engine.rootContext()->setContextProperty(QStringLiteral("qaBackdrop"),
-                                             parser.isSet(screenshotOption));
+                                             parser.isSet(screenshotOption) || automationMode);
     engine.rootContext()->setContextProperty(
         QStringLiteral("qaMode"),
         parser.isSet(screenshotOption) || parser.isSet(motionReportOption));
+    engine.rootContext()->setContextProperty(QStringLiteral("automationMode"), automationMode);
     engine.loadFromModule(QStringLiteral("Ava"), QStringLiteral("Main"));
 
     if (engine.rootObjects().isEmpty()) {
@@ -274,10 +326,19 @@ int main(int argc, char *argv[])
         inputMask->update();
     });
 
-    const auto keepTopmost = [rootWindow]() {
+    const auto keepTopmost = [rootWindow, rootObject, automationMode]() {
         const HWND hwnd = reinterpret_cast<HWND>(rootWindow->winId());
         LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        style |= WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        style |= WS_EX_TOPMOST;
+        if (automationMode) {
+            style &= ~(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+        } else {
+            style |= WS_EX_TOOLWINDOW;
+            if (rootObject->property("keyboardCaptureArmed").toBool())
+                style &= ~WS_EX_NOACTIVATE;
+            else
+                style |= WS_EX_NOACTIVATE;
+        }
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
         SetWindowPos(hwnd,
                      HWND_TOPMOST,

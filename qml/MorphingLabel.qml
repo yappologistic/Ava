@@ -9,6 +9,8 @@ Item {
     property int fontPixelSize: 9
     property int fontWeight: Font.DemiBold
     property real letterSpacing: 0
+    property int elide: Text.ElideNone
+    property int horizontalAlignment: Text.AlignLeft
     property bool reducedMotion: false
     property string displayedText: ""
     property string incomingText: ""
@@ -72,7 +74,8 @@ Item {
 
     Text {
         id: outgoing
-        anchors.horizontalCenter: parent.horizontalCenter
+        x: 0
+        width: parent.width
         y: 0
         text: root.displayedText
         color: root.color
@@ -80,11 +83,14 @@ Item {
         font.pixelSize: root.fontPixelSize
         font.weight: root.fontWeight
         font.letterSpacing: root.letterSpacing
+        elide: root.elide
+        horizontalAlignment: root.horizontalAlignment
     }
 
     Text {
         id: incoming
-        anchors.horizontalCenter: parent.horizontalCenter
+        x: 0
+        width: parent.width
         y: 3
         opacity: 0
         text: root.incomingText
@@ -93,6 +99,8 @@ Item {
         font.pixelSize: root.fontPixelSize
         font.weight: root.fontWeight
         font.letterSpacing: root.letterSpacing
+        elide: root.elide
+        horizontalAlignment: root.horizontalAlignment
     }
 
     SequentialAnimation {

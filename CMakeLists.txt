@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.21)
 
 project(Ava VERSION 0.1 LANGUAGES CXX)
 
+option(AVA_FORCE_AUTOMATION_MODE "Expose Ava as a focusable window for local UI automation" OFF)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -14,6 +16,8 @@ qt_standard_project_setup(REQUIRES 6.5)
 
 qt_add_executable(Ava
     src/main.cpp
+    src/codexbridge.cpp
+    src/codexbridge.h
     src/islandcontroller.cpp
     src/islandcontroller.h
     src/windowtilingmanager.cpp
@@ -32,7 +36,10 @@ qt_add_qml_module(Ava
         qml/NotchSurface.qml
         qml/RollingDigits.qml
         qml/MorphingLabel.qml
+        qml/MorphingIcon.qml
         qml/PlaybackMorphIcon.qml
+        qml/CodexPanel.qml
+        qml/OpenTuiSpinner.qml
     RESOURCES
         assets/icons/play-dark.svg
         assets/icons/pause-dark.svg
@@ -50,8 +57,14 @@ qt_add_qml_module(Ava
         assets/icons/timer-light.svg
         assets/icons/timer-dark.svg
         assets/icons/timer-orange.svg
+        assets/icons/codex-terminal-blue.svg
+        assets/icons/codex-terminal-light.svg
+        assets/icons/codex-approval-amber.svg
+        assets/icons/codex-complete-green.svg
         assets/fonts/Inter[opsz,wght].ttf
         assets/fonts/OFL-Inter.txt
+        assets/fonts/GeistMono[wght].ttf
+        assets/fonts/OFL-Geist.txt
 )
 
 target_link_libraries(Ava
@@ -62,6 +75,10 @@ target_link_libraries(Ava
         Qt6::Quick
         Qt6::QuickControls2
 )
+
+if (AVA_FORCE_AUTOMATION_MODE)
+    target_compile_definitions(Ava PRIVATE AVA_FORCE_AUTOMATION_MODE=1)
+endif()
 
 if (WIN32)
     target_link_libraries(Ava PRIVATE user32 shell32 dwmapi ole32 windowsapp)
