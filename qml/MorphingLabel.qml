@@ -12,6 +12,7 @@ Item {
     property int elide: Text.ElideNone
     property int horizontalAlignment: Text.AlignLeft
     property bool reducedMotion: false
+    property real motionOffset: 3
     property string displayedText: ""
     property string incomingText: ""
     property bool ready: false
@@ -76,7 +77,7 @@ Item {
         outgoing.opacity = 1
         outgoing.y = 0
         incoming.opacity = 0
-        incoming.y = 3
+        incoming.y = root.motionOffset
         incomingText = text
         transition.start()
     }
@@ -100,7 +101,7 @@ Item {
         id: incoming
         x: 0
         width: parent.width
-        y: 3
+        y: root.motionOffset
         opacity: 0
         text: root.incomingText
         color: root.color
@@ -116,7 +117,7 @@ Item {
         id: transition
         ParallelAnimation {
             NumberAnimation { target: outgoing; property: "opacity"; to: 0; duration: MotionTokens.press }
-            NumberAnimation { target: outgoing; property: "y"; to: -3; duration: MotionTokens.press; easing.type: Easing.InCubic }
+            NumberAnimation { target: outgoing; property: "y"; to: -root.motionOffset; duration: MotionTokens.press; easing.type: Easing.InCubic }
             NumberAnimation { target: incoming; property: "opacity"; to: 1; duration: MotionTokens.state }
             NumberAnimation { target: incoming; property: "y"; to: 0; duration: MotionTokens.state; easing.type: MotionTokens.easeOut }
         }
@@ -127,7 +128,7 @@ Item {
                 outgoing.opacity = 1
                 outgoing.y = 0
                 incoming.opacity = 0
-                incoming.y = 3
+                incoming.y = root.motionOffset
             }
         }
     }

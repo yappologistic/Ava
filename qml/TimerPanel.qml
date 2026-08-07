@@ -14,6 +14,7 @@ Item {
     property real visualTimerProgress: controller.timerProgress
     property real cancelProgressOverride: -1
     property real timerLaunchProgress: 0
+    readonly property bool timerHandoffActive: startCommitAnimation.running
     property int lastObservedRemaining: controller.timerRemainingSeconds
     readonly property real effectiveTimerProgress: cancelProgressOverride >= 0
                                                    ? cancelProgressOverride
@@ -62,10 +63,15 @@ Item {
         anchors.fill: parent
         enabled: root.setupActive
         visible: opacity > 0.001
-        opacity: root.setupActive ? 1 : 0
+        opacity: root.setupActive ? 1
+                                  : (root.timerHandoffActive
+                                     ? 1 - root.timerLaunchProgress : 0)
         scale: root.setupActive ? 1 : 0.97
 
-        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 150; easing.type: Easing.OutCubic } }
+        Behavior on opacity {
+            enabled: !root.timerHandoffActive
+            NumberAnimation { duration: root.reducedMotion ? 0 : 150; easing.type: Easing.OutCubic }
+        }
         Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 210; easing.type: Easing.OutCubic } }
 
         Flickable {
@@ -262,7 +268,7 @@ Item {
             letterSpacing: -1.5
             reducedMotion: root.reducedMotion
             rollDirection: 1
-            opacity: 1 - root.timerLaunchProgress * 0.18
+            opacity: 1 - Math.max(0, root.timerLaunchProgress - 0.58) / 0.42
             scale: 1 - root.timerLaunchProgress * 0.38
             transformOrigin: Item.Center
             transform: Translate {
@@ -280,9 +286,9 @@ Item {
                 target: root
                 property: "timerLaunchProgress"
                 from: 0
-                to: 0.72
-                duration: root.reducedMotion ? 0 : 140
-                easing.type: Easing.InCubic
+                to: 0.48
+                duration: root.reducedMotion ? 0 : 105
+                easing.type: MotionTokens.easeInOut
             }
             ScriptAction {
                 script: {
@@ -295,7 +301,7 @@ Item {
                 target: root
                 property: "timerLaunchProgress"
                 to: 1
-                duration: root.reducedMotion ? 0 : MotionTokens.press
+                duration: root.reducedMotion ? 0 : MotionTokens.directSettle
                 easing.type: MotionTokens.easeOut
             }
         }
@@ -313,11 +319,25 @@ Item {
         anchors.fill: parent
         enabled: root.runningActive
         visible: opacity > 0.001
-        opacity: root.runningActive ? 1 : 0
-        scale: root.runningActive ? 1 : 0.97
+        opacity: root.runningActive
+                 ? (root.timerHandoffActive
+                    ? Math.max(0, Math.min(1,
+                        (root.timerLaunchProgress - 0.42) / 0.58)) : 1)
+                 : 0
+        scale: root.runningActive
+               ? (root.timerHandoffActive
+                  ? 0.96 + 0.04 * Math.max(0, Math.min(1,
+                      (root.timerLaunchProgress - 0.42) / 0.58)) : 1)
+               : 0.97
 
-        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 170; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 220; easing.type: Easing.OutCubic } }
+        Behavior on opacity {
+            enabled: !root.timerHandoffActive
+            NumberAnimation { duration: root.reducedMotion ? 0 : 170; easing.type: Easing.OutCubic }
+        }
+        Behavior on scale {
+            enabled: !root.timerHandoffActive
+            NumberAnimation { duration: root.reducedMotion ? 0 : 220; easing.type: Easing.OutCubic }
+        }
 
         Row {
             id: runningHeader
