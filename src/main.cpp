@@ -167,6 +167,12 @@ int main(int argc, char *argv[])
     const QCommandLineOption timerOption(
         QStringLiteral("timer"),
         QStringLiteral("Open the timer chooser."));
+    const QCommandLineOption wallpapersOption(
+        QStringLiteral("wallpapers"),
+        QStringLiteral("Open the wallpaper chooser."));
+    const QCommandLineOption utilityMenuOption(
+        QStringLiteral("utility-menu"),
+        QStringLiteral("Render the calendar utility menu for screenshot QA."));
     const QCommandLineOption codexOption(
         QStringLiteral("codex"),
         QStringLiteral("Open the Codex activity panel."));
@@ -192,6 +198,8 @@ int main(int argc, char *argv[])
     parser.addOption(motionReportOption);
     parser.addOption(tilingOption);
     parser.addOption(timerOption);
+    parser.addOption(wallpapersOption);
+    parser.addOption(utilityMenuOption);
     parser.addOption(codexOption);
     parser.addOption(codexWorkspaceOption);
     parser.addOption(codexVisualStateOption);
@@ -233,11 +241,16 @@ int main(int argc, char *argv[])
     tilingManager.setProcessAllowList(tilingProcessIds);
     controller.setExpanded(parser.isSet(expandedOption) || parser.isSet(pinnedOption)
                            || parser.isSet(codexOption)
+                           || parser.isSet(wallpapersOption)
+                           || parser.isSet(utilityMenuOption)
                            || (parser.isSet(codexVisualStateOption)
                                && !compactCodexVisual));
     controller.setPinned(parser.isSet(pinnedOption));
     if (parser.isSet(timerOption)) {
         controller.openTimer();
+    }
+    if (parser.isSet(wallpapersOption)) {
+        controller.openWallpaperPanel();
     }
     if (parser.isSet(startTimerOption)) {
         bool valid = false;
@@ -257,6 +270,8 @@ int main(int argc, char *argv[])
         QStringLiteral("qaMode"),
         parser.isSet(screenshotOption) || parser.isSet(motionReportOption));
     engine.rootContext()->setContextProperty(QStringLiteral("automationMode"), automationMode);
+    engine.rootContext()->setContextProperty(QStringLiteral("qaUtilityMenu"),
+                                             parser.isSet(utilityMenuOption));
     engine.loadFromModule(QStringLiteral("Ava"), QStringLiteral("Main"));
 
     if (engine.rootObjects().isEmpty()) {

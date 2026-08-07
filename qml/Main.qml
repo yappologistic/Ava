@@ -18,13 +18,17 @@ Window {
     readonly property int compactHeight: 39
     // Measured from all 48,446 source frames: the stable open shell is about 4.5:1.
     readonly property int expandedWidth: Math.max(520, Math.min(584, Screen.width - 40))
-    readonly property int expandedHeight: 128
+    readonly property int baseExpandedHeight: 128
+    readonly property int wallpaperExpandedHeight: 228
+    readonly property int expandedHeight: controller.wallpaperPanelOpen
+                                          ? wallpaperExpandedHeight
+                                          : baseExpandedHeight
     readonly property int dragWidth: Math.min(420, expandedWidth)
     readonly property int dragHeight: 116
     readonly property int mediaPeekWidth: 230
     readonly property int codexPeekWidth: 242
     readonly property int canvasWidth: expandedWidth + 40
-    readonly property int canvasHeight: expandedHeight + 10
+    readonly property int canvasHeight: wallpaperExpandedHeight + 10
     readonly property bool dragActive: dropTarget.containsDrag
     property bool shellExpandedVisual: controller.expanded
     property real hoverTension: islandHover.hovered && !controller.expanded
@@ -76,7 +80,7 @@ Window {
 
     readonly property real surfaceHeight: islandVisualHeight
     readonly property real morphProgress: Math.max(0, Math.min(1,
-        (surfaceHeight - compactHeight) / (expandedHeight - compactHeight)))
+        (surfaceHeight - compactHeight) / (baseExpandedHeight - compactHeight)))
     readonly property real dynamicCornerRadius: 17 + 11 * Math.sqrt(morphProgress)
     readonly property real dynamicEarWidth: 9 + 7 * Math.sqrt(morphProgress)
                                              + hoverTension * 2

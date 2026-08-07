@@ -44,7 +44,9 @@ Item {
     property real tilingCommitProgress: 0
     property real calendarAccentPulseProgress: 0
     property string observedArtworkAccent: ""
-    property real utilityRevealProgress: actionHover.hovered ? 1 : 0
+    property real utilityRevealProgress: qaUtilityMenu
+                                         ? 1 : (actionHover.hovered ? 1 : 0)
+    property int utilityMenuIndex: 2
     readonly property date currentDate: displayedCalendarDate
     readonly property int currentDayIndex: 3
     readonly property int calendarCellWidth: 31
@@ -116,6 +118,46 @@ Item {
         if (distance === 0)
             return 1
         return distance === 1 ? 0.92 : 0.84
+    }
+
+    function utilityMenuName(index) {
+        const names = ["Codex", "Timer", "Dwindle", "Sound", "Pin", "Wallpaper"]
+        return names[Math.max(0, Math.min(names.length - 1, index))]
+    }
+
+    function utilityMenuIsActive(index) {
+        if (index === 1)
+            return controller.timerPanelOpen
+        if (index === 2)
+            return tilingManager.enabled
+        if (index === 3)
+            return controller.muted
+        if (index === 4)
+            return controller.pinned
+        if (index === 5)
+            return controller.wallpaperPanelOpen
+        return false
+    }
+
+    function activateUtility(index) {
+        if (index === 0)
+            codexBridge.setPanelOpen(true)
+        else if (index === 1)
+            controller.openTimer()
+        else if (index === 2)
+            tilingManager.toggleEnabled()
+        else if (index === 3)
+            controller.toggleMute()
+        else if (index === 4)
+            controller.togglePinned()
+        else if (index === 5)
+            controller.openWallpaperPanel()
+    }
+
+    function stepUtility(direction) {
+        utilityMenuIndex = Math.max(0, Math.min(utilityMenu.count - 1,
+                                                utilityMenuIndex + direction))
+        utilityList.positionViewAtIndex(utilityMenuIndex, ListView.Contain)
     }
 
     function formatMediaTime(progress) {
@@ -330,7 +372,7 @@ Item {
     // the left third, while the middle stays visually quiet.
     Item {
         id: mediaPane
-        enabled: !controller.timerPanelOpen
+        enabled: !controller.timerPanelOpen && !controller.wallpaperPanelOpen
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
         scale: enabled ? 1 : 0.94
@@ -774,7 +816,7 @@ Item {
     // the source. Hovering this cluster crossfades to utility actions.
     Item {
         id: clockPane
-        enabled: !controller.timerPanelOpen
+        enabled: !controller.timerPanelOpen && !controller.wallpaperPanelOpen
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
         scale: enabled ? 1 : 0.94
@@ -1211,92 +1253,124 @@ Item {
 
             HoverHandler { id: actionHover }
 
-            Row {
-                id: utilityRow
-                anchors.centerIn: parent
-                spacing: 3
+            ListModel {
+                id: utilityMenu
+                ListElement { utilityIndex: 0; iconPath: "../assets/icons/codex-terminal-light.svg"; invertedPath: ""; usesDwindle: false }
+                ListElement { utilityIndex: 1; iconPath: "../assets/icons/timer-light.svg"; invertedPath: "../assets/icons/timer-dark.svg"; usesDwindle: false }
+                ListElement { utilityIndex: 2; iconPath: ""; invertedPath: ""; usesDwindle: true }
+                ListElement { utilityIndex: 3; iconPath: "../assets/icons/speaker-light.svg"; invertedPath: "../assets/icons/speaker-muted-dark.svg"; usesDwindle: false }
+                ListElement { utilityIndex: 4; iconPath: "../assets/icons/pin-light.svg"; invertedPath: "../assets/icons/pin-off-dark.svg"; usesDwindle: false }
+                ListElement { utilityIndex: 5; iconPath: "../assets/icons/wallpaper-light.svg"; invertedPath: "../assets/icons/wallpaper-dark.svg"; usesDwindle: false }
+            }
+
+            Item {
+                id: utilityCarousel
+                anchors.fill: parent
                 opacity: root.utilityRevealProgress
-                scale: 0.88 + root.utilityRevealProgress * 0.12
+                scale: 0.9 + root.utilityRevealProgress * 0.1
                 enabled: opacity > 0.5
                 transform: Translate { y: 4 * (1 - root.utilityRevealProgress) }
 
                 Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 110 } }
-                Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 150; easing.type: Easing.OutBack } }
+                Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 150; easing.type: MotionTokens.settle } }
 
                 IslandButton {
-                    width: 27
+                    id: utilityPrevious
+                    x: 0
+                    y: 1
+                    width: 17
                     height: 27
                     iconOnly: true
                     bare: true
-                    iconSource: Qt.resolvedUrl("../assets/icons/codex-terminal-light.svg")
-                    iconSize: 15
-                    baseScale: root.utilityIconScale(2)
-                               * (0.90 + root.utilityRevealProgress * 0.10)
-                    opacity: root.utilityIconOpacity(2, hovered, selected, enabled)
-                    accessibleName: "Open Codex"
-                    onClicked: codexBridge.setPanelOpen(true)
+                    glyph: "\uE76B"
+                    enabled: root.utilityMenuIndex > 0
+                    opacity: enabled ? 0.54 : 0.15
+                    accessibleName: "Previous menu item"
+                    onClicked: root.stepUtility(-1)
                 }
+
+                ListView {
+                    id: utilityList
+                    x: 17
+                    y: 1
+                    width: 137
+                    height: 28
+                    orientation: ListView.Horizontal
+                    spacing: 3
+                    clip: true
+                    interactive: false
+                    boundsBehavior: Flickable.StopAtBounds
+                    model: utilityMenu
+                    currentIndex: root.utilityMenuIndex
+
+                    delegate: IslandButton {
+                        id: utilityDelegate
+                        required property int index
+                        required property int utilityIndex
+                        required property string iconPath
+                        required property string invertedPath
+                        required property bool usesDwindle
+                        readonly property int menuDistance: Math.abs(index - root.utilityMenuIndex)
+                        width: 25
+                        height: 25
+                        iconOnly: true
+                        quiet: true
+                        dwindleMorph: usesDwindle
+                        iconSource: iconPath.length > 0 ? Qt.resolvedUrl(iconPath) : ""
+                        invertedIconSource: invertedPath.length > 0 ? Qt.resolvedUrl(invertedPath) : ""
+                        iconSize: usesDwindle ? 15 : 14
+                        selected: root.utilityMenuIsActive(utilityIndex)
+                        baseScale: root.utilityIconScale(menuDistance)
+                                   * (0.90 + root.utilityRevealProgress * 0.10)
+                        opacity: root.utilityIconOpacity(menuDistance, hovered,
+                                                         selected || index === root.utilityMenuIndex,
+                                                         enabled)
+                        rotatesOnSelection: utilityIndex === 4
+                        accessibleName: root.utilityMenuName(utilityIndex)
+                        onClicked: {
+                            root.utilityMenuIndex = utilityIndex
+                            utilityList.positionViewAtIndex(utilityIndex, ListView.Contain)
+                            root.activateUtility(utilityIndex)
+                        }
+                    }
+                }
+
                 IslandButton {
-                    width: 27
+                    id: utilityNext
+                    x: 154
+                    y: 1
+                    width: 17
                     height: 27
                     iconOnly: true
-                    quiet: true
-                    iconSource: Qt.resolvedUrl("../assets/icons/timer-light.svg")
-                    invertedIconSource: Qt.resolvedUrl("../assets/icons/timer-dark.svg")
-                    iconSize: 16
-                    selected: controller.timerPanelOpen
-                    baseScale: root.utilityIconScale(1)
-                               * (0.90 + root.utilityRevealProgress * 0.10)
-                    opacity: root.utilityIconOpacity(1, hovered, selected, enabled)
-                    accessibleName: "Open timer"
-                    onClicked: controller.openTimer()
+                    bare: true
+                    glyph: "\uE76C"
+                    enabled: root.utilityMenuIndex < utilityMenu.count - 1
+                    opacity: enabled ? 0.54 : 0.15
+                    accessibleName: "Next menu item"
+                    onClicked: root.stepUtility(1)
                 }
-                IslandButton {
-                    width: 27
-                    height: 27
-                    iconOnly: true
-                    quiet: true
-                    dwindleMorph: true
-                    iconSize: 16
-                    selected: tilingManager.enabled
-                    baseScale: root.utilityIconScale(0)
-                               * (0.90 + root.utilityRevealProgress * 0.10)
-                    opacity: root.utilityIconOpacity(0, hovered, selected, enabled)
-                    accessibleName: tilingManager.enabled
-                                    ? "Disable Dwindle tiling"
-                                    : "Enable Dwindle tiling"
-                    onClicked: tilingManager.toggleEnabled()
+
+                MorphingLabel {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: 34
+                    width: parent.width - 34
+                    text: root.utilityMenuName(root.utilityMenuIndex)
+                    color: root.colors.tertiary
+                    fontFamily: root.uiFont
+                    fontPixelSize: 8
+                    fontWeight: Font.DemiBold
+                    letterSpacing: 0.45
+                    horizontalAlignment: Text.AlignHCenter
+                    reducedMotion: root.reducedMotion
                 }
-                IslandButton {
-                    width: 27
-                    height: 27
-                    iconOnly: true
-                    quiet: true
-                    iconSource: Qt.resolvedUrl("../assets/icons/speaker-light.svg")
-                    invertedIconSource: Qt.resolvedUrl("../assets/icons/speaker-muted-dark.svg")
-                    iconSize: 16
-                    selected: controller.muted
-                    baseScale: root.utilityIconScale(1)
-                               * (0.90 + root.utilityRevealProgress * 0.10)
-                    opacity: root.utilityIconOpacity(1, hovered, selected, enabled)
-                    accessibleName: (controller.muted ? "Unmute" : "Mute") + ", " + controller.volume + "%"
-                    onClicked: controller.toggleMute()
-                }
-                IslandButton {
-                    width: 27
-                    height: 27
-                    iconOnly: true
-                    quiet: true
-                    iconSource: Qt.resolvedUrl("../assets/icons/pin-light.svg")
-                    invertedIconSource: Qt.resolvedUrl("../assets/icons/pin-off-dark.svg")
-                    iconSize: 15
-                    selected: controller.pinned
-                    baseScale: root.utilityIconScale(2)
-                               * (0.90 + root.utilityRevealProgress * 0.10)
-                    opacity: root.utilityIconOpacity(2, hovered, selected, enabled)
-                    rotatesOnSelection: true
-                    accessibleName: controller.pinned ? "Unpin island" : "Keep island open"
-                    onClicked: controller.togglePinned()
+
+                WheelHandler {
+                    onWheel: function(event) {
+                        if (Math.abs(event.angleDelta.y) < 20)
+                            return
+                        root.stepUtility(event.angleDelta.y < 0 ? 1 : -1)
+                        event.accepted = true
+                    }
                 }
             }
         }
@@ -1304,7 +1378,7 @@ Item {
 
     Rectangle {
         id: fileShelfChip
-        visible: !controller.timerPanelOpen
+        visible: !controller.timerPanelOpen && !controller.wallpaperPanelOpen
                  && (controller.droppedFileCount > 0 || root.fileShelfRetained)
         x: 318
         y: 75
@@ -1446,5 +1520,34 @@ Item {
             }
         }
         Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
+    }
+
+    WallpaperPanel {
+        id: wallpaperPanelHost
+        z: 21
+        anchors.fill: parent
+        open: controller.wallpaperPanelOpen
+        enabled: open
+        visible: opacity > 0.001
+        opacity: enabled ? 1 : 0
+        scale: enabled ? 1 : 0.955
+        colors: root.colors
+        uiFont: root.uiFont
+        iconFont: root.iconFont
+        reducedMotion: root.reducedMotion
+        shellCornerRadius: root.shellCornerRadius
+        transformOrigin: Item.Top
+        Behavior on opacity {
+            SequentialAnimation {
+                PauseAnimation { duration: wallpaperPanelHost.enabled && !root.reducedMotion ? 72 : 0 }
+                NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut }
+            }
+        }
+        Behavior on scale {
+            NumberAnimation {
+                duration: root.reducedMotion ? 0 : MotionTokens.reveal
+                easing.type: MotionTokens.settle
+            }
+        }
     }
 }
