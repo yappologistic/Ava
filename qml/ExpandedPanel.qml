@@ -14,6 +14,7 @@ Item {
     property bool dragActive: false
     property bool reducedMotion: false
     property real morphProgress: 1
+    property real shellCornerRadius: 28
     property bool tilingFeedbackActive: false
     property bool codexOpen: false
     property bool mediaMotionReady: false
@@ -82,6 +83,14 @@ Item {
         if (distance === 2)
             return 0.56
         return 0.28
+    }
+
+    function utilityIconOpacity(distance, hovered, selected, enabled) {
+        if (!enabled)
+            return 0.22
+        if (hovered || selected || distance === 0)
+            return 1
+        return distance === 1 ? 0.64 : 0.34
     }
 
     function formatMediaTime(progress) {
@@ -258,7 +267,7 @@ Item {
                 id: artworkFrame
                 width: 88
                 height: 88
-                radius: 14
+                radius: Math.min(width / 2, root.shellCornerRadius)
                 color: root.colors.raised
                 clip: true
                 opacity: 0.56 + root.revealProgress * 0.44
@@ -638,7 +647,7 @@ Item {
             Rectangle {
                 width: 88
                 height: 88
-                radius: 14
+                radius: Math.min(width / 2, root.shellCornerRadius)
                 color: root.colors.raised
 
                 Text {
@@ -1127,6 +1136,7 @@ Item {
                     bare: true
                     iconSource: Qt.resolvedUrl("../assets/icons/codex-terminal-light.svg")
                     iconSize: 15
+                    opacity: root.utilityIconOpacity(2, hovered, selected, enabled)
                     accessibleName: "Open Codex"
                     onClicked: codexBridge.setPanelOpen(true)
                 }
@@ -1139,6 +1149,7 @@ Item {
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/timer-dark.svg")
                     iconSize: 16
                     selected: controller.timerPanelOpen
+                    opacity: root.utilityIconOpacity(1, hovered, selected, enabled)
                     accessibleName: "Open timer"
                     onClicked: controller.openTimer()
                 }
@@ -1151,6 +1162,7 @@ Item {
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/grid-dark.svg")
                     iconSize: 16
                     selected: tilingManager.enabled
+                    opacity: root.utilityIconOpacity(0, hovered, selected, enabled)
                     accessibleName: tilingManager.enabled
                                     ? "Disable Dwindle tiling"
                                     : "Enable Dwindle tiling"
@@ -1165,6 +1177,7 @@ Item {
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/speaker-muted-dark.svg")
                     iconSize: 16
                     selected: controller.muted
+                    opacity: root.utilityIconOpacity(1, hovered, selected, enabled)
                     accessibleName: (controller.muted ? "Unmute" : "Mute") + ", " + controller.volume + "%"
                     onClicked: controller.toggleMute()
                 }
@@ -1177,22 +1190,10 @@ Item {
                     invertedIconSource: Qt.resolvedUrl("../assets/icons/pin-off-dark.svg")
                     iconSize: 15
                     selected: controller.pinned
+                    opacity: root.utilityIconOpacity(2, hovered, selected, enabled)
                     rotatesOnSelection: true
                     accessibleName: controller.pinned ? "Unpin island" : "Keep island open"
                     onClicked: controller.togglePinned()
-                }
-                IslandButton {
-                    width: 27
-                    height: 27
-                    iconOnly: true
-                    bare: true
-                    iconSource: Qt.resolvedUrl("../assets/icons/dismiss-light.svg")
-                    iconSize: 15
-                    accessibleName: "Collapse"
-                    onClicked: {
-                        controller.setPinned(false)
-                        controller.setExpanded(false)
-                    }
                 }
             }
         }
