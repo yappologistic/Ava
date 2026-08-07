@@ -38,6 +38,7 @@ Item {
         font.family: root.fontFamily
         font.pixelSize: root.fontPixelSize
         font.weight: root.fontWeight
+        font.letterSpacing: root.letterSpacing
     }
 
     TextMetrics {
@@ -46,6 +47,7 @@ Item {
         font.family: root.fontFamily
         font.pixelSize: root.fontPixelSize
         font.weight: root.fontWeight
+        font.letterSpacing: root.letterSpacing
     }
 
     Component.onCompleted: {
@@ -66,9 +68,16 @@ Item {
         if (text === displayedText)
             return
         transition.stop()
-        incomingText = text
-        incoming.y = 3
+        // A second selection can arrive before the previous morph completes.
+        // Normalize both layers first so the next transition never inherits a
+        // half-transparent or vertically displaced outgoing label.
+        if (incomingText.length > 0)
+            displayedText = incomingText
+        outgoing.opacity = 1
+        outgoing.y = 0
         incoming.opacity = 0
+        incoming.y = 3
+        incomingText = text
         transition.start()
     }
 

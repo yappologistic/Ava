@@ -5,9 +5,12 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QPointer>
+#include <QSaveFile>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QThreadPool>
 #include <QUrl>
@@ -39,6 +42,72 @@
 #endif
 
 namespace {
+
+struct WallpaperDefinition {
+    const char *resourcePath;
+    const char *fileName;
+};
+
+constexpr std::array<WallpaperDefinition, 12> wallpaperDefinitions{{
+    {":/qt/qml/Ava/assets/wallpapers/runtime/01-alpine-first-light.jpg", "01-alpine-first-light.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/02-volcanic-coast-after-rain.jpg", "02-volcanic-coast-after-rain.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/03-redwood-creek-mist.jpg", "03-redwood-creek-mist.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/04-highland-river-clearing.jpg", "04-highland-river-clearing.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/05-glacial-lagoon-blue-hour.jpg", "05-glacial-lagoon-blue-hour.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/06-sandstone-stormlight.jpg", "06-sandstone-stormlight.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/07-autumn-larch-valley.jpg", "07-autumn-larch-valley.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/08-moonlit-winter-pond.jpg", "08-moonlit-winter-pond.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/09-volcanic-braided-dusk.jpg", "09-volcanic-braided-dusk.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/10-coastal-dunes-sunrise.jpg", "10-coastal-dunes-sunrise.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/11-rainforest-basalt-falls.jpg", "11-rainforest-basalt-falls.jpg"},
+    {":/qt/qml/Ava/assets/wallpapers/runtime/12-salt-flat-storm-sunset.jpg", "12-salt-flat-storm-sunset.jpg"}
+}};
+
+QString materializeWallpaper(int index)
+{
+    if (index < 0 || index >= static_cast<int>(wallpaperDefinitions.size())) {
+        return {};
+    }
+
+    const WallpaperDefinition &definition = wallpaperDefinitions[static_cast<size_t>(index)];
+    QFile source(QString::fromUtf8(definition.resourcePath));
+    if (!source.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+
+    const QString directoryPath = QStandardPaths::writableLocation(
+        QStandardPaths::AppLocalDataLocation) + QStringLiteral("/wallpapers");
+    if (!QDir().mkpath(directoryPath)) {
+        return {};
+    }
+
+    const QString destinationPath = directoryPath + QLatin1Char('/')
+        + QString::fromUtf8(definition.fileName);
+    QSaveFile destination(destinationPath);
+    if (!destination.open(QIODevice::WriteOnly)
+        || destination.write(source.readAll()) < 0
+        || !destination.commit()) {
+        return {};
+    }
+    return QDir::toNativeSeparators(destinationPath);
+}
+
+#ifdef Q_OS_WIN
+bool applyDesktopWallpaper(const QString &path)
+{
+    Microsoft::WRL::ComPtr<IDesktopWallpaper> desktopWallpaper;
+    if (FAILED(CoCreateInstance(CLSID_DesktopWallpaper,
+                                nullptr,
+                                CLSCTX_ALL,
+                                IID_PPV_ARGS(&desktopWallpaper)))) {
+        return false;
+    }
+
+    desktopWallpaper->SetPosition(DWPOS_FILL);
+    return SUCCEEDED(desktopWallpaper->SetWallpaper(
+        nullptr, reinterpret_cast<LPCWSTR>(path.utf16())));
+}
+#endif
 
 #ifdef Q_OS_WIN
 using Microsoft::WRL::ComPtr;
@@ -471,6 +540,9 @@ struct IslandController::PlatformState
 IslandController::IslandController(QObject *parent)
     : QObject(parent), m_platform(std::make_shared<PlatformState>())
 {
+    m_wallpaperIndex = qBound(0,
+                              QSettings().value(QStringLiteral("wallpaper/index"), 0).toInt(),
+                              static_cast<int>(wallpaperDefinitions.size()) - 1);
 #ifdef Q_OS_WIN
     BOOL animationsEnabled = TRUE;
     if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animationsEnabled, 0)) {
@@ -508,6 +580,10 @@ void IslandController::setExpanded(bool expanded)
         return;
     }
     m_expanded = expanded;
+    if (!m_expanded && m_wallpaperPanelOpen) {
+        m_wallpaperPanelOpen = false;
+        emit wallpaperChanged();
+    }
     emit expandedChanged();
 }
 
@@ -538,6 +614,10 @@ void IslandController::openTimer()
     if (m_timerPanelOpen) {
         return;
     }
+    if (m_wallpaperPanelOpen) {
+        m_wallpaperPanelOpen = false;
+        emit wallpaperChanged();
+    }
     m_timerPanelOpen = true;
     setExpanded(true);
     emit timerChanged();
@@ -565,9 +645,61 @@ void IslandController::startTimer(int durationSeconds)
     m_timerActive = true;
     m_timerPaused = false;
     m_timerRinging = false;
+    if (m_wallpaperPanelOpen) {
+        m_wallpaperPanelOpen = false;
+        emit wallpaperChanged();
+    }
     m_timerPanelOpen = true;
     m_countdownTimer.start();
     emit timerChanged();
+}
+
+void IslandController::openWallpaperPanel()
+{
+    if (m_wallpaperPanelOpen) {
+        return;
+    }
+    if (m_timerPanelOpen) {
+        m_timerPanelOpen = false;
+        emit timerChanged();
+    }
+    m_wallpaperStatus.clear();
+    m_wallpaperPanelOpen = true;
+    setExpanded(true);
+    emit wallpaperChanged();
+}
+
+void IslandController::closeWallpaperPanel()
+{
+    if (!m_wallpaperPanelOpen) {
+        return;
+    }
+    m_wallpaperPanelOpen = false;
+    emit wallpaperChanged();
+}
+
+void IslandController::setWallpaper(int index)
+{
+    if (index < 0 || index >= static_cast<int>(wallpaperDefinitions.size())) {
+        return;
+    }
+
+    m_wallpaperStatus = QStringLiteral("Applying…");
+    emit wallpaperChanged();
+    const QString wallpaperPath = materializeWallpaper(index);
+#ifdef Q_OS_WIN
+    const bool applied = !wallpaperPath.isEmpty() && applyDesktopWallpaper(wallpaperPath);
+#else
+    const bool applied = false;
+#endif
+    if (applied) {
+        m_wallpaperIndex = index;
+        m_wallpaperStatus.clear();
+        QSettings().setValue(QStringLiteral("wallpaper/index"), m_wallpaperIndex);
+    } else {
+        m_wallpaperStatus = QStringLiteral("Couldn’t apply wallpaper");
+    }
+    emit wallpaperChanged();
 }
 
 void IslandController::toggleTimerPaused()
@@ -929,6 +1061,10 @@ void IslandController::finishTimer()
     m_timerPausedRemainingMs = 0;
     m_timerRemainingText = QStringLiteral("0:00");
     m_timerProgress = 0.0;
+    if (m_wallpaperPanelOpen) {
+        m_wallpaperPanelOpen = false;
+        emit wallpaperChanged();
+    }
     m_timerPanelOpen = true;
     setExpanded(true);
     soundTimerAlert();

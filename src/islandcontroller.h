@@ -28,6 +28,10 @@ class IslandController final : public QObject
     Q_PROPERTY(QString timerRemainingText READ timerRemainingText NOTIFY timerChanged)
     Q_PROPERTY(double timerProgress READ timerProgress NOTIFY timerChanged)
 
+    Q_PROPERTY(bool wallpaperPanelOpen READ wallpaperPanelOpen NOTIFY wallpaperChanged)
+    Q_PROPERTY(int wallpaperIndex READ wallpaperIndex NOTIFY wallpaperChanged)
+    Q_PROPERTY(QString wallpaperStatus READ wallpaperStatus NOTIFY wallpaperChanged)
+
     Q_PROPERTY(bool mediaAvailable READ mediaAvailable NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaTitle READ mediaTitle NOTIFY mediaChanged)
     Q_PROPERTY(QString mediaArtist READ mediaArtist NOTIFY mediaChanged)
@@ -78,6 +82,10 @@ public:
     QString timerRemainingText() const { return m_timerRemainingText; }
     double timerProgress() const { return m_timerProgress; }
 
+    bool wallpaperPanelOpen() const { return m_wallpaperPanelOpen; }
+    int wallpaperIndex() const { return m_wallpaperIndex; }
+    QString wallpaperStatus() const { return m_wallpaperStatus; }
+
     bool mediaAvailable() const { return m_mediaAvailable; }
     QString mediaTitle() const { return m_mediaTitle; }
     QString mediaArtist() const { return m_mediaArtist; }
@@ -121,6 +129,10 @@ public slots:
     void cancelTimer();
     void dismissTimer();
 
+    void openWallpaperPanel();
+    void closeWallpaperPanel();
+    void setWallpaper(int index);
+
     void togglePlayback();
     void previousTrack();
     void nextTrack();
@@ -138,6 +150,7 @@ signals:
     void reducedMotionChanged();
     void clockChanged();
     void timerChanged();
+    void wallpaperChanged();
     void mediaChanged();
     void mediaSeekFinished(bool accepted, double requestedProgress);
     void mediaCommandRejected(const QString &command);
@@ -188,6 +201,10 @@ private:
     qint64 m_timerPausedRemainingMs = 0;
     QString m_timerRemainingText = QStringLiteral("0:00");
     double m_timerProgress = 0.0;
+
+    bool m_wallpaperPanelOpen = false;
+    int m_wallpaperIndex = 0;
+    QString m_wallpaperStatus;
 
     bool m_mediaAvailable = false;
     QString m_mediaTitle;

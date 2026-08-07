@@ -41,6 +41,7 @@ qt_add_qml_module(Ava
         qml/DwindleMorphIcon.qml
         qml/CodexPanel.qml
         qml/OpenTuiSpinner.qml
+        qml/WallpaperPanel.qml
     RESOURCES
         assets/icons/play-dark.svg
         assets/icons/pause-dark.svg
@@ -62,6 +63,20 @@ qt_add_qml_module(Ava
         assets/icons/codex-terminal-light.svg
         assets/icons/codex-approval-amber.svg
         assets/icons/codex-complete-green.svg
+        assets/icons/wallpaper-light.svg
+        assets/icons/wallpaper-dark.svg
+        assets/wallpapers/runtime/01-alpine-first-light.jpg
+        assets/wallpapers/runtime/02-volcanic-coast-after-rain.jpg
+        assets/wallpapers/runtime/03-redwood-creek-mist.jpg
+        assets/wallpapers/runtime/04-highland-river-clearing.jpg
+        assets/wallpapers/runtime/05-glacial-lagoon-blue-hour.jpg
+        assets/wallpapers/runtime/06-sandstone-stormlight.jpg
+        assets/wallpapers/runtime/07-autumn-larch-valley.jpg
+        assets/wallpapers/runtime/08-moonlit-winter-pond.jpg
+        assets/wallpapers/runtime/09-volcanic-braided-dusk.jpg
+        assets/wallpapers/runtime/10-coastal-dunes-sunrise.jpg
+        assets/wallpapers/runtime/11-rainforest-basalt-falls.jpg
+        assets/wallpapers/runtime/12-salt-flat-storm-sunset.jpg
         assets/fonts/Inter[opsz,wght].ttf
         assets/fonts/OFL-Inter.txt
         assets/fonts/GeistMono[wght].ttf
