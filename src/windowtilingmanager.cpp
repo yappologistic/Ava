@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QHash>
+#include <QPointF>
 #include <QRect>
 #include <QSet>
 #include <QSize>
@@ -32,10 +33,16 @@ constexpr int kMinimumTileHeightDip = 140;
 constexpr int kFallbackFrameIntervalMs = 8;
 constexpr qreal kSpringFrequency = 27.0;
 constexpr qreal kSpringDamping = 1.0;
+constexpr qreal kMaximumInheritedVelocity = 2600.0;
+constexpr qreal kVelocityLookAheadSeconds = 0.045;
+constexpr int kMagneticRadiusDip = 72;
+constexpr qreal kFocusColorResponse = 18.0;
 constexpr UINT kMoveSizeEventMessage = WM_APP + 0x359;
 constexpr UINT kKeyboardShortcutMessage = WM_APP + 0x35A;
+constexpr UINT kFocusChangedMessage = WM_APP + 0x35B;
 constexpr ULONGLONG kShortcutDebounceMs = 120;
 constexpr wchar_t kSwapPreviewClassName[] = L"AvaDwindleSwapPreview";
+constexpr wchar_t kFocusBorderClassName[] = L"AvaDwindleFocusBorder";
 
 HWND gMoveSizeEventSink = nullptr;
 bool gShortcutKeyDown = false;
@@ -66,9 +73,9 @@ LRESULT CALLBACK swapPreviewWindowProc(HWND window, UINT message, WPARAM wParam,
         HDC device = BeginPaint(window, &paint);
         RECT bounds{};
         GetClientRect(window, &bounds);
-        HBRUSH brush = CreateSolidBrush(RGB(112, 214, 198));
-        FillRect(device, &bounds, brush);
-        DeleteObject(brush);
+        HBRUSH accent = CreateSolidBrush(RGB(112, 214, 198));
+        FillRect(device, &bounds, accent);
+        DeleteObject(accent);
         EndPaint(window, &paint);
         return 0;
     }
@@ -76,6 +83,33 @@ LRESULT CALLBACK swapPreviewWindowProc(HWND window, UINT message, WPARAM wParam,
         break;
     }
     return DefWindowProcW(window, message, wParam, lParam);
+}
+
+void CALLBACK foregroundWinEvent(HWINEVENTHOOK,
+                                 DWORD,
+                                 HWND window,
+                                 LONG,
+                                 LONG,
+                                 DWORD,
+                                 DWORD)
+{
+    if (gMoveSizeEventSink) {
+        PostMessageW(gMoveSizeEventSink,
+                     kFocusChangedMessage,
+                     0,
+                     reinterpret_cast<LPARAM>(window));
+    }
+}
+
+qreal distanceFromPointToRect(const QPointF &point, const QRect &rect)
+{
+    const qreal dx = std::max({qreal(rect.left()) - point.x(),
+                               0.0,
+                               point.x() - qreal(rect.right())});
+    const qreal dy = std::max({qreal(rect.top()) - point.y(),
+                               0.0,
+                               point.y() - qreal(rect.bottom())});
+    return std::hypot(dx, dy);
 }
 
 HWND createSwapPreviewWindow()
@@ -95,6 +129,61 @@ HWND createSwapPreviewWindow()
     return CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT
                                | WS_EX_TOPMOST,
                            kSwapPreviewClassName,
+                           L"",
+                           WS_POPUP,
+                           0,
+                           0,
+                           1,
+                           1,
+                           nullptr,
+                           nullptr,
+                           instance,
+                           nullptr);
+}
+
+LRESULT CALLBACK focusBorderWindowProc(HWND window,
+                                      UINT message,
+                                      WPARAM wParam,
+                                      LPARAM lParam)
+{
+    switch (message) {
+    case WM_NCHITTEST:
+        return HTTRANSPARENT;
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT paint{};
+        HDC device = BeginPaint(window, &paint);
+        RECT bounds{};
+        GetClientRect(window, &bounds);
+        const COLORREF color = static_cast<COLORREF>(GetWindowLongPtrW(window,
+                                                                      GWLP_USERDATA));
+        HBRUSH brush = CreateSolidBrush(color);
+        FillRect(device, &bounds, brush);
+        DeleteObject(brush);
+        EndPaint(window, &paint);
+        return 0;
+    }
+    default:
+        break;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+HWND createFocusBorderWindow()
+{
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    WNDCLASSEXW windowClass{};
+    windowClass.cbSize = sizeof(windowClass);
+    windowClass.hInstance = instance;
+    windowClass.lpfnWndProc = focusBorderWindowProc;
+    windowClass.lpszClassName = kFocusBorderClassName;
+    if (!RegisterClassExW(&windowClass)
+        && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        return nullptr;
+    }
+    return CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
+                           kFocusBorderClassName,
                            L"",
                            WS_POPUP,
                            0,
@@ -489,25 +578,46 @@ struct WindowTilingManager::NativeState
         bool hasAppliedFrame = false;
     };
 
+    struct FocusBorderItem
+    {
+        HWND window = nullptr;
+        HWND borderWindow = nullptr;
+        QRect lastOuterFrame;
+        qreal red = 54;
+        qreal green = 59;
+        qreal blue = 63;
+        qreal targetRed = 54;
+        qreal targetGreen = 59;
+        qreal targetBlue = 63;
+    };
+
     HWND islandWindow = nullptr;
     HWND interactionWindow = nullptr;
     HWND lastFocusedTiledWindow = nullptr;
     HWND swapPreviewWindow = nullptr;
+    HWND magneticTargetWindow = nullptr;
     HWINEVENTHOOK moveSizeHook = nullptr;
+    HWINEVENTHOOK foregroundHook = nullptr;
     HHOOK keyboardHook = nullptr;
     bool hotkeyRegistered = false;
     ULONGLONG lastShortcutToggle = 0;
     QVector<HWND> windowOrder;
     QVector<AnimationItem> animationItems;
+    QVector<FocusBorderItem> focusBorderItems;
     QHash<quintptr, WINDOWPLACEMENT> originalPlacements;
     QHash<quintptr, QRect> originalVisibleFrames;
     QHash<quintptr, QSize> learnedMinimums;
     QHash<quintptr, QSize> cachedMinimums;
     QHash<quintptr, QRect> targetVisibleFrames;
+    QHash<quintptr, QPointF> pendingInheritedVelocities;
     QHash<quintptr, qreal> splitRatios;
     QSet<DWORD> processAllowList;
     QRect interactionStartFrame;
     QRect swapPreviewFrame;
+    QPoint interactionLastCursor;
+    QPointF interactionVelocity;
+    ULONGLONG interactionLastSampleTick = 0;
+    qreal magneticStrength = 0;
     bool interactionIsMove = false;
     bool restoring = false;
 #endif
@@ -530,6 +640,13 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
             this,
             &WindowTilingManager::advanceAnimation);
 
+    m_focusTimer.setInterval(m_animationTimer.interval());
+    m_focusTimer.setTimerType(Qt::PreciseTimer);
+    connect(&m_focusTimer,
+            &QTimer::timeout,
+            this,
+            &WindowTilingManager::advanceFocusBorders);
+
     m_interactionTimer.setInterval(m_animationTimer.interval());
     m_interactionTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_interactionTimer, &QTimer::timeout, this, [this]() {
@@ -544,11 +661,42 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
             return;
         }
         const QPoint point(cursor.x, cursor.y);
+        const ULONGLONG sampleTick = GetTickCount64();
+        if (m_native->interactionLastSampleTick > 0
+            && sampleTick > m_native->interactionLastSampleTick) {
+            const qreal elapsed = qBound(
+                0.001,
+                (sampleTick - m_native->interactionLastSampleTick) / 1000.0,
+                0.1);
+            QPointF measured((point.x() - m_native->interactionLastCursor.x()) / elapsed,
+                             (point.y() - m_native->interactionLastCursor.y()) / elapsed);
+            const qreal speed = std::hypot(measured.x(), measured.y());
+            if (speed > kMaximumInheritedVelocity) {
+                measured *= kMaximumInheritedVelocity / speed;
+            }
+            const qreal blend = 1.0 - std::exp(-22.0 * elapsed);
+            m_native->interactionVelocity += (measured - m_native->interactionVelocity)
+                * blend;
+        }
+        m_native->interactionLastCursor = point;
+        m_native->interactionLastSampleTick = sampleTick;
+
         int nextSlot = -1;
         QRect nextPreviewFrame;
+        HWND nextMagneticTarget = nullptr;
+        qreal nextMagneticStrength = 0;
         bool nextConstrained = false;
         if (m_native->interactionIsMove) {
-            const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+            const POINT projectedNative{
+                qRound(point.x() + m_native->interactionVelocity.x()
+                                      * kVelocityLookAheadSeconds),
+                qRound(point.y() + m_native->interactionVelocity.y()
+                                      * kVelocityLookAheadSeconds)};
+            const QPointF projected(projectedNative.x, projectedNative.y);
+            const HMONITOR monitor = MonitorFromPoint(projectedNative,
+                                                      MONITOR_DEFAULTTONEAREST);
+            const UINT dpi = monitorDpi(monitor, window);
+            const int magneticRadius = scaleDip(kMagneticRadiusDip, dpi);
             int slot = 0;
             for (HWND candidate : std::as_const(m_native->windowOrder)) {
                 if (MonitorFromWindow(candidate, MONITOR_DEFAULTTONEAREST) != monitor) {
@@ -556,14 +704,45 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
                 }
                 const QRect candidateFrame = m_native->targetVisibleFrames.value(
                     reinterpret_cast<quintptr>(candidate));
-                if (candidate != window && candidateFrame.contains(point)) {
-                    nextSlot = slot;
-                    nextPreviewFrame = candidateFrame;
-                    break;
+                if (candidate != window && !candidateFrame.isEmpty()) {
+                    const qreal outsideDistance = distanceFromPointToRect(projected,
+                                                                         candidateFrame);
+                    if (outsideDistance <= magneticRadius) {
+                        const QPointF center = candidateFrame.center();
+                        const qreal centerDistance = std::hypot(projected.x() - center.x(),
+                                                                projected.y() - center.y());
+                        const qreal centerScale = qMax(1.0,
+                                                       std::hypot(candidateFrame.width(),
+                                                                  candidateFrame.height())
+                                                           * 0.55);
+                        const qreal edgeStrength = 1.0
+                            - qBound(0.0, outsideDistance / magneticRadius, 1.0);
+                        const qreal centerStrength = 1.0
+                            - qBound(0.0, centerDistance / centerScale, 1.0);
+                        const qreal strength = edgeStrength
+                            * (0.52 + centerStrength * 0.48);
+                        if (strength >= 0.18 && strength > nextMagneticStrength) {
+                            nextSlot = slot;
+                            nextMagneticTarget = candidate;
+                            nextMagneticStrength = strength;
+                            const int maximumInset = qMin(
+                                scaleDip(18, dpi),
+                                qMax(1, qMin(candidateFrame.width(),
+                                             candidateFrame.height()) / 5));
+                            const int inset = qRound(maximumInset
+                                                     * (1.0 - strength));
+                            nextPreviewFrame = candidateFrame.adjusted(inset,
+                                                                       inset,
+                                                                       -inset,
+                                                                       -inset);
+                        }
+                    }
                 }
                 ++slot;
             }
         }
+        m_native->magneticTargetWindow = nextMagneticTarget;
+        m_native->magneticStrength = nextMagneticStrength;
 
         const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
         MONITORINFO info{};
@@ -599,6 +778,7 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
             }
         }
         updateDesktopSwapPreview(nextPreviewFrame);
+        syncFocusBorderWindows();
         if (nextSlot != m_previewSlot
             || nextConstrained != m_interactionConstrained
             || qAbs(nextProgress - m_interactionProgress) > 0.002) {
@@ -630,6 +810,10 @@ WindowTilingManager::~WindowTilingManager()
     if (m_native->moveSizeHook) {
         UnhookWinEvent(m_native->moveSizeHook);
         m_native->moveSizeHook = nullptr;
+    }
+    if (m_native->foregroundHook) {
+        UnhookWinEvent(m_native->foregroundHook);
+        m_native->foregroundHook = nullptr;
     }
     if (m_native->keyboardHook) {
         UnhookWindowsHookEx(m_native->keyboardHook);
@@ -679,6 +863,10 @@ void WindowTilingManager::setIslandWindow(quintptr nativeHandle)
         UnhookWinEvent(m_native->moveSizeHook);
         m_native->moveSizeHook = nullptr;
     }
+    if (m_native->foregroundHook) {
+        UnhookWinEvent(m_native->foregroundHook);
+        m_native->foregroundHook = nullptr;
+    }
     if (m_native->keyboardHook) {
         UnhookWindowsHookEx(m_native->keyboardHook);
         m_native->keyboardHook = nullptr;
@@ -703,6 +891,14 @@ void WindowTilingManager::setIslandWindow(quintptr nativeHandle)
                                                  0,
                                                  WINEVENT_OUTOFCONTEXT
                                                      | WINEVENT_SKIPOWNPROCESS);
+        m_native->foregroundHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND,
+                                                   EVENT_SYSTEM_FOREGROUND,
+                                                   nullptr,
+                                                   foregroundWinEvent,
+                                                   0,
+                                                   0,
+                                                   WINEVENT_OUTOFCONTEXT
+                                                       | WINEVENT_SKIPOWNPROCESS);
         m_native->keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL,
                                                    keyboardHook,
                                                    GetModuleHandleW(nullptr),
@@ -761,6 +957,19 @@ bool WindowTilingManager::nativeEventFilter(const QByteArray &,
         }
         return true;
     }
+    if (nativeMessage->message == kFocusChangedMessage) {
+        const quintptr focusedHandle = reinterpret_cast<quintptr>(
+            reinterpret_cast<HWND>(nativeMessage->lParam));
+        HWND focusedWindow = reinterpret_cast<HWND>(focusedHandle);
+        if (focusedWindow && m_native->windowOrder.contains(focusedWindow)) {
+            m_native->lastFocusedTiledWindow = focusedWindow;
+        }
+        updateFocusBorders(focusedHandle);
+        if (result) {
+            *result = 0;
+        }
+        return true;
+    }
 #else
     Q_UNUSED(message)
     Q_UNUSED(result)
@@ -789,6 +998,7 @@ void WindowTilingManager::setEnabled(bool enabled)
         m_reconcileTimer.start();
     } else {
         updateDesktopSwapPreview();
+        resetFocusBorders();
         m_reconcileTimer.stop();
         m_animationTimer.stop();
         m_native->animationItems.clear();
@@ -842,6 +1052,8 @@ void WindowTilingManager::beginWindowInteraction(quintptr nativeHandle)
     POINT cursor{};
     m_native->interactionIsMove = false;
     if (GetCursorPos(&cursor)) {
+        m_native->interactionLastCursor = QPoint(cursor.x, cursor.y);
+        m_native->interactionLastSampleTick = GetTickCount64();
         const LPARAM hitPoint = MAKELPARAM(static_cast<short>(cursor.x),
                                            static_cast<short>(cursor.y));
         m_native->interactionIsMove = SendMessageW(window,
@@ -850,6 +1062,9 @@ void WindowTilingManager::beginWindowInteraction(quintptr nativeHandle)
                                                     hitPoint)
             == HTCAPTION;
     }
+    m_native->interactionVelocity = {};
+    m_native->magneticTargetWindow = nullptr;
+    m_native->magneticStrength = 0;
     m_interactionKind = m_native->interactionIsMove
         ? QStringLiteral("MOVING") : QStringLiteral("RESIZING");
     m_previewSlot = -1;
@@ -878,9 +1093,17 @@ void WindowTilingManager::endWindowInteraction(quintptr nativeHandle)
     const QRect currentFrame = visibleFrame(window);
     const QRect startFrame = m_native->interactionStartFrame;
     const bool interactionWasMove = m_native->interactionIsMove;
+    const quintptr preferredTargetHandle = reinterpret_cast<quintptr>(
+        m_native->magneticTargetWindow);
+    if (interactionWasMove) {
+        m_native->pendingInheritedVelocities.insert(nativeHandle,
+                                                    m_native->interactionVelocity);
+    }
     m_native->interactionWindow = nullptr;
     m_native->interactionStartFrame = {};
     m_native->interactionIsMove = false;
+    m_native->interactionLastSampleTick = 0;
+    m_native->interactionVelocity = {};
     m_interactionTimer.stop();
     updateDesktopSwapPreview();
     m_interactionKind.clear();
@@ -901,7 +1124,7 @@ void WindowTilingManager::endWindowInteraction(quintptr nativeHandle)
         const QPoint dropPoint = GetCursorPos(&cursor)
             ? QPoint(cursor.x, cursor.y)
             : currentFrame.center();
-        if (swapWindowAtPoint(nativeHandle, dropPoint)) {
+        if (swapWindowAtPoint(nativeHandle, dropPoint, preferredTargetHandle)) {
             ++m_layoutRevision;
             emit interactionChanged();
         }
@@ -919,7 +1142,9 @@ void WindowTilingManager::endWindowInteraction(quintptr nativeHandle)
 #endif
 }
 
-bool WindowTilingManager::swapWindowAtPoint(quintptr nativeHandle, const QPoint &dropPoint)
+bool WindowTilingManager::swapWindowAtPoint(quintptr nativeHandle,
+                                            const QPoint &dropPoint,
+                                            quintptr preferredTargetHandle)
 {
 #ifdef Q_OS_WIN
     HWND movedWindow = reinterpret_cast<HWND>(nativeHandle);
@@ -943,7 +1168,14 @@ bool WindowTilingManager::swapWindowAtPoint(quintptr nativeHandle, const QPoint 
         return false;
     }
     int destinationIndex = -1;
+    HWND preferredTarget = reinterpret_cast<HWND>(preferredTargetHandle);
+    if (preferredTarget && preferredTarget != movedWindow) {
+        destinationIndex = monitorWindows.indexOf(preferredTarget);
+    }
     for (int index = 0; index < monitorWindows.size(); ++index) {
+        if (destinationIndex >= 0) {
+            break;
+        }
         HWND candidate = monitorWindows.at(index);
         if (candidate != movedWindow
             && m_native->targetVisibleFrames.value(
@@ -979,6 +1211,7 @@ bool WindowTilingManager::swapWindowAtPoint(quintptr nativeHandle, const QPoint 
 #else
     Q_UNUSED(nativeHandle)
     Q_UNUSED(dropPoint)
+    Q_UNUSED(preferredTargetHandle)
     return false;
 #endif
 }
@@ -1176,6 +1409,7 @@ void WindowTilingManager::reconcileWindows()
         }
     }
     m_native->windowOrder = nextOrder;
+    updateFocusBorders(reinterpret_cast<quintptr>(foregroundWindow));
 
     for (auto iterator = m_native->originalPlacements.begin();
          iterator != m_native->originalPlacements.end();) {
@@ -1183,6 +1417,7 @@ void WindowTilingManager::reconcileWindows()
             m_native->learnedMinimums.remove(iterator.key());
             m_native->cachedMinimums.remove(iterator.key());
             m_native->targetVisibleFrames.remove(iterator.key());
+            m_native->pendingInheritedVelocities.remove(iterator.key());
             m_native->originalVisibleFrames.remove(iterator.key());
             m_native->splitRatios.remove(iterator.key());
             iterator = m_native->originalPlacements.erase(iterator);
@@ -1296,6 +1531,8 @@ void WindowTilingManager::retargetWindows(const QHash<quintptr, QRect> &targets,
         }
         const QRect targetVisible = iterator.value();
         const QRect targetNative = nativeRectForVisibleFrame(window, targetVisible);
+        const QPointF inheritedVelocity = m_native->pendingInheritedVelocities.take(
+            iterator.key());
         auto item = std::find_if(m_native->animationItems.begin(),
                                  m_native->animationItems.end(),
                                  [window](const NativeState::AnimationItem &candidate) {
@@ -1304,6 +1541,10 @@ void WindowTilingManager::retargetWindows(const QHash<quintptr, QRect> &targets,
         if (item != m_native->animationItems.end()) {
             item->targetNative = targetNative;
             item->targetVisible = targetVisible;
+            if (!inheritedVelocity.isNull()) {
+                item->velocityX = inheritedVelocity.x();
+                item->velocityY = inheritedVelocity.y();
+            }
             continue;
         }
 
@@ -1323,6 +1564,8 @@ void WindowTilingManager::retargetWindows(const QHash<quintptr, QRect> &targets,
         next.height = qMax(1L, nativeBounds.bottom - nativeBounds.top);
         next.targetNative = targetNative;
         next.targetVisible = targetVisible;
+        next.velocityX = inheritedVelocity.x();
+        next.velocityY = inheritedVelocity.y();
         m_native->animationItems.append(next);
     }
 
@@ -1405,6 +1648,7 @@ void WindowTilingManager::updateAnimationCadence()
     const int frameInterval = compositionFrameIntervalMs();
     m_animationTimer.setInterval(frameInterval);
     m_interactionTimer.setInterval(frameInterval);
+    m_focusTimer.setInterval(frameInterval);
 #endif
 }
 
@@ -1413,6 +1657,8 @@ void WindowTilingManager::updateDesktopSwapPreview(const QRect &frame)
 #ifdef Q_OS_WIN
     if (frame.isEmpty()) {
         m_native->swapPreviewFrame = {};
+        m_native->magneticTargetWindow = nullptr;
+        m_native->magneticStrength = 0;
         if (m_native->swapPreviewWindow) {
             ShowWindow(m_native->swapPreviewWindow, SW_HIDE);
         }
@@ -1421,39 +1667,256 @@ void WindowTilingManager::updateDesktopSwapPreview(const QRect &frame)
     if (!m_native->swapPreviewWindow) {
         m_native->swapPreviewWindow = createSwapPreviewWindow();
     }
-    if (!m_native->swapPreviewWindow || m_native->swapPreviewFrame == frame) {
+    if (!m_native->swapPreviewWindow) {
         return;
     }
-    m_native->swapPreviewFrame = frame;
     const RECT previewBounds{frame.left(), frame.top(), frame.right() + 1,
                              frame.bottom() + 1};
     const HMONITOR monitor = MonitorFromRect(&previewBounds, MONITOR_DEFAULTTONEAREST);
     const UINT dpi = monitorDpi(monitor, m_native->islandWindow);
-    const int thickness = qMax(2, scaleDip(3, dpi));
+    const int thickness = qMax(2, scaleDip(2, dpi));
     const int diameter = qMax(12, scaleDip(18, dpi));
-    HRGN outer = CreateRoundRectRgn(0, 0, frame.width() + 1, frame.height() + 1,
-                                    diameter, diameter);
-    HRGN inner = CreateRoundRectRgn(thickness,
-                                    thickness,
-                                    qMax(thickness + 1, frame.width() - thickness + 1),
-                                    qMax(thickness + 1, frame.height() - thickness + 1),
-                                    qMax(2, diameter - thickness * 2),
-                                    qMax(2, diameter - thickness * 2));
-    CombineRgn(outer, outer, inner, RGN_DIFF);
-    DeleteObject(inner);
-    if (!SetWindowRgn(m_native->swapPreviewWindow, outer, FALSE)) {
-        DeleteObject(outer);
+    if (m_native->swapPreviewFrame != frame) {
+        m_native->swapPreviewFrame = frame;
+        HRGN outer = CreateRoundRectRgn(0,
+                                        0,
+                                        frame.width() + 1,
+                                        frame.height() + 1,
+                                        diameter,
+                                        diameter);
+        HRGN inner = CreateRoundRectRgn(thickness,
+                                        thickness,
+                                        qMax(thickness + 1,
+                                             frame.width() - thickness + 1),
+                                        qMax(thickness + 1,
+                                             frame.height() - thickness + 1),
+                                        qMax(2, diameter - thickness * 2),
+                                        qMax(2, diameter - thickness * 2));
+        CombineRgn(outer, outer, inner, RGN_DIFF);
+        DeleteObject(inner);
+        if (!SetWindowRgn(m_native->swapPreviewWindow, outer, FALSE)) {
+            DeleteObject(outer);
+        }
+        SetWindowPos(m_native->swapPreviewWindow,
+                     HWND_TOPMOST,
+                     frame.x(),
+                     frame.y(),
+                     frame.width(),
+                     frame.height(),
+                     SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
-    SetWindowPos(m_native->swapPreviewWindow,
-                 HWND_TOPMOST,
-                 frame.x(),
-                 frame.y(),
-                 frame.width(),
-                 frame.height(),
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
     InvalidateRect(m_native->swapPreviewWindow, nullptr, TRUE);
 #else
     Q_UNUSED(frame)
+#endif
+}
+
+void WindowTilingManager::updateFocusBorders(quintptr focusedHandle, bool immediate)
+{
+#ifdef Q_OS_WIN
+    if (!m_enabled) {
+        return;
+    }
+
+    QSet<quintptr> managedHandles;
+    managedHandles.reserve(m_native->windowOrder.size());
+    for (HWND window : std::as_const(m_native->windowOrder)) {
+        if (IsWindow(window)) {
+            managedHandles.insert(reinterpret_cast<quintptr>(window));
+        }
+    }
+
+    m_native->focusBorderItems.erase(
+        std::remove_if(m_native->focusBorderItems.begin(),
+                       m_native->focusBorderItems.end(),
+                       [&](const NativeState::FocusBorderItem &item) {
+                           const quintptr handle = reinterpret_cast<quintptr>(item.window);
+                           if (IsWindow(item.window) && managedHandles.contains(handle)) {
+                               return false;
+                           }
+                           if (item.borderWindow && IsWindow(item.borderWindow)) {
+                               DestroyWindow(item.borderWindow);
+                           }
+                           return true;
+                       }),
+        m_native->focusBorderItems.end());
+
+    constexpr qreal inactiveRed = 52;
+    constexpr qreal inactiveGreen = 57;
+    constexpr qreal inactiveBlue = 61;
+    constexpr qreal activeRed = 102;
+    constexpr qreal activeGreen = 211;
+    constexpr qreal activeBlue = 196;
+    bool needsAnimation = false;
+    for (HWND window : std::as_const(m_native->windowOrder)) {
+        if (!IsWindow(window)) {
+            continue;
+        }
+        auto item = std::find_if(m_native->focusBorderItems.begin(),
+                                 m_native->focusBorderItems.end(),
+                                 [window](const NativeState::FocusBorderItem &candidate) {
+                                     return candidate.window == window;
+                                 });
+        if (item == m_native->focusBorderItems.end()) {
+            NativeState::FocusBorderItem next;
+            next.window = window;
+            next.borderWindow = createFocusBorderWindow();
+            m_native->focusBorderItems.append(next);
+            item = std::prev(m_native->focusBorderItems.end());
+        }
+        const bool focused = reinterpret_cast<quintptr>(window) == focusedHandle;
+        item->targetRed = focused ? activeRed : inactiveRed;
+        item->targetGreen = focused ? activeGreen : inactiveGreen;
+        item->targetBlue = focused ? activeBlue : inactiveBlue;
+        if (immediate) {
+            item->red = item->targetRed;
+            item->green = item->targetGreen;
+            item->blue = item->targetBlue;
+            if (item->borderWindow) {
+                const COLORREF color = RGB(qRound(item->red),
+                                           qRound(item->green),
+                                           qRound(item->blue));
+                SetWindowLongPtrW(item->borderWindow,
+                                  GWLP_USERDATA,
+                                  static_cast<LONG_PTR>(color));
+                InvalidateRect(item->borderWindow, nullptr, TRUE);
+            }
+        } else if (qAbs(item->red - item->targetRed) > 0.5
+                   || qAbs(item->green - item->targetGreen) > 0.5
+                   || qAbs(item->blue - item->targetBlue) > 0.5) {
+            needsAnimation = true;
+        }
+    }
+
+    if (needsAnimation && !m_focusTimer.isActive()) {
+        m_focusClock.start();
+        m_focusTimer.start();
+        advanceFocusBorders();
+    }
+    syncFocusBorderWindows();
+#else
+    Q_UNUSED(focusedHandle)
+    Q_UNUSED(immediate)
+#endif
+}
+
+void WindowTilingManager::advanceFocusBorders()
+{
+#ifdef Q_OS_WIN
+    if (!m_enabled || m_native->focusBorderItems.isEmpty()) {
+        m_focusTimer.stop();
+        return;
+    }
+    qreal elapsed = m_focusClock.isValid()
+        ? m_focusClock.restart() / 1000.0
+        : m_focusTimer.interval() / 1000.0;
+    elapsed = qBound(0.001, elapsed, 0.05);
+    const qreal response = 1.0 - std::exp(-kFocusColorResponse * elapsed);
+    bool stillAnimating = false;
+    for (NativeState::FocusBorderItem &item : m_native->focusBorderItems) {
+        if (!IsWindow(item.window)) {
+            continue;
+        }
+        item.red += (item.targetRed - item.red) * response;
+        item.green += (item.targetGreen - item.green) * response;
+        item.blue += (item.targetBlue - item.blue) * response;
+        const bool settled = qAbs(item.targetRed - item.red) < 0.5
+            && qAbs(item.targetGreen - item.green) < 0.5
+            && qAbs(item.targetBlue - item.blue) < 0.5;
+        if (settled) {
+            item.red = item.targetRed;
+            item.green = item.targetGreen;
+            item.blue = item.targetBlue;
+        } else {
+            stillAnimating = true;
+        }
+        if (item.borderWindow) {
+            const COLORREF color = RGB(qBound(0, qRound(item.red), 255),
+                                       qBound(0, qRound(item.green), 255),
+                                       qBound(0, qRound(item.blue), 255));
+            SetWindowLongPtrW(item.borderWindow,
+                              GWLP_USERDATA,
+                              static_cast<LONG_PTR>(color));
+            InvalidateRect(item.borderWindow, nullptr, TRUE);
+        }
+    }
+    syncFocusBorderWindows();
+    if (!stillAnimating) {
+        m_focusTimer.stop();
+    }
+#endif
+}
+
+void WindowTilingManager::syncFocusBorderWindows()
+{
+#ifdef Q_OS_WIN
+    for (NativeState::FocusBorderItem &item : m_native->focusBorderItems) {
+        if (!IsWindow(item.window) || !item.borderWindow
+            || !IsWindowVisible(item.window) || IsIconic(item.window)) {
+            if (item.borderWindow) {
+                ShowWindow(item.borderWindow, SW_HIDE);
+            }
+            continue;
+        }
+        const QRect frame = visibleFrame(item.window);
+        if (frame.isEmpty()) {
+            ShowWindow(item.borderWindow, SW_HIDE);
+            continue;
+        }
+        const HMONITOR monitor = MonitorFromWindow(item.window,
+                                                   MONITOR_DEFAULTTONEAREST);
+        const UINT dpi = monitorDpi(monitor, item.window);
+        const int thickness = qMax(1, scaleDip(2, dpi));
+        const int diameter = qMax(12, scaleDip(18, dpi));
+        const QRect outerFrame = frame.adjusted(-thickness,
+                                                -thickness,
+                                                thickness,
+                                                thickness);
+        if (item.lastOuterFrame != outerFrame) {
+            item.lastOuterFrame = outerFrame;
+            HRGN outer = CreateRoundRectRgn(0,
+                                            0,
+                                            outerFrame.width() + 1,
+                                            outerFrame.height() + 1,
+                                            diameter,
+                                            diameter);
+            HRGN inner = CreateRoundRectRgn(thickness,
+                                            thickness,
+                                            qMax(thickness + 1,
+                                                 outerFrame.width() - thickness + 1),
+                                            qMax(thickness + 1,
+                                                 outerFrame.height() - thickness + 1),
+                                            qMax(2, diameter - thickness * 2),
+                                            qMax(2, diameter - thickness * 2));
+            CombineRgn(outer, outer, inner, RGN_DIFF);
+            DeleteObject(inner);
+            if (!SetWindowRgn(item.borderWindow, outer, FALSE)) {
+                DeleteObject(outer);
+            }
+        }
+        SetWindowPos(item.borderWindow,
+                     item.window,
+                     outerFrame.x(),
+                     outerFrame.y(),
+                     outerFrame.width(),
+                     outerFrame.height(),
+                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+    }
+#endif
+}
+
+void WindowTilingManager::resetFocusBorders()
+{
+#ifdef Q_OS_WIN
+    m_focusTimer.stop();
+    for (const NativeState::FocusBorderItem &item : std::as_const(
+             m_native->focusBorderItems)) {
+        if (item.borderWindow && IsWindow(item.borderWindow)) {
+            DestroyWindow(item.borderWindow);
+        }
+    }
+    m_native->focusBorderItems.clear();
 #endif
 }
 
@@ -1474,8 +1937,10 @@ void WindowTilingManager::advanceAnimation()
 
     struct FrameStep
     {
+        NativeState::AnimationItem *item = nullptr;
         HWND window = nullptr;
         QRect frame;
+        bool settled = false;
     };
     QVector<FrameStep> frameSteps;
     QVector<NativeState::AnimationItem> completedItems;
@@ -1529,15 +1994,13 @@ void WindowTilingManager::advanceAnimation()
                           qMax(1, qRound(item.width)),
                           qMax(1, qRound(item.height)));
         if (!item.hasAppliedFrame || item.lastAppliedNative != frame) {
-            item.lastAppliedNative = frame;
-            item.hasAppliedFrame = true;
-            frameSteps.append({item.window, frame});
-        }
-        if (isSettled) {
+            frameSteps.append({&item, item.window, frame, isSettled});
+        } else if (isSettled) {
             completedItems.append(item);
         }
     }
 
+    bool transactionCommitted = frameSteps.isEmpty();
     if (!frameSteps.isEmpty()) {
         HDWP deferred = BeginDeferWindowPos(frameSteps.size());
         bool deferSucceeded = deferred != nullptr;
@@ -1552,27 +2015,26 @@ void WindowTilingManager::advanceAnimation()
                                       step.frame.y(),
                                       step.frame.width(),
                                       step.frame.height(),
-                                      SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER
-                                          | SWP_DEFERERASE);
+                                      SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER);
             deferSucceeded = deferred != nullptr;
         }
         if (deferSucceeded) {
-            EndDeferWindowPos(deferred);
-        } else {
-            for (const FrameStep &step : std::as_const(frameSteps)) {
-                SetWindowPos(step.window,
-                             nullptr,
-                             step.frame.x(),
-                             step.frame.y(),
-                             step.frame.width(),
-                             step.frame.height(),
-                             SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER
-                                 | SWP_DEFERERASE);
-            }
+            transactionCommitted = EndDeferWindowPos(deferred) == TRUE;
         }
-        BOOL compositionEnabled = FALSE;
-        if (SUCCEEDED(DwmIsCompositionEnabled(&compositionEnabled)) && compositionEnabled) {
-            DwmFlush();
+        if (transactionCommitted) {
+            for (const FrameStep &step : std::as_const(frameSteps)) {
+                step.item->lastAppliedNative = step.frame;
+                step.item->hasAppliedFrame = true;
+                if (step.settled) {
+                    completedItems.append(*step.item);
+                }
+            }
+            BOOL compositionEnabled = FALSE;
+            if (SUCCEEDED(DwmIsCompositionEnabled(&compositionEnabled))
+                && compositionEnabled) {
+                DwmFlush();
+            }
+            syncFocusBorderWindows();
         }
     }
 
@@ -1676,10 +2138,15 @@ void WindowTilingManager::finishRestoreWindows()
     m_native->learnedMinimums.clear();
     m_native->cachedMinimums.clear();
     m_native->targetVisibleFrames.clear();
+    m_native->pendingInheritedVelocities.clear();
     m_native->splitRatios.clear();
     m_native->interactionWindow = nullptr;
     m_native->lastFocusedTiledWindow = nullptr;
     m_native->interactionStartFrame = {};
+    m_native->interactionLastSampleTick = 0;
+    m_native->interactionVelocity = {};
+    m_native->magneticTargetWindow = nullptr;
+    m_native->magneticStrength = 0;
     m_native->restoring = false;
 #endif
     setTiledWindowCount(0);
