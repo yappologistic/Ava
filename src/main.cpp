@@ -20,6 +20,7 @@
 
 #include <cmath>
 
+#include "applauncher.h"
 #include "islandcontroller.h"
 #include "codexbridge.h"
 #include "windowtilingmanager.h"
@@ -170,6 +171,13 @@ int main(int argc, char *argv[])
     const QCommandLineOption wallpapersOption(
         QStringLiteral("wallpapers"),
         QStringLiteral("Open the wallpaper chooser."));
+    const QCommandLineOption launcherOption(
+        QStringLiteral("launcher"),
+        QStringLiteral("Open the application launcher."));
+    const QCommandLineOption launcherQueryOption(
+        QStringLiteral("launcher-query"),
+        QStringLiteral("Populate the application launcher search field."),
+        QStringLiteral("query"));
     const QCommandLineOption utilityMenuOption(
         QStringLiteral("utility-menu"),
         QStringLiteral("Render the calendar utility menu for screenshot QA."));
@@ -199,6 +207,8 @@ int main(int argc, char *argv[])
     parser.addOption(tilingOption);
     parser.addOption(timerOption);
     parser.addOption(wallpapersOption);
+    parser.addOption(launcherOption);
+    parser.addOption(launcherQueryOption);
     parser.addOption(utilityMenuOption);
     parser.addOption(codexOption);
     parser.addOption(codexWorkspaceOption);
@@ -216,6 +226,7 @@ int main(int argc, char *argv[])
 #endif
 
     IslandController controller;
+    AppLauncher appLauncher;
     CodexBridge codexBridge;
     WindowTilingManager tilingManager;
     if (parser.isSet(codexWorkspaceOption)) {
@@ -242,6 +253,7 @@ int main(int argc, char *argv[])
     controller.setExpanded(parser.isSet(expandedOption) || parser.isSet(pinnedOption)
                            || parser.isSet(codexOption)
                            || parser.isSet(wallpapersOption)
+                           || parser.isSet(launcherOption)
                            || parser.isSet(utilityMenuOption)
                            || (parser.isSet(codexVisualStateOption)
                                && !compactCodexVisual));
@@ -262,6 +274,7 @@ int main(int argc, char *argv[])
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
+    engine.rootContext()->setContextProperty(QStringLiteral("appLauncher"), &appLauncher);
     engine.rootContext()->setContextProperty(QStringLiteral("codexBridge"), &codexBridge);
     engine.rootContext()->setContextProperty(QStringLiteral("tilingManager"), &tilingManager);
     engine.rootContext()->setContextProperty(QStringLiteral("qaBackdrop"),
@@ -285,7 +298,19 @@ int main(int argc, char *argv[])
     }
     rootWindow->setPersistentGraphics(true);
     rootWindow->setPersistentSceneGraph(true);
+    appLauncher.setWindowHandle(rootWindow->winId());
+    app.installNativeEventFilter(&appLauncher);
     tilingManager.setIslandWindow(rootWindow->winId());
+    if (parser.isSet(launcherOption)) {
+        QTimer::singleShot(80,
+                           &appLauncher,
+                           [&appLauncher, &parser, &launcherQueryOption]() {
+            appLauncher.openLauncher();
+            if (parser.isSet(launcherQueryOption)) {
+                appLauncher.setQuery(parser.value(launcherQueryOption));
+            }
+        });
+    }
     if (parser.isSet(tilingOption)) {
         QTimer::singleShot(300, &tilingManager, [&tilingManager]() {
             tilingManager.setEnabled(true);
@@ -375,7 +400,8 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(screenshotOption)) {
         const QString screenshotPath = QDir::cleanPath(parser.value(screenshotOption));
-        QTimer::singleShot(1000, &app, [rootWindow, rootObject, screenshotPath, &app]() {
+        const int screenshotDelay = parser.isSet(launcherOption) ? 2400 : 1000;
+        QTimer::singleShot(screenshotDelay, &app, [rootWindow, rootObject, screenshotPath, &app]() {
             const QImage fullImage = rootWindow->grabWindow();
             const qreal scale = qMax<qreal>(1.0, fullImage.devicePixelRatio());
             const int cropWidth = qRound(rootObject->property("islandCaptureWidth").toReal() * scale);

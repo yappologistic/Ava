@@ -16,6 +16,8 @@ qt_standard_project_setup(REQUIRES 6.5)
 
 qt_add_executable(Ava
     src/main.cpp
+    src/applauncher.cpp
+    src/applauncher.h
     src/codexbridge.cpp
     src/codexbridge.h
     src/islandcontroller.cpp
@@ -29,6 +31,7 @@ qt_add_qml_module(Ava
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/AppLauncherPanel.qml
         qml/ExpandedPanel.qml
         qml/TimerPanel.qml
         qml/IslandButton.qml
@@ -97,7 +100,7 @@ if (AVA_FORCE_AUTOMATION_MODE)
 endif()
 
 if (WIN32)
-    target_link_libraries(Ava PRIVATE user32 shell32 dwmapi ole32 windowsapp)
+    target_link_libraries(Ava PRIVATE user32 shell32 dwmapi ole32 propsys windowsapp)
     set_target_properties(Ava PROPERTIES
         WIN32_EXECUTABLE TRUE
     )
