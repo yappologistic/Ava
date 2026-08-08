@@ -528,7 +528,7 @@ void CodexChatController::setVisualTestState(const QString &state)
                     {QStringLiteral("phase"), QStringLiteral("final_answer")},
                     {QStringLiteral("text"),
                      state == QStringLiteral("markdown")
-                         ? QStringLiteral("The implementation is now verified across the full flow.\n\n- **Message identity:** each submitted prompt appears once, using the server-owned item ID.\n- **Readable responses:** paragraphs and wrapped list items have consistent breathing room.\n- **Native activity:** thinking and tool work remain part of the conversation flow.\n\nThe focused tests and complete Release build both pass.")
+                         ? QStringLiteral("The implementation is now verified across the full flow.\n\n- **Message identity:** each submitted prompt appears once, using the server-owned item ID.\n- **Readable responses:** paragraphs and wrapped list items have consistent breathing room.\n- **Native activity:** thinking and tool work remain part of the conversation flow.\n\n```cpp\n#include <iostream>\n\nint main() {\n    std::cout << \"Ava is ready\" << std::endl;\n    return 0;\n}\n```\n\nThe focused tests and complete Release build both pass. \uE200cite\uE202turn1view0\uE201")
                          : (state == QStringLiteral("sources")
                             || state == QStringLiteral("sources-live"))
                          ? QStringLiteral("Qt's native rich-text flow is documented in [Qt Quick Text](https://doc.qt.io/qt-6/qml-qtquick-text.html), while custom scene-graph painting is covered by [QQuickPaintedItem](https://doc.qt.io/qt-6/qquickpainteditem.html).")

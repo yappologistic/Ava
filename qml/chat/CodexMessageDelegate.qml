@@ -147,7 +147,9 @@ Item {
             implicitHeight: (fileCard.visible ? fileCard.implicitHeight
                             : (workDisclosure.visible ? workDisclosure.implicitHeight
                             : (planText.visible ? planText.implicitHeight
-                                                : messageText.implicitHeight)
+                                                : (richMessage.visible
+                                                   ? richMessage.implicitHeight
+                                                   : messageText.implicitHeight))
                               + (root.kind === "user" ? 24 : 10)))
                             + (detailArea.visible ? detailArea.implicitHeight + 10 : 0)
             visible: !root.thinking
@@ -176,6 +178,7 @@ Item {
                                                              : (root.toolActivity ? 17 : 0))
                 visible: root.kind !== "plan" && root.kind !== "file"
                          && root.kind !== "work"
+                         && !(root.kind === "agent" && !root.running)
                 readOnly: true
                 selectByMouse: true
                 selectionColor: "#355b65"
@@ -193,6 +196,16 @@ Item {
                 font.pixelSize: root.kind === "command" ? 12 : 13
                 Accessible.name: root.body
                 onLinkActivated: function(link) { root.openUrlRequested(link) }
+            }
+
+            CodexRichMessage {
+                id: richMessage
+                x: 0
+                y: 3
+                width: parent.width
+                visible: root.kind === "agent" && !root.running
+                markdown: root.body
+                onOpenUrlRequested: function(url) { root.openUrlRequested(url) }
             }
 
             CodexWorkDisclosure {

@@ -64,9 +64,11 @@ qt_add_qml_module(AvaChat
         qml/chat/ChatIconButton.qml
         qml/chat/ChatTextButton.qml
         qml/chat/CodexChatWindow.qml
+        qml/chat/CodexCodeBlock.qml
         qml/chat/CodexComposer.qml
         qml/chat/CodexDiffInspector.qml
         qml/chat/CodexMessageDelegate.qml
+        qml/chat/CodexRichMessage.qml
         qml/chat/CodexWorkDisclosure.qml
     RESOURCES
         assets/icons/codex-terminal-light.svg
