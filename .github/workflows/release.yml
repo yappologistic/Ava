@@ -48,7 +48,7 @@ jobs:
         id: find_msi
         run: |
           $msi = Get-ChildItem -Path build -Filter "*.msi" | Select-Object -First 1
-          echo "msi_path=build\$($msi.Name)" >> $env:GITHUB_OUTPUT
+          echo "msi_path=build/$($msi.Name)" >> $env:GITHUB_OUTPUT
           echo "msi_name=$($msi.Name)" >> $env:GITHUB_OUTPUT
 
       - name: Create GitHub Release

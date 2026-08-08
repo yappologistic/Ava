@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(Ava VERSION 0.1 LANGUAGES CXX)
+project(Ava VERSION 0.1.0 LANGUAGES CXX)
 
 option(AVA_FORCE_AUTOMATION_MODE "Expose Ava as a focusable window for local UI automation" OFF)
 
