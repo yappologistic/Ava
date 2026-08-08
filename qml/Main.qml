@@ -9,7 +9,7 @@ Window {
     color: automationMode ? "#5f6974" : "transparent"
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint
            | (automationMode ? Qt.Window : Qt.Tool)
-    title: "Ava"
+    title: appLauncher.open ? "Ava Launcher" : "Ava"
 
     readonly property string uiFont: "Inter"
     readonly property string monoFont: "Geist Mono"
@@ -20,17 +20,22 @@ Window {
     readonly property int expandedWidth: Math.max(520, Math.min(584, Screen.width - 40))
     readonly property int baseExpandedHeight: 128
     readonly property int wallpaperExpandedHeight: 228
-    readonly property int expandedHeight: controller.wallpaperPanelOpen
+    readonly property int launcherExpandedHeight: Math.max(420, Math.min(468, Screen.height - 52))
+    readonly property int expandedHeight: appLauncher.open
+                                          ? launcherExpandedHeight
+                                          : (controller.wallpaperPanelOpen
                                           ? wallpaperExpandedHeight
-                                          : baseExpandedHeight
+                                          : baseExpandedHeight)
     readonly property int dragWidth: Math.min(420, expandedWidth)
     readonly property int dragHeight: 116
     readonly property int mediaPeekWidth: 230
     readonly property int codexPeekWidth: 242
     readonly property int canvasWidth: expandedWidth + 40
-    readonly property int canvasHeight: wallpaperExpandedHeight + 10
+    readonly property int canvasHeight: Math.max(wallpaperExpandedHeight,
+                                                  launcherExpandedHeight) + 10
+    readonly property bool launcherOpen: appLauncher.open
     readonly property bool dragActive: dropTarget.containsDrag
-    property bool shellExpandedVisual: controller.expanded
+    property bool shellExpandedVisual: controller.expanded || appLauncher.open
     property real hoverTension: islandHover.hovered && !controller.expanded
                                 && !dragActive ? 1 : 0
     readonly property int islandTargetWidth: dragActive ? dragWidth
@@ -88,12 +93,13 @@ Window {
     readonly property real islandCaptureWidth: islandVisualWidth + dynamicEarWidth * 2
     readonly property real islandCaptureHeight: islandVisualHeight + 8
     readonly property bool nativeInputMaskEnabled: !qaMode && !automationMode
-    readonly property bool keyboardCaptureArmed: codexBridge.panelOpen
+    readonly property bool keyboardCaptureArmed: appLauncher.open
+                                                  || (codexBridge.panelOpen
                                                   && codexBridge.connected
                                                   && !codexBridge.active
                                                   && !codexBridge.awaitingApproval
                                                   && codexBridge.phase !== "completed"
-                                                  && codexBridge.phase !== "error"
+                                                  && codexBridge.phase !== "error")
 
     Behavior on hoverTension {
         NumberAnimation {
@@ -237,7 +243,7 @@ Window {
             window.lastDroppedFileCount = controller.droppedFileCount
         }
         function onForegroundFullscreenChanged() {
-            if (controller.foregroundFullscreen && !qaMode) {
+            if (controller.foregroundFullscreen && !qaMode && !appLauncher.open) {
                 window.mediaPeekActive = false
                 if (!controller.timerRinging)
                     controller.setExpanded(false)
@@ -258,6 +264,24 @@ Window {
             if (codexBridge.panelOpen) {
                 controller.closeTimer()
                 controller.setExpanded(true)
+            }
+        }
+    }
+
+    Connections {
+        target: appLauncher
+        function onOpenChanged() {
+            if (appLauncher.open) {
+                delayedShellClose.stop()
+                window.mediaPeekActive = false
+                controller.closeTimer()
+                controller.closeWallpaperPanel()
+                codexBridge.setPanelOpen(false)
+                controller.setExpanded(true)
+            } else if (!controller.pinned && !codexBridge.panelOpen
+                       && !controller.timerPanelOpen
+                       && !controller.wallpaperPanelOpen) {
+                controller.setExpanded(false)
             }
         }
     }
@@ -380,7 +404,7 @@ Window {
         repeat: false
         running: controller.expanded && !controller.pinned
                  && !islandHover.hovered && !qaMode
-                 && !window.tilingFeedbackActive
+                 && !window.tilingFeedbackActive && !appLauncher.open
         onTriggered: controller.setExpanded(false)
     }
 
@@ -1170,7 +1194,7 @@ Window {
             colors: window.colors
             uiFont: window.uiFont
             iconFont: window.iconFont
-            expanded: controller.expanded
+            expanded: controller.expanded && !appLauncher.open
             dragActive: window.dragActive
             reducedMotion: controller.reducedMotion
             morphProgress: window.morphProgress
@@ -1189,7 +1213,23 @@ Window {
             monoFont: window.monoFont
             iconFont: window.iconFont
             reducedMotion: controller.reducedMotion
-            open: controller.expanded && codexBridge.panelOpen && !window.dragActive
+            open: controller.expanded && codexBridge.panelOpen
+                  && !window.dragActive && !appLauncher.open
+        }
+
+        AppLauncherPanel {
+            id: appLauncherPanel
+            z: 30
+            anchors.fill: parent
+            colors: window.colors
+            uiFont: window.uiFont
+            iconFont: window.iconFont
+            focusAccent: controller.mediaPlaying
+                         && controller.mediaArtworkAccent.length > 0
+                         ? controller.mediaArtworkAccent
+                         : window.colors.accent
+            reducedMotion: controller.reducedMotion
+            open: appLauncher.open && !window.dragActive
         }
 
         Item {
