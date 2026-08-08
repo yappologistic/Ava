@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QObject>
 #include <QPoint>
+#include <QPointF>
 #include <QRect>
 #include <QSet>
 #include <QString>
@@ -67,12 +68,18 @@ private:
     void beginWindowInteraction(quintptr nativeHandle);
     void endWindowInteraction(quintptr nativeHandle);
     bool adoptUserResize(quintptr nativeHandle, const QRect &currentFrame);
-    bool swapWindowAtPoint(quintptr nativeHandle, const QPoint &dropPoint);
+    bool swapWindowAtPoint(quintptr nativeHandle,
+                           const QPoint &dropPoint,
+                           quintptr preferredTargetHandle = 0);
     void retargetWindows(const QHash<quintptr, QRect> &targets,
                          quintptr excludedHandle = 0);
     void retargetLiveResize();
     void updateAnimationCadence();
     void updateDesktopSwapPreview(const QRect &frame = {});
+    void updateFocusBorders(quintptr focusedHandle, bool immediate = false);
+    void advanceFocusBorders();
+    void syncFocusBorderWindows();
+    void resetFocusBorders();
     void advanceAnimation();
     void restoreWindows();
     void finishRestoreWindows();
@@ -82,7 +89,9 @@ private:
     QTimer m_reconcileTimer;
     QTimer m_animationTimer;
     QTimer m_interactionTimer;
+    QTimer m_focusTimer;
     QElapsedTimer m_animationClock;
+    QElapsedTimer m_focusClock;
     bool m_enabled = false;
     bool m_adjusting = false;
     int m_tiledWindowCount = 0;
