@@ -10,6 +10,7 @@
 #include <QSet>
 #include <QString>
 #include <QTimer>
+#include <QVector>
 
 #include <memory>
 
@@ -73,7 +74,21 @@ private:
                            quintptr preferredTargetHandle = 0);
     void retargetWindows(const QHash<quintptr, QRect> &targets,
                          quintptr excludedHandle = 0);
+    QHash<quintptr, QRect> layoutForMonitor(
+        quintptr monitorHandle,
+        const QVector<quintptr> &orderedHandles,
+        const QHash<quintptr, qreal> &ratios) const;
+    QRect retargetElasticMove(quintptr destinationHandle, qreal strength);
+    void applyCrossMonitorHandoff(quintptr nativeHandle,
+                                  const QPoint &dropPoint,
+                                  quintptr preferredTargetHandle);
     void retargetLiveResize();
+    void syncDividerWindows();
+    void resetDividerWindows();
+    void beginDividerInteraction(quintptr dividerHandle);
+    void updateDividerInteraction();
+    void endDividerInteraction();
+    void moveFocusedWindowByKeyboard(int virtualKey);
     void updateAnimationCadence();
     void updateDesktopSwapPreview(const QRect &frame = {});
     void updateFocusBorders(quintptr focusedHandle, bool immediate = false);
@@ -81,6 +96,7 @@ private:
     void syncFocusBorderWindows();
     void resetFocusBorders();
     void advanceAnimation();
+    void clearAnimationItems();
     void restoreWindows();
     void finishRestoreWindows();
     void setTiledWindowCount(int count);
