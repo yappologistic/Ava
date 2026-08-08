@@ -41,6 +41,8 @@ constexpr qreal kMaximumInheritedVelocity = 2600.0;
 constexpr qreal kVelocityLookAheadSeconds = 0.045;
 constexpr int kMagneticRadiusDip = 72;
 constexpr qreal kFocusColorResponse = 18.0;
+constexpr int kWindowCornerRadiusDip = 8;
+constexpr int kFocusBorderSupersampleGrid = 16;
 constexpr UINT kMoveSizeEventMessage = WM_APP + 0x359;
 constexpr UINT kKeyboardShortcutMessage = WM_APP + 0x35A;
 constexpr UINT kFocusChangedMessage = WM_APP + 0x35B;
@@ -222,24 +224,68 @@ HWND createFocusBorderWindow()
                            nullptr);
 }
 
-qreal roundedRectCoverage(qreal x,
-                          qreal y,
-                          qreal width,
-                          qreal height,
-                          qreal radius)
+bool pointInsideRoundedRect(qreal x,
+                            qreal y,
+                            qreal width,
+                            qreal height,
+                            qreal radius)
 {
-    if (width <= 0 || height <= 0) {
-        return 0;
+    if (width <= 0 || height <= 0
+        || x < 0 || x >= width || y < 0 || y >= height) {
+        return false;
     }
     const qreal boundedRadius = qBound(0.0, radius, qMin(width, height) * 0.5);
-    const qreal halfWidth = width * 0.5;
-    const qreal halfHeight = height * 0.5;
-    const qreal dx = qAbs(x - halfWidth) - (halfWidth - boundedRadius);
-    const qreal dy = qAbs(y - halfHeight) - (halfHeight - boundedRadius);
-    const qreal outside = std::hypot(qMax(0.0, dx), qMax(0.0, dy));
-    const qreal inside = qMin(qMax(dx, dy), 0.0);
-    const qreal signedDistance = outside + inside - boundedRadius;
-    return qBound(0.0, 0.5 - signedDistance, 1.0);
+    if (boundedRadius <= 0) {
+        return true;
+    }
+
+    const qreal closestX = qBound(boundedRadius,
+                                  x,
+                                  width - boundedRadius);
+    const qreal closestY = qBound(boundedRadius,
+                                  y,
+                                  height - boundedRadius);
+    const qreal deltaX = x - closestX;
+    const qreal deltaY = y - closestY;
+    return deltaX * deltaX + deltaY * deltaY
+        <= boundedRadius * boundedRadius;
+}
+
+qreal supersampledRoundedBorderCoverage(qreal pixelX,
+                                        qreal pixelY,
+                                        qreal outerWidth,
+                                        qreal outerHeight,
+                                        qreal outerRadius,
+                                        qreal thickness)
+{
+    const qreal innerWidth = qMax(0.0, outerWidth - thickness * 2);
+    const qreal innerHeight = qMax(0.0, outerHeight - thickness * 2);
+    const qreal innerRadius = qMax(0.0, outerRadius - thickness);
+    int coveredSamples = 0;
+    for (int sampleY = 0; sampleY < kFocusBorderSupersampleGrid; ++sampleY) {
+        const qreal y = pixelY
+            + (sampleY + 0.5) / kFocusBorderSupersampleGrid;
+        for (int sampleX = 0; sampleX < kFocusBorderSupersampleGrid; ++sampleX) {
+            const qreal x = pixelX
+                + (sampleX + 0.5) / kFocusBorderSupersampleGrid;
+            const bool insideOuter = pointInsideRoundedRect(x,
+                                                             y,
+                                                             outerWidth,
+                                                             outerHeight,
+                                                             outerRadius);
+            const bool insideInner = pointInsideRoundedRect(x - thickness,
+                                                             y - thickness,
+                                                             innerWidth,
+                                                             innerHeight,
+                                                             innerRadius);
+            if (insideOuter && !insideInner) {
+                ++coveredSamples;
+            }
+        }
+    }
+    constexpr qreal sampleCount = kFocusBorderSupersampleGrid
+        * kFocusBorderSupersampleGrid;
+    return coveredSamples / sampleCount;
 }
 
 bool updateLayeredBorderSegment(HWND window,
@@ -248,7 +294,9 @@ bool updateLayeredBorderSegment(HWND window,
                                 const QSize &outerSize,
                                 int radius,
                                 int thickness,
-                                COLORREF color)
+                                COLORREF color,
+                                QVector<quint8> &coverageMask,
+                                bool refreshCoverage)
 {
     if (!window || destination.isEmpty() || sourceRect.isEmpty()) {
         return false;
@@ -282,40 +330,64 @@ bool updateLayeredBorderSegment(HWND window,
         return false;
     }
 
+    const int pixelCount = destination.width() * destination.height();
+    if (refreshCoverage || coverageMask.size() != pixelCount) {
+        coverageMask.resize(pixelCount);
+        const qreal innerWidth = qMax(0, outerSize.width() - thickness * 2);
+        const qreal innerHeight = qMax(0, outerSize.height() - thickness * 2);
+        const qreal innerRadius = qMax(0, radius - thickness);
+        for (int y = 0; y < destination.height(); ++y) {
+            for (int x = 0; x < destination.width(); ++x) {
+                const qreal pixelX = sourceRect.x() + x;
+                const qreal pixelY = sourceRect.y() + y;
+                const bool touchesRoundedCorner =
+                    (pixelX < radius || pixelX + 1 > outerSize.width() - radius)
+                    && (pixelY < radius || pixelY + 1 > outerSize.height() - radius);
+                qreal coverage = 0;
+                if (touchesRoundedCorner) {
+                    coverage = supersampledRoundedBorderCoverage(
+                        pixelX,
+                        pixelY,
+                        outerSize.width(),
+                        outerSize.height(),
+                        radius,
+                        thickness);
+                } else {
+                    const qreal centerX = pixelX + 0.5;
+                    const qreal centerY = pixelY + 0.5;
+                    const bool insideOuter = pointInsideRoundedRect(
+                        centerX,
+                        centerY,
+                        outerSize.width(),
+                        outerSize.height(),
+                        radius);
+                    const bool insideInner = pointInsideRoundedRect(
+                        centerX - thickness,
+                        centerY - thickness,
+                        innerWidth,
+                        innerHeight,
+                        innerRadius);
+                    coverage = insideOuter && !insideInner ? 1.0 : 0.0;
+                }
+                coverageMask[y * destination.width() + x] = static_cast<quint8>(
+                    qBound(0, qRound(coverage * 255), 255));
+            }
+        }
+    }
+
     auto *pixels = static_cast<quint32 *>(pixelMemory);
-    const qreal innerWidth = qMax(0, outerSize.width() - thickness * 2);
-    const qreal innerHeight = qMax(0, outerSize.height() - thickness * 2);
-    const qreal innerRadius = qMax(0, radius - thickness);
     const int red = GetRValue(color);
     const int green = GetGValue(color);
     const int blue = GetBValue(color);
-    for (int y = 0; y < destination.height(); ++y) {
-        for (int x = 0; x < destination.width(); ++x) {
-            const qreal outerX = sourceRect.x() + x + 0.5;
-            const qreal outerY = sourceRect.y() + y + 0.5;
-            const qreal outerCoverage = roundedRectCoverage(outerX,
-                                                            outerY,
-                                                            outerSize.width(),
-                                                            outerSize.height(),
-                                                            radius);
-            const qreal innerCoverage = roundedRectCoverage(
-                outerX - thickness,
-                outerY - thickness,
-                innerWidth,
-                innerHeight,
-                innerRadius);
-            const int alpha = qBound(0,
-                                     qRound((outerCoverage - innerCoverage) * 255),
-                                     255);
-            const int premultipliedRed = red * alpha / 255;
-            const int premultipliedGreen = green * alpha / 255;
-            const int premultipliedBlue = blue * alpha / 255;
-            pixels[y * destination.width() + x] =
-                (static_cast<quint32>(alpha) << 24)
-                | (static_cast<quint32>(premultipliedRed) << 16)
-                | (static_cast<quint32>(premultipliedGreen) << 8)
-                | static_cast<quint32>(premultipliedBlue);
-        }
+    for (int pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex) {
+        const int alpha = coverageMask.at(pixelIndex);
+        const int premultipliedRed = (red * alpha + 127) / 255;
+        const int premultipliedGreen = (green * alpha + 127) / 255;
+        const int premultipliedBlue = (blue * alpha + 127) / 255;
+        pixels[pixelIndex] = (static_cast<quint32>(alpha) << 24)
+            | (static_cast<quint32>(premultipliedRed) << 16)
+            | (static_cast<quint32>(premultipliedGreen) << 8)
+            | static_cast<quint32>(premultipliedBlue);
     }
 
     HGDIOBJ previousBitmap = SelectObject(memoryDevice, bitmap);
@@ -920,7 +992,10 @@ struct WindowTilingManager::NativeState
     {
         HWND window = nullptr;
         std::array<HWND, 4> borderWindows{};
+        std::array<QVector<quint8>, 4> coverageMasks;
         QSize renderedOuterSize;
+        int renderedRadius = -1;
+        int renderedThickness = -1;
         quint32 renderedColor = std::numeric_limits<quint32>::max();
         qreal red = 54;
         qreal green = 59;
@@ -3095,7 +3170,9 @@ void WindowTilingManager::syncFocusBorderWindows()
                                                    MONITOR_DEFAULTTONEAREST);
         const UINT dpi = monitorDpi(monitor, item.window);
         const int thickness = qMax(1, scaleDip(2, dpi));
-        const int radius = qMax(thickness + 1, scaleDip(9, dpi));
+        const int radius = qMax(thickness + 1,
+                                scaleDip(kWindowCornerRadiusDip, dpi)
+                                    + thickness);
         const QRect outerFrame = frame.adjusted(-thickness,
                                                 -thickness,
                                                 thickness,
@@ -3118,7 +3195,10 @@ void WindowTilingManager::syncFocusBorderWindows()
         const COLORREF color = RGB(qBound(0, qRound(item.red), 255),
                                    qBound(0, qRound(item.green), 255),
                                    qBound(0, qRound(item.blue), 255));
-        const bool needsRender = item.renderedOuterSize != outerFrame.size()
+        const bool geometryChanged = item.renderedOuterSize != outerFrame.size()
+            || item.renderedRadius != radius
+            || item.renderedThickness != thickness;
+        const bool needsRender = geometryChanged
             || item.renderedColor != static_cast<quint32>(color);
         bool allSegmentsRendered = true;
         for (int segmentIndex = 0;
@@ -3141,7 +3221,9 @@ void WindowTilingManager::syncFocusBorderWindows()
                                                outerFrame.size(),
                                                radius,
                                                thickness,
-                                               color)) {
+                                               color,
+                                               item.coverageMasks.at(segmentIndex),
+                                               geometryChanged)) {
                 ShowWindow(borderWindow, SW_HIDE);
                 allSegmentsRendered = false;
                 continue;
@@ -3156,9 +3238,13 @@ void WindowTilingManager::syncFocusBorderWindows()
         }
         if (allSegmentsRendered) {
             item.renderedOuterSize = outerFrame.size();
+            item.renderedRadius = radius;
+            item.renderedThickness = thickness;
             item.renderedColor = static_cast<quint32>(color);
         } else {
             item.renderedOuterSize = {};
+            item.renderedRadius = -1;
+            item.renderedThickness = -1;
             item.renderedColor = std::numeric_limits<quint32>::max();
         }
     }
