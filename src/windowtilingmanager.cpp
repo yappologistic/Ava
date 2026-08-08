@@ -9,6 +9,7 @@
 #include <QVector>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iterator>
 #include <limits>
@@ -185,19 +186,9 @@ LRESULT CALLBACK focusBorderWindowProc(HWND window,
         return HTTRANSPARENT;
     case WM_ERASEBKGND:
         return 1;
-    case WM_PAINT: {
-        PAINTSTRUCT paint{};
-        HDC device = BeginPaint(window, &paint);
-        RECT bounds{};
-        GetClientRect(window, &bounds);
-        const COLORREF color = static_cast<COLORREF>(GetWindowLongPtrW(window,
-                                                                      GWLP_USERDATA));
-        HBRUSH brush = CreateSolidBrush(color);
-        FillRect(device, &bounds, brush);
-        DeleteObject(brush);
-        EndPaint(window, &paint);
+    case WM_PAINT:
+        ValidateRect(window, nullptr);
         return 0;
-    }
     default:
         break;
     }
@@ -216,7 +207,8 @@ HWND createFocusBorderWindow()
         && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
         return nullptr;
     }
-    return CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT,
+    return CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
+                               | WS_EX_TRANSPARENT,
                            kFocusBorderClassName,
                            L"",
                            WS_POPUP,
@@ -228,6 +220,123 @@ HWND createFocusBorderWindow()
                            nullptr,
                            instance,
                            nullptr);
+}
+
+qreal roundedRectCoverage(qreal x,
+                          qreal y,
+                          qreal width,
+                          qreal height,
+                          qreal radius)
+{
+    if (width <= 0 || height <= 0) {
+        return 0;
+    }
+    const qreal boundedRadius = qBound(0.0, radius, qMin(width, height) * 0.5);
+    const qreal halfWidth = width * 0.5;
+    const qreal halfHeight = height * 0.5;
+    const qreal dx = qAbs(x - halfWidth) - (halfWidth - boundedRadius);
+    const qreal dy = qAbs(y - halfHeight) - (halfHeight - boundedRadius);
+    const qreal outside = std::hypot(qMax(0.0, dx), qMax(0.0, dy));
+    const qreal inside = qMin(qMax(dx, dy), 0.0);
+    const qreal signedDistance = outside + inside - boundedRadius;
+    return qBound(0.0, 0.5 - signedDistance, 1.0);
+}
+
+bool updateLayeredBorderSegment(HWND window,
+                                const QRect &destination,
+                                const QRect &sourceRect,
+                                const QSize &outerSize,
+                                int radius,
+                                int thickness,
+                                COLORREF color)
+{
+    if (!window || destination.isEmpty() || sourceRect.isEmpty()) {
+        return false;
+    }
+
+    BITMAPINFO bitmapInfo{};
+    bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bitmapInfo.bmiHeader.biWidth = destination.width();
+    bitmapInfo.bmiHeader.biHeight = -destination.height();
+    bitmapInfo.bmiHeader.biPlanes = 1;
+    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biCompression = BI_RGB;
+
+    HDC screenDevice = GetDC(nullptr);
+    HDC memoryDevice = CreateCompatibleDC(screenDevice);
+    void *pixelMemory = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screenDevice,
+                                      &bitmapInfo,
+                                      DIB_RGB_COLORS,
+                                      &pixelMemory,
+                                      nullptr,
+                                      0);
+    ReleaseDC(nullptr, screenDevice);
+    if (!memoryDevice || !bitmap || !pixelMemory) {
+        if (bitmap) {
+            DeleteObject(bitmap);
+        }
+        if (memoryDevice) {
+            DeleteDC(memoryDevice);
+        }
+        return false;
+    }
+
+    auto *pixels = static_cast<quint32 *>(pixelMemory);
+    const qreal innerWidth = qMax(0, outerSize.width() - thickness * 2);
+    const qreal innerHeight = qMax(0, outerSize.height() - thickness * 2);
+    const qreal innerRadius = qMax(0, radius - thickness);
+    const int red = GetRValue(color);
+    const int green = GetGValue(color);
+    const int blue = GetBValue(color);
+    for (int y = 0; y < destination.height(); ++y) {
+        for (int x = 0; x < destination.width(); ++x) {
+            const qreal outerX = sourceRect.x() + x + 0.5;
+            const qreal outerY = sourceRect.y() + y + 0.5;
+            const qreal outerCoverage = roundedRectCoverage(outerX,
+                                                            outerY,
+                                                            outerSize.width(),
+                                                            outerSize.height(),
+                                                            radius);
+            const qreal innerCoverage = roundedRectCoverage(
+                outerX - thickness,
+                outerY - thickness,
+                innerWidth,
+                innerHeight,
+                innerRadius);
+            const int alpha = qBound(0,
+                                     qRound((outerCoverage - innerCoverage) * 255),
+                                     255);
+            const int premultipliedRed = red * alpha / 255;
+            const int premultipliedGreen = green * alpha / 255;
+            const int premultipliedBlue = blue * alpha / 255;
+            pixels[y * destination.width() + x] =
+                (static_cast<quint32>(alpha) << 24)
+                | (static_cast<quint32>(premultipliedRed) << 16)
+                | (static_cast<quint32>(premultipliedGreen) << 8)
+                | static_cast<quint32>(premultipliedBlue);
+        }
+    }
+
+    HGDIOBJ previousBitmap = SelectObject(memoryDevice, bitmap);
+    POINT destinationPoint{destination.x(), destination.y()};
+    POINT sourcePoint{0, 0};
+    SIZE segmentSize{destination.width(), destination.height()};
+    BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+    const bool updated = UpdateLayeredWindow(window,
+                                             nullptr,
+                                             &destinationPoint,
+                                             &segmentSize,
+                                             memoryDevice,
+                                             &sourcePoint,
+                                             0,
+                                             &blend,
+                                             ULW_ALPHA)
+        == TRUE;
+    SelectObject(memoryDevice, previousBitmap);
+    DeleteObject(bitmap);
+    DeleteDC(memoryDevice);
+    return updated;
 }
 
 LRESULT CALLBACK dividerWindowProc(HWND window,
@@ -810,8 +919,9 @@ struct WindowTilingManager::NativeState
     struct FocusBorderItem
     {
         HWND window = nullptr;
-        HWND borderWindow = nullptr;
-        QRect lastOuterFrame;
+        std::array<HWND, 4> borderWindows{};
+        QSize renderedOuterSize;
+        quint32 renderedColor = std::numeric_limits<quint32>::max();
         qreal red = 54;
         qreal green = 59;
         qreal blue = 63;
@@ -2855,8 +2965,10 @@ void WindowTilingManager::updateFocusBorders(quintptr focusedHandle, bool immedi
                            if (IsWindow(item.window) && managedHandles.contains(handle)) {
                                return false;
                            }
-                           if (item.borderWindow && IsWindow(item.borderWindow)) {
-                               DestroyWindow(item.borderWindow);
+                           for (HWND borderWindow : item.borderWindows) {
+                               if (borderWindow && IsWindow(borderWindow)) {
+                                   DestroyWindow(borderWindow);
+                               }
                            }
                            return true;
                        }),
@@ -2881,7 +2993,9 @@ void WindowTilingManager::updateFocusBorders(quintptr focusedHandle, bool immedi
         if (item == m_native->focusBorderItems.end()) {
             NativeState::FocusBorderItem next;
             next.window = window;
-            next.borderWindow = createFocusBorderWindow();
+            for (HWND &borderWindow : next.borderWindows) {
+                borderWindow = createFocusBorderWindow();
+            }
             m_native->focusBorderItems.append(next);
             item = std::prev(m_native->focusBorderItems.end());
         }
@@ -2893,15 +3007,6 @@ void WindowTilingManager::updateFocusBorders(quintptr focusedHandle, bool immedi
             item->red = item->targetRed;
             item->green = item->targetGreen;
             item->blue = item->targetBlue;
-            if (item->borderWindow) {
-                const COLORREF color = RGB(qRound(item->red),
-                                           qRound(item->green),
-                                           qRound(item->blue));
-                SetWindowLongPtrW(item->borderWindow,
-                                  GWLP_USERDATA,
-                                  static_cast<LONG_PTR>(color));
-                InvalidateRect(item->borderWindow, nullptr, TRUE);
-            }
         } else if (qAbs(item->red - item->targetRed) > 0.5
                    || qAbs(item->green - item->targetGreen) > 0.5
                    || qAbs(item->blue - item->targetBlue) > 0.5) {
@@ -2951,15 +3056,6 @@ void WindowTilingManager::advanceFocusBorders()
         } else {
             stillAnimating = true;
         }
-        if (item.borderWindow) {
-            const COLORREF color = RGB(qBound(0, qRound(item.red), 255),
-                                       qBound(0, qRound(item.green), 255),
-                                       qBound(0, qRound(item.blue), 255));
-            SetWindowLongPtrW(item.borderWindow,
-                              GWLP_USERDATA,
-                              static_cast<LONG_PTR>(color));
-            InvalidateRect(item.borderWindow, nullptr, TRUE);
-        }
     }
     syncFocusBorderWindows();
     if (!stillAnimating) {
@@ -2972,56 +3068,99 @@ void WindowTilingManager::syncFocusBorderWindows()
 {
 #ifdef Q_OS_WIN
     for (NativeState::FocusBorderItem &item : m_native->focusBorderItems) {
-        if (!IsWindow(item.window) || !item.borderWindow
-            || !IsWindowVisible(item.window) || IsIconic(item.window)) {
-            if (item.borderWindow) {
-                ShowWindow(item.borderWindow, SW_HIDE);
+        const bool borderWindowsValid = std::all_of(
+            item.borderWindows.cbegin(),
+            item.borderWindows.cend(),
+            [](HWND borderWindow) {
+                return borderWindow && IsWindow(borderWindow);
+            });
+        const auto hideBorderWindows = [&item]() {
+            for (HWND borderWindow : item.borderWindows) {
+                if (borderWindow && IsWindow(borderWindow)) {
+                    ShowWindow(borderWindow, SW_HIDE);
+                }
             }
+        };
+        if (!IsWindow(item.window) || !borderWindowsValid
+            || !IsWindowVisible(item.window) || IsIconic(item.window)) {
+            hideBorderWindows();
             continue;
         }
         const QRect frame = visibleFrame(item.window);
         if (frame.isEmpty()) {
-            ShowWindow(item.borderWindow, SW_HIDE);
+            hideBorderWindows();
             continue;
         }
         const HMONITOR monitor = MonitorFromWindow(item.window,
                                                    MONITOR_DEFAULTTONEAREST);
         const UINT dpi = monitorDpi(monitor, item.window);
         const int thickness = qMax(1, scaleDip(2, dpi));
-        const int diameter = qMax(12, scaleDip(18, dpi));
+        const int radius = qMax(thickness + 1, scaleDip(9, dpi));
         const QRect outerFrame = frame.adjusted(-thickness,
                                                 -thickness,
                                                 thickness,
                                                 thickness);
-        if (item.lastOuterFrame != outerFrame) {
-            item.lastOuterFrame = outerFrame;
-            HRGN outer = CreateRoundRectRgn(0,
-                                            0,
-                                            outerFrame.width() + 1,
-                                            outerFrame.height() + 1,
-                                            diameter,
-                                            diameter);
-            HRGN inner = CreateRoundRectRgn(thickness,
-                                            thickness,
-                                            qMax(thickness + 1,
-                                                 outerFrame.width() - thickness + 1),
-                                            qMax(thickness + 1,
-                                                 outerFrame.height() - thickness + 1),
-                                            qMax(2, diameter - thickness * 2),
-                                            qMax(2, diameter - thickness * 2));
-            CombineRgn(outer, outer, inner, RGN_DIFF);
-            DeleteObject(inner);
-            if (!SetWindowRgn(item.borderWindow, outer, FALSE)) {
-                DeleteObject(outer);
+        const int cornerExtent = qMin(radius + 1, outerFrame.height() / 2);
+        const int sideWidth = qMin(thickness + 1, outerFrame.width() / 2);
+        const int middleHeight = qMax(0, outerFrame.height() - cornerExtent * 2);
+        const std::array<QRect, 4> sources{
+            QRect(0, 0, outerFrame.width(), cornerExtent),
+            QRect(outerFrame.width() - sideWidth,
+                  cornerExtent,
+                  sideWidth,
+                  middleHeight),
+            QRect(0,
+                  outerFrame.height() - cornerExtent,
+                  outerFrame.width(),
+                  cornerExtent),
+            QRect(0, cornerExtent, sideWidth, middleHeight)
+        };
+        const COLORREF color = RGB(qBound(0, qRound(item.red), 255),
+                                   qBound(0, qRound(item.green), 255),
+                                   qBound(0, qRound(item.blue), 255));
+        const bool needsRender = item.renderedOuterSize != outerFrame.size()
+            || item.renderedColor != static_cast<quint32>(color);
+        bool allSegmentsRendered = true;
+        for (int segmentIndex = 0;
+             segmentIndex < static_cast<int>(item.borderWindows.size());
+             ++segmentIndex) {
+            HWND borderWindow = item.borderWindows.at(segmentIndex);
+            const QRect source = sources.at(segmentIndex);
+            if (source.isEmpty()) {
+                ShowWindow(borderWindow, SW_HIDE);
+                continue;
             }
+            const QRect destination(outerFrame.x() + source.x(),
+                                    outerFrame.y() + source.y(),
+                                    source.width(),
+                                    source.height());
+            if (needsRender
+                && !updateLayeredBorderSegment(borderWindow,
+                                               destination,
+                                               source,
+                                               outerFrame.size(),
+                                               radius,
+                                               thickness,
+                                               color)) {
+                ShowWindow(borderWindow, SW_HIDE);
+                allSegmentsRendered = false;
+                continue;
+            }
+            SetWindowPos(borderWindow,
+                         item.window,
+                         destination.x(),
+                         destination.y(),
+                         destination.width(),
+                         destination.height(),
+                         SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
         }
-        SetWindowPos(item.borderWindow,
-                     item.window,
-                     outerFrame.x(),
-                     outerFrame.y(),
-                     outerFrame.width(),
-                     outerFrame.height(),
-                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+        if (allSegmentsRendered) {
+            item.renderedOuterSize = outerFrame.size();
+            item.renderedColor = static_cast<quint32>(color);
+        } else {
+            item.renderedOuterSize = {};
+            item.renderedColor = std::numeric_limits<quint32>::max();
+        }
     }
 #endif
 }
@@ -3032,8 +3171,10 @@ void WindowTilingManager::resetFocusBorders()
     m_focusTimer.stop();
     for (const NativeState::FocusBorderItem &item : std::as_const(
              m_native->focusBorderItems)) {
-        if (item.borderWindow && IsWindow(item.borderWindow)) {
-            DestroyWindow(item.borderWindow);
+        for (HWND borderWindow : item.borderWindows) {
+            if (borderWindow && IsWindow(borderWindow)) {
+                DestroyWindow(borderWindow);
+            }
         }
     }
     m_native->focusBorderItems.clear();
@@ -3374,10 +3515,20 @@ void WindowTilingManager::enforceLayoutInvariants()
         std::remove_if(m_native->focusBorderItems.begin(),
                        m_native->focusBorderItems.end(),
                        [](NativeState::FocusBorderItem &item) {
+                           const bool helpersValid = std::all_of(
+                               item.borderWindows.cbegin(),
+                               item.borderWindows.cend(),
+                               [](HWND borderWindow) {
+                                   return borderWindow && IsWindow(borderWindow);
+                               });
                            const bool remove = !IsWindow(item.window)
-                               || !IsWindow(item.borderWindow);
-                           if (remove && item.borderWindow && IsWindow(item.borderWindow)) {
-                               DestroyWindow(item.borderWindow);
+                               || !helpersValid;
+                           if (remove) {
+                               for (HWND borderWindow : item.borderWindows) {
+                                   if (borderWindow && IsWindow(borderWindow)) {
+                                       DestroyWindow(borderWindow);
+                                   }
+                               }
                            }
                            return remove;
                        }),
