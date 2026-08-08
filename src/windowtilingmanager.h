@@ -97,6 +97,13 @@ private:
     void resetFocusBorders();
     void advanceAnimation();
     void clearAnimationItems();
+    void enforceLayoutInvariants();
+    QHash<quintptr, QRect> lockSharedTargetEdges(
+        const QHash<quintptr, QRect> &targets) const;
+    bool validateLayoutTargets(const QHash<quintptr, QRect> &targets,
+                               bool requireNonOverlapping) const;
+    void captureLastKnownGoodLayout();
+    bool restoreLastKnownGoodLayout();
     void restoreWindows();
     void finishRestoreWindows();
     void setTiledWindowCount(int count);
