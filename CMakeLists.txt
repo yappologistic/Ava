@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.21)
 
 project(Ava VERSION 0.1 LANGUAGES CXX)
 
+include(CTest)
+
 option(AVA_FORCE_AUTOMATION_MODE "Expose Ava as a focusable window for local UI automation" OFF)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -10,7 +12,8 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
+find_package(Qt6 6.5 REQUIRED COMPONENTS
+    Core Gui Network Qml Quick QuickControls2 QuickDialogs2 QuickLayouts Test)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -24,6 +27,65 @@ qt_add_executable(Ava
     src/islandcontroller.h
     src/windowtilingmanager.cpp
     src/windowtilingmanager.h
+)
+
+qt_add_library(AvaCodexCore STATIC
+    src/codexappserverclient.cpp
+    src/codexappserverclient.h
+    src/codexchatcontroller.cpp
+    src/codexchatcontroller.h
+    src/codexgitmanager.cpp
+    src/codexgitmanager.h
+    src/codexmodels.cpp
+    src/codexmodels.h
+)
+
+target_include_directories(AvaCodexCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(AvaCodexCore
+    PUBLIC
+        Qt6::Core
+        Qt6::Gui
+)
+
+qt_add_executable(AvaChat
+    src/chatmain.cpp
+    src/chatipcserver.cpp
+    src/chatipcserver.h
+    src/chattextstyler.cpp
+    src/chattextstyler.h
+    src/thinkingorbitem.cpp
+    src/thinkingorbitem.h
+)
+
+qt_add_qml_module(AvaChat
+    URI Ava.Chat
+    VERSION 1.0
+    QML_FILES
+        qml/chat/ChatIconButton.qml
+        qml/chat/ChatTextButton.qml
+        qml/chat/CodexChatWindow.qml
+        qml/chat/CodexComposer.qml
+        qml/chat/CodexDiffInspector.qml
+        qml/chat/CodexMessageDelegate.qml
+    RESOURCES
+        assets/icons/codex-terminal-light.svg
+        assets/fonts/Inter[opsz,wght].ttf
+        assets/fonts/OFL-Inter.txt
+        assets/fonts/GeistMono[wght].ttf
+        assets/fonts/OFL-Geist.txt
+)
+
+target_link_libraries(AvaChat
+    PRIVATE
+        AvaCodexCore
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Network
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::QuickDialogs2
+        Qt6::QuickLayouts
 )
 
 qt_add_qml_module(Ava
@@ -90,6 +152,7 @@ target_link_libraries(Ava
     PRIVATE
         Qt6::Core
         Qt6::Gui
+        Qt6::Network
         Qt6::Qml
         Qt6::Quick
         Qt6::QuickControls2
@@ -101,12 +164,47 @@ endif()
 
 if (WIN32)
     target_link_libraries(Ava PRIVATE user32 shell32 dwmapi ole32 propsys windowsapp)
+    target_link_libraries(AvaChat PRIVATE user32 shell32 dwmapi)
     set_target_properties(Ava PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
+    set_target_properties(AvaChat PROPERTIES
         WIN32_EXECUTABLE TRUE
     )
 endif()
 
-install(TARGETS Ava
+install(TARGETS Ava AvaChat
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
+
+qt_generate_deploy_qml_app_script(
+    TARGET Ava
+    OUTPUT_SCRIPT ava_deploy_script
+    NO_TRANSLATIONS
+)
+install(SCRIPT ${ava_deploy_script})
+
+qt_generate_deploy_qml_app_script(
+    TARGET AvaChat
+    OUTPUT_SCRIPT ava_chat_deploy_script
+    NO_TRANSLATIONS
+)
+install(SCRIPT ${ava_chat_deploy_script})
+
+if (BUILD_TESTING)
+    qt_add_executable(tst_codexmodels tests/tst_codexmodels.cpp)
+    target_link_libraries(tst_codexmodels PRIVATE AvaCodexCore Qt6::Test)
+    add_test(NAME codex_models COMMAND tst_codexmodels)
+
+    qt_add_executable(tst_codexgitmanager tests/tst_codexgitmanager.cpp)
+    target_link_libraries(tst_codexgitmanager PRIVATE AvaCodexCore Qt6::Test)
+    add_test(NAME codex_git_manager COMMAND tst_codexgitmanager)
+
+    qt_add_executable(tst_codexlive tests/tst_codexlive.cpp)
+    target_link_libraries(tst_codexlive PRIVATE AvaCodexCore Qt6::Test)
+    add_test(NAME codex_live_e2e COMMAND tst_codexlive)
+    set_tests_properties(codex_live_e2e PROPERTIES
+        LABELS live
+        TIMEOUT 360)
+endif()

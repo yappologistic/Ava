@@ -2,12 +2,15 @@
 
 #include <QBuffer>
 #include <QCollator>
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
 #include <QImage>
 #include <QMetaObject>
 #include <QPointer>
+#include <QProcess>
 #include <QSet>
 #include <QSettings>
 #include <QThreadPool>
@@ -723,7 +726,9 @@ bool AppLauncher::launch(int row)
     }
     AppEntry &entry = m_entries[m_filteredIndices.at(row)];
 #ifdef Q_OS_WIN
-    const bool launched = launchShellTarget(entry.id, entry.launchTarget);
+    const bool launched = entry.id == QStringLiteral("ava:ai-chat")
+        ? QProcess::startDetached(entry.launchTarget, {})
+        : launchShellTarget(entry.id, entry.launchTarget);
 #else
     const bool launched = false;
 #endif
@@ -744,6 +749,17 @@ bool AppLauncher::launch(int row)
 
 void AppLauncher::applyEntries(QVector<AppEntry> entries)
 {
+    AppEntry aiChat;
+    aiChat.id = QStringLiteral("ava:ai-chat");
+    aiChat.name = QStringLiteral("AI Chat");
+    aiChat.subtitle = QStringLiteral("Codex workspace");
+    aiChat.launchTarget = QDir(QCoreApplication::applicationDirPath())
+                              .filePath(QStringLiteral("AvaChat.exe"));
+    aiChat.iconSource = QStringLiteral(
+        "qrc:/qt/qml/Ava/assets/icons/codex-terminal-light.svg");
+    aiChat.searchText = QStringLiteral(
+        "ai chat codex code coding agent developer workspace");
+    entries.prepend(std::move(aiChat));
     for (AppEntry &entry : entries) {
         loadUsage(entry);
     }

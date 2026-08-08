@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QLocalSocket>
 #include <QObject>
 #include <QProcess>
 #include <QSet>
@@ -40,12 +41,12 @@ public:
     bool available() const { return m_available; }
     bool connected() const { return m_connected; }
     bool panelOpen() const { return m_panelOpen; }
-    bool active() const { return m_active; }
-    bool awaitingApproval() const { return m_awaitingApproval; }
+    bool active() const { return m_externalActive || m_active; }
+    bool awaitingApproval() const { return m_externalApproval || m_awaitingApproval; }
     bool compactVisible() const;
-    QString phase() const { return m_phase; }
-    QString statusText() const { return m_statusText; }
-    QString activityText() const { return m_activityText; }
+    QString phase() const;
+    QString statusText() const;
+    QString activityText() const;
     QString finalText() const { return m_finalText; }
     QString errorText() const { return m_errorText; }
     QString approvalTitle() const { return m_approvalTitle; }
@@ -96,16 +97,22 @@ private:
     void setActivity(const QString &status, const QString &detail = {});
     void resetForTask(const QString &prompt);
     void updateElapsed();
+    void connectToChatApp();
+    void consumeChatActivity();
+    void clearExternalActivity();
     QString concise(const QString &value, int maximum = 120) const;
     QString commandSummary(const QJsonObject &item) const;
     static QStringList discoverCodexLaunchers();
     static QString discoverWorkspace();
 
     QProcess m_server;
+    QLocalSocket m_chatSocket;
     QTimer m_elapsedTimer;
     QTimer m_compactDismissTimer;
+    QTimer m_chatReconnectTimer;
     QElapsedTimer m_turnElapsed;
     QByteArray m_stdoutBuffer;
+    QByteArray m_chatIpcBuffer;
     QHash<qint64, QString> m_pendingRequests;
     qint64 m_nextRequestId = 1;
     QStringList m_launcherCandidates;
@@ -133,4 +140,9 @@ private:
     bool m_compactRecentlyCompleted = false;
     bool m_shuttingDown = false;
     bool m_visualTestMode = false;
+    bool m_externalActive = false;
+    bool m_externalApproval = false;
+    QString m_externalStatus;
+    QString m_externalActivity;
+    QString m_externalElapsed;
 };

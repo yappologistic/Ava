@@ -22,6 +22,7 @@ constexpr auto kInitialize = "initialize";
 constexpr auto kThreadStart = "thread/start";
 constexpr auto kTurnStart = "turn/start";
 constexpr auto kTurnInterrupt = "turn/interrupt";
+constexpr auto kChatIpcServer = "Ava.CodexChat.v1";
 
 QString cleanText(QString value)
 {
@@ -75,6 +76,26 @@ CodexBridge::CodexBridge(QObject *parent)
         emit stateChanged();
     });
 
+    m_chatReconnectTimer.setSingleShot(true);
+    m_chatReconnectTimer.setInterval(1500);
+    connect(&m_chatReconnectTimer, &QTimer::timeout,
+            this, &CodexBridge::connectToChatApp);
+    connect(&m_chatSocket, &QLocalSocket::connected,
+            &m_chatReconnectTimer, &QTimer::stop);
+    connect(&m_chatSocket, &QLocalSocket::readyRead,
+            this, &CodexBridge::consumeChatActivity);
+    connect(&m_chatSocket, &QLocalSocket::disconnected, this, [this]() {
+        clearExternalActivity();
+        if (!m_shuttingDown)
+            m_chatReconnectTimer.start();
+    });
+    connect(&m_chatSocket, &QLocalSocket::errorOccurred,
+            this, [this](QLocalSocket::LocalSocketError) {
+        if (!m_shuttingDown && !m_chatReconnectTimer.isActive())
+            m_chatReconnectTimer.start();
+    });
+    QTimer::singleShot(0, this, &CodexBridge::connectToChatApp);
+
     connect(&m_server, &QProcess::started, this, [this]() {
         QJsonObject clientInfo{{QStringLiteral("name"), QStringLiteral("ava_windows")},
                                {QStringLiteral("title"), QStringLiteral("Ava")},
@@ -121,9 +142,7 @@ CodexBridge::CodexBridge(QObject *parent)
                     setFailure(QStringLiteral("Codex connection closed"));
             });
 
-    if (m_available)
-        QTimer::singleShot(0, this, &CodexBridge::startServer);
-    else
+    if (!m_available)
         setFailure(QStringLiteral("Install or sign in to Codex to connect"));
 }
 
@@ -141,12 +160,36 @@ CodexBridge::~CodexBridge()
 
 bool CodexBridge::compactVisible() const
 {
-    return m_active || m_awaitingApproval || m_compactRecentlyCompleted
+    return m_externalActive || m_externalApproval
+           || m_active || m_awaitingApproval || m_compactRecentlyCompleted
            || (m_phase == QStringLiteral("completed") && !m_panelOpen);
+}
+
+QString CodexBridge::phase() const
+{
+    if (m_externalApproval)
+        return QStringLiteral("approval");
+    if (m_externalActive)
+        return QStringLiteral("running");
+    return m_phase;
+}
+
+QString CodexBridge::statusText() const
+{
+    return (m_externalActive || m_externalApproval) && !m_externalStatus.isEmpty()
+        ? m_externalStatus : m_statusText;
+}
+
+QString CodexBridge::activityText() const
+{
+    return (m_externalActive || m_externalApproval) && !m_externalActivity.isEmpty()
+        ? m_externalActivity : m_activityText;
 }
 
 QString CodexBridge::elapsedText() const
 {
+    if ((m_externalActive || m_externalApproval) && !m_externalElapsed.isEmpty())
+        return m_externalElapsed;
     if (!m_turnElapsed.isValid())
         return QString();
     const qint64 totalSeconds = qMax<qint64>(0, m_turnElapsed.elapsed() / 1000);
@@ -168,6 +211,10 @@ void CodexBridge::setPanelOpen(bool open)
     m_panelOpen = open;
     if (open) {
         m_compactDismissTimer.stop();
+        if (m_available && !m_connected
+            && m_server.state() == QProcess::NotRunning) {
+            startServer();
+        }
     } else if (m_phase == QStringLiteral("completed")) {
         m_compactRecentlyCompleted = true;
         m_compactDismissTimer.start();
@@ -241,6 +288,16 @@ void CodexBridge::interrupt()
 
 void CodexBridge::openCodexApp()
 {
+    const QString chatExecutable = QDir(QCoreApplication::applicationDirPath())
+                                       .filePath(QStringLiteral("AvaChat.exe"));
+    if (QFileInfo::exists(chatExecutable)) {
+        QStringList arguments;
+        if (!m_workspacePath.isEmpty())
+            arguments = {QStringLiteral("--workspace"), m_workspacePath};
+        QProcess::startDetached(chatExecutable, arguments, m_workspacePath);
+        return;
+    }
+
     if (!m_available)
         return;
 
@@ -262,6 +319,60 @@ void CodexBridge::openCodexApp()
         arguments = {QStringLiteral("app"), m_workspacePath};
     }
     QProcess::startDetached(program, arguments, m_workspacePath);
+}
+
+void CodexBridge::connectToChatApp()
+{
+    if (m_shuttingDown || m_chatSocket.state() != QLocalSocket::UnconnectedState)
+        return;
+    m_chatSocket.connectToServer(QString::fromLatin1(kChatIpcServer),
+                                 QIODevice::ReadWrite);
+}
+
+void CodexBridge::consumeChatActivity()
+{
+    m_chatIpcBuffer.append(m_chatSocket.readAll());
+    qsizetype newline = -1;
+    while ((newline = m_chatIpcBuffer.indexOf('\n')) >= 0) {
+        const QByteArray line = m_chatIpcBuffer.left(newline).trimmed();
+        m_chatIpcBuffer.remove(0, newline + 1);
+        QJsonParseError error;
+        const QJsonDocument document = QJsonDocument::fromJson(line, &error);
+        if (error.error != QJsonParseError::NoError || !document.isObject())
+            continue;
+        const QJsonObject activity = document.object();
+        if (activity.value(QStringLiteral("type")).toString()
+            != QStringLiteral("activity")) {
+            continue;
+        }
+
+        const bool previousApproval = m_externalApproval;
+        m_externalActive = activity.value(QStringLiteral("active")).toBool();
+        m_externalApproval = activity.value(QStringLiteral("approval")).toBool();
+        m_externalStatus = activity.value(QStringLiteral("status")).toString();
+        m_externalActivity = activity.value(QStringLiteral("activity")).toString();
+        m_externalElapsed = activity.value(QStringLiteral("elapsed")).toString();
+        emit stateChanged();
+        emit elapsedChanged();
+        if (!previousApproval && m_externalApproval)
+            emit attentionRequested();
+    }
+}
+
+void CodexBridge::clearExternalActivity()
+{
+    if (!m_externalActive && !m_externalApproval && m_externalStatus.isEmpty()
+        && m_externalActivity.isEmpty() && m_externalElapsed.isEmpty()) {
+        return;
+    }
+    m_externalActive = false;
+    m_externalApproval = false;
+    m_externalStatus.clear();
+    m_externalActivity.clear();
+    m_externalElapsed.clear();
+    m_chatIpcBuffer.clear();
+    emit stateChanged();
+    emit elapsedChanged();
 }
 
 void CodexBridge::retryConnection()
