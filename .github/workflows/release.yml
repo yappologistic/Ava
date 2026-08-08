@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.5.*'
+          arch: win64_msvc2019_64
+          modules: qtquickcontrols2
+
+      - name: Configure CMake
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Deploy Qt dependencies
+        run: |
+          $qtBin = "$env:Qt6_DIR\bin"
+          & "$qtBin\windeployqt.exe" --qmldir qml --release build\Release\Ava.exe
+
+      - name: Create portable zip
+        run: |
+          $tag = "${{ github.ref_name }}"
+          Compress-Archive -Path build\Release\* -DestinationPath "Ava-$tag-portable.zip"
+
+      - name: Build MSI installer
+        run: |
+          cd build
+          cpack -C Release -G WIX
+
+      - name: Find MSI artifact
+        id: find_msi
+        run: |
+          $msi = Get-ChildItem -Path build -Filter "*.msi" | Select-Object -First 1
+          echo "msi_path=build/$($msi.Name)" >> $env:GITHUB_OUTPUT
+          echo "msi_name=$($msi.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            Ava-${{ github.ref_name }}-portable.zip
+            ${{ steps.find_msi.outputs.msi_path }}
