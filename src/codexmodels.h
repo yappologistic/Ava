@@ -69,7 +69,9 @@ public:
         ErrorRole,
         FileChangesRole,
         AdditionsRole,
-        DeletionsRole
+        DeletionsRole,
+        ActivitiesRole,
+        ElapsedRole
     };
 
     struct Entry {
@@ -82,6 +84,10 @@ public:
         QString status;
         QString cwd;
         QVariantList fileChanges;
+        QVariantList activities;
+        QVariantList sources;
+        QString elapsed;
+        QString turnId;
         int additions = 0;
         int deletions = 0;
         qint64 timestamp = 0;
@@ -97,17 +103,23 @@ public:
 
     void clear();
     void replaceFromThread(const QJsonObject &thread);
-    void upsertItem(const QJsonObject &item, bool completed);
+    void upsertItem(const QJsonObject &item, bool completed,
+                    const QString &turnId = {});
     void appendAgentDelta(const QString &itemId, const QString &delta);
     void updatePlan(const QString &turnId, const QJsonArray &plan);
+    void completeWork(const QString &turnId, qint64 durationMs);
     void appendError(const QString &message);
     Q_INVOKABLE QString bodyAt(int row) const;
 
 private:
     int rowForId(const QString &id) const;
     void insertOrReplace(Entry entry);
+    void upsertWorkActivity(Entry activity, const QString &turnId);
+    static bool belongsInWork(const Entry &entry);
+    static QVariantMap activityPresentation(const Entry &entry);
     static Entry fromItem(const QJsonObject &item, bool completed);
     QVector<Entry> m_entries;
+    bool m_rebuilding = false;
 };
 
 class CodexModelListModel final : public QAbstractListModel

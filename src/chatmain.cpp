@@ -268,11 +268,14 @@ int main(int argc, char *argv[])
         });
     }
 
-    QObject::connect(&application, &QCoreApplication::aboutToQuit,
-                     window, [window]() {
-        if (window->visibility() != QWindow::Minimized)
-            QSettings().setValue(QStringLiteral("chatWindow/geometry"), window->geometry());
-    });
+    if (!screenshotMode) {
+        QObject::connect(&application, &QCoreApplication::aboutToQuit,
+                         window, [window]() {
+            if (window->visibility() != QWindow::Minimized)
+                QSettings().setValue(QStringLiteral("chatWindow/geometry"),
+                                     window->geometry());
+        });
+    }
 
     if (screenshotMode) {
         const QString outputPath = QFileInfo(parser.value(screenshotOption)).absoluteFilePath();

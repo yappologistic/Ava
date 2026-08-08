@@ -119,10 +119,10 @@ Item {
 
     TextArea {
         id: composer
-        x: 14
-        y: 9 + root.attachmentHeight
-        width: parent.width - 28
-        height: 54
+        x: 9
+        y: 24 + root.attachmentHeight
+        width: parent.width - 23
+        height: 39
         padding: 0
         placeholderText: chatController.hasProject ? "Ask Codex to work on this project"
                                                    : "Choose a project to begin"
@@ -220,8 +220,9 @@ Item {
             id: fastButton
             visible: chatController.supportsFast
             height: 34
-            leftPadding: 9
-            rightPadding: 9
+            implicitWidth: fastContent.implicitWidth + leftPadding + rightPadding
+            leftPadding: 10
+            rightPadding: 10
             text: "Fast"
             checkable: true
             checked: chatController.fastMode
@@ -229,13 +230,41 @@ Item {
             Accessible.checked: checked
             onToggled: chatController.fastMode = checked
             contentItem: Row {
-                spacing: 5
-                Text {
-                    text: "\uE945"
-                    color: fastButton.checked ? "#8ee6dd" : "#777780"
-                    font.family: "Segoe Fluent Icons"
-                    font.pixelSize: 11
+                id: fastContent
+                spacing: 6
+                Item {
+                    width: 12
+                    height: 14
                     anchors.verticalCenter: parent.verticalCenter
+
+                    Canvas {
+                        id: fastGlyph
+                        anchors.fill: parent
+                        onPaint: {
+                            var context = getContext("2d")
+                            context.clearRect(0, 0, width, height)
+                            context.beginPath()
+                            context.moveTo(7.1, 0.8)
+                            context.lineTo(1.8, 7.4)
+                            context.lineTo(5.8, 7.4)
+                            context.lineTo(4.5, 13.2)
+                            context.lineTo(10.7, 5.6)
+                            context.lineTo(6.8, 5.6)
+                            context.closePath()
+                            context.lineWidth = 1.15
+                            context.strokeStyle = fastButton.checked ? "#8ee6dd" : "#777780"
+                            context.fillStyle = "#8ee6dd"
+                            if (fastButton.checked)
+                                context.fill()
+                            else
+                                context.stroke()
+                        }
+
+                        Connections {
+                            target: fastButton
+                            function onCheckedChanged() { fastGlyph.requestPaint() }
+                        }
+                    }
                 }
                 Text {
                     text: fastButton.text
@@ -247,10 +276,70 @@ Item {
             }
             background: Rectangle {
                 radius: 8
-                color: fastButton.checked ? "#17302f"
-                     : (fastButton.hovered ? "#202024" : "transparent")
-                border.width: fastButton.checked ? 1 : 0
-                border.color: "#315653"
+                color: fastButton.hovered ? "#202024" : "transparent"
+                border.width: 0
+            }
+        }
+
+        Button {
+            id: planButton
+            height: 34
+            implicitWidth: planContent.implicitWidth + leftPadding + rightPadding
+            leftPadding: 10
+            rightPadding: 10
+            text: "Plan"
+            checkable: true
+            checked: chatController.planMode
+            enabled: !chatController.busy
+            Accessible.name: "Plan mode"
+            Accessible.checked: checked
+            onToggled: chatController.planMode = checked
+            contentItem: Row {
+                id: planContent
+                spacing: 6
+                Item {
+                    width: 13
+                    height: 13
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    Repeater {
+                        model: 3
+                        Item {
+                            required property int index
+                            x: 0
+                            y: index * 4.5 + 1
+                            width: 13
+                            height: 3
+
+                            Rectangle {
+                                width: 2.5
+                                height: 2.5
+                                radius: 1.25
+                                color: planButton.checked ? "#8ee6dd" : "#777780"
+                            }
+                            Rectangle {
+                                x: 5
+                                y: 0.75
+                                width: 8
+                                height: 1
+                                radius: 0.5
+                                color: planButton.checked ? "#8ee6dd" : "#777780"
+                            }
+                        }
+                    }
+                }
+                Text {
+                    text: planButton.text
+                    color: planButton.checked ? "#b8e8e3" : "#898991"
+                    font.family: uiFont
+                    font.pixelSize: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+            background: Rectangle {
+                radius: 8
+                color: planButton.hovered ? "#202024" : "transparent"
+                border.width: 0
             }
         }
     }

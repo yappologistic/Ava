@@ -19,8 +19,11 @@ Item {
     required property var fileChanges
     required property int additions
     required property int deletions
+    required property var activities
+    required property string elapsed
 
     signal openDiffRequested(string path)
+    signal openUrlRequested(string url)
 
     property bool expanded: kind === "file" && fileChanges.length <= 4
     readonly property bool conversational: kind === "user" || kind === "agent"
@@ -29,9 +32,10 @@ Item {
                                          || kind === "command" || kind === "image"
     readonly property bool quietActivity: kind === "reasoning" || kind === "plan"
                                          || kind === "activity"
-    readonly property int contentWidth: Math.min(width - 42,
-                                                 kind === "user" ? 650
-                                                                  : (kind === "file" ? 820 : 760))
+    readonly property int laneWidth: Math.min(width - 48, 920)
+    readonly property int laneX: Math.max(24, (width - laneWidth) / 2)
+    readonly property int contentWidth: kind === "user"
+                                        ? Math.min(laneWidth, 650) : laneWidth
 
     function fileTint(extension) {
         const ext = extension.toLowerCase()
@@ -54,7 +58,7 @@ Item {
     Column {
         id: contentColumn
         width: root.contentWidth
-        x: root.kind === "user" ? root.width - width - 20 : 20
+        x: root.kind === "user" ? root.laneX + root.laneWidth - width : root.laneX
         spacing: 7
 
         Row {
@@ -88,6 +92,7 @@ Item {
             height: Math.max(activityTitle.implicitHeight, activityState.implicitHeight)
             visible: root.kind !== "user" && root.kind !== "agent"
                      && root.kind !== "file"
+                     && root.kind !== "work"
                      && root.kind !== "reasoning"
                      && !root.thinking
 
@@ -140,9 +145,10 @@ Item {
                    : parent.width
             x: root.kind === "user" ? parent.width - width : 0
             implicitHeight: (fileCard.visible ? fileCard.implicitHeight
+                            : (workDisclosure.visible ? workDisclosure.implicitHeight
                             : (planText.visible ? planText.implicitHeight
                                                 : messageText.implicitHeight)
-                              + (root.kind === "user" ? 24 : 10))
+                              + (root.kind === "user" ? 24 : 10)))
                             + (detailArea.visible ? detailArea.implicitHeight + 10 : 0)
             visible: !root.thinking
             radius: root.kind === "user" ? 15 : 12
@@ -169,6 +175,7 @@ Item {
                 width: parent.width - (root.kind === "user" ? 30
                                                              : (root.toolActivity ? 17 : 0))
                 visible: root.kind !== "plan" && root.kind !== "file"
+                         && root.kind !== "work"
                 readOnly: true
                 selectByMouse: true
                 selectionColor: "#355b65"
@@ -185,6 +192,17 @@ Item {
                 font.family: root.kind === "command" ? monoFont : uiFont
                 font.pixelSize: root.kind === "command" ? 12 : 13
                 Accessible.name: root.body
+                onLinkActivated: function(link) { root.openUrlRequested(link) }
+            }
+
+            CodexWorkDisclosure {
+                id: workDisclosure
+                width: parent.width
+                visible: root.kind === "work"
+                activities: root.activities
+                running: root.running
+                elapsed: root.elapsed
+                onOpenUrlRequested: function(url) { root.openUrlRequested(url) }
             }
 
             Rectangle {
@@ -399,8 +417,9 @@ Item {
                 x: root.kind === "user" ? 13 : 0
                 width: parent.width - (root.kind === "user" ? 26 : 0)
                 y: (fileCard.visible ? fileCard.implicitHeight
+                    : (workDisclosure.visible ? workDisclosure.implicitHeight
                     : (planText.visible ? planText.y + planText.implicitHeight
-                                        : messageText.y + messageText.implicitHeight)) + 8
+                                        : messageText.y + messageText.implicitHeight))) + 8
                 visible: root.detail.length > 0 && (root.expanded || root.isError)
                 spacing: 6
 

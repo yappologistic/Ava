@@ -402,9 +402,9 @@ ApplicationWindow {
 
                 Rectangle {
                     id: statusBanner
-                    x: 18
+                    x: (parent.width - width) / 2
                     y: 12
-                    width: parent.width - 36
+                    width: Math.min(parent.width - 36, 920)
                     height: visible ? 42 : 0
                     radius: 11
                     visible: chatController.errorMessage.length > 0
@@ -460,6 +460,9 @@ ApplicationWindow {
                         width: transcript.width
                         onOpenDiffRequested: function(path) {
                             window.inspectorOpen = true
+                        }
+                        onOpenUrlRequested: function(url) {
+                            Qt.openUrlExternally(url)
                         }
                     }
 
@@ -526,8 +529,8 @@ ApplicationWindow {
 
                 Rectangle {
                     id: inputPanel
-                    x: 18
-                    width: parent.width - 36
+                    x: (parent.width - width) / 2
+                    width: Math.min(parent.width - 36, 920)
                     height: chatController.awaitingUserInput ? 158 : 0
                     anchors.bottom: composer.top
                     anchors.bottomMargin: chatController.awaitingUserInput ? 10 : 0
@@ -655,8 +658,8 @@ ApplicationWindow {
 
                 Rectangle {
                     id: approvalPanel
-                    x: 18
-                    width: parent.width - 36
+                    x: (parent.width - width) / 2
+                    width: Math.min(parent.width - 36, 920)
                     height: chatController.awaitingApproval ? 96 : 0
                     anchors.bottom: inputPanel.visible ? inputPanel.top : composer.top
                     anchors.bottomMargin: chatController.awaitingApproval ? 10 : 0
@@ -726,8 +729,8 @@ ApplicationWindow {
 
                 CodexComposer {
                     id: composer
-                    x: 18
-                    width: parent.width - 36
+                    x: (parent.width - width) / 2
+                    width: Math.min(parent.width - 36, 920)
                     anchors.bottom: parent.bottom
                     anchors.bottomMargin: 16
                     onAttachRequested: fileDialog.open()

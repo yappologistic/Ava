@@ -75,6 +75,7 @@ void CodexLiveTest::answersRealCodexInputRequest()
     QTRY_VERIFY_WITH_TIMEOUT(
         qobject_cast<QAbstractItemModel *>(controller.models())->rowCount() > 0, 20000);
     controller.setProjectPath(directory.path());
+    controller.setPlanMode(true);
 
     bool sawInputRequest = false;
     connect(&controller, &CodexChatController::userInputChanged,
@@ -98,17 +99,20 @@ void CodexLiveTest::answersRealCodexInputRequest()
 
     QSignalSpy completed(&controller, &CodexChatController::turnCompleted);
     controller.sendMessage(QStringLiteral(
-        "Before changing any files, call request_user_input with one question: "
-        "'Which marker should I write?' and exactly two options named Alpha and Bravo. "
-        "After the user answers, create marker.txt containing only their selected option followed by a newline, "
-        "then reply with exactly DONE."));
+        "Before giving your plan, call request_user_input with one question: "
+        "'Which option should the plan use?' and exactly two options named Alpha and Bravo. "
+        "After the user answers, do not change files. Reply with exactly SELECTED Alpha."));
     QVERIFY2(completed.wait(150000), qPrintable(controller.errorMessage()));
     QVERIFY(completed.constFirst().at(1).toBool());
     QVERIFY(sawInputRequest);
-
-    QFile marker(directory.filePath(QStringLiteral("marker.txt")));
-    QVERIFY(marker.open(QIODevice::ReadOnly));
-    QCOMPARE(marker.readAll(), QByteArray("Alpha\n"));
+    auto *timeline = qobject_cast<CodexTimelineModel *>(controller.timeline());
+    QVERIFY(timeline);
+    bool sawSelectedAnswer = false;
+    for (int row = 0; row < timeline->rowCount(); ++row)
+        sawSelectedAnswer = sawSelectedAnswer
+            || timeline->bodyAt(row).contains(QStringLiteral("SELECTED Alpha"));
+    QVERIFY(sawSelectedAnswer);
+    QVERIFY(!QFileInfo::exists(directory.filePath(QStringLiteral("marker.txt"))));
     qunsetenv("AVA_CODEX_EPHEMERAL_THREADS");
     makeTreeWritable(directory.path());
 }

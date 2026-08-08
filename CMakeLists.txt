@@ -67,6 +67,7 @@ qt_add_qml_module(AvaChat
         qml/chat/CodexComposer.qml
         qml/chat/CodexDiffInspector.qml
         qml/chat/CodexMessageDelegate.qml
+        qml/chat/CodexWorkDisclosure.qml
     RESOURCES
         assets/icons/codex-terminal-light.svg
         assets/fonts/Inter[opsz,wght].ttf
@@ -196,6 +197,14 @@ if (BUILD_TESTING)
     qt_add_executable(tst_codexmodels tests/tst_codexmodels.cpp)
     target_link_libraries(tst_codexmodels PRIVATE AvaCodexCore Qt6::Test)
     add_test(NAME codex_models COMMAND tst_codexmodels)
+
+    qt_add_executable(tst_chattextstyler
+        tests/tst_chattextstyler.cpp
+        src/chattextstyler.cpp
+        src/chattextstyler.h)
+    target_include_directories(tst_chattextstyler PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(tst_chattextstyler PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+    add_test(NAME chat_text_styler COMMAND tst_chattextstyler)
 
     qt_add_executable(tst_codexgitmanager tests/tst_codexgitmanager.cpp)
     target_link_libraries(tst_codexgitmanager PRIVATE AvaCodexCore Qt6::Test)

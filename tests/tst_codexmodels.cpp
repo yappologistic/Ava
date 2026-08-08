@@ -15,6 +15,8 @@ private slots:
     void timelineStreamsAndReconciles();
     void authoritativeUserMessageDoesNotDuplicate();
     void fileChangesExposeNativeDiffStats();
+    void workActivitiesCollapseIntoTurnReceipt();
+    void restoredCompletedWorkDoesNotRemainLive();
     void plansAndUnknownItemsRemainReadable();
     void modelsExposeCapabilities();
     void attachmentsClassifyLocalFiles();
@@ -117,6 +119,64 @@ void CodexModelsTest::fileChangesExposeNativeDiffStats()
     QCOMPARE(file.value(QStringLiteral("extension")).toString(), QStringLiteral("CPP"));
 }
 
+void CodexModelsTest::workActivitiesCollapseIntoTurnReceipt()
+{
+    CodexTimelineModel model;
+    model.upsertItem(
+        QJsonObject{{"id", "reason-1"}, {"type", "reasoning"},
+                    {"summary", QJsonArray{QStringLiteral("Inspecting the project")}}},
+        true, QStringLiteral("turn-1"));
+    model.upsertItem(
+        QJsonObject{{"id", "search-1"}, {"type", "webSearch"},
+                    {"query", "Qt text rendering"},
+                    {"results", QJsonArray{QJsonObject{
+                        {"title", "Qt Quick Text"},
+                        {"url", "https://doc.qt.io/qt-6/qml-qtquick-text.html"}}}}},
+        true, QStringLiteral("turn-1"));
+
+    QCOMPARE(model.rowCount(), 1);
+    const QModelIndex work = model.index(0);
+    QCOMPARE(model.data(work, CodexTimelineModel::KindRole).toString(),
+             QStringLiteral("work"));
+    const QVariantList activities = model.data(
+        work, CodexTimelineModel::ActivitiesRole).toList();
+    QCOMPARE(activities.size(), 2);
+    const QVariantList sources = activities.at(1).toMap()
+                                     .value(QStringLiteral("sources")).toList();
+    QCOMPARE(sources.size(), 1);
+    QCOMPARE(sources.constFirst().toMap().value(QStringLiteral("host")).toString(),
+             QStringLiteral("doc.qt.io"));
+    QVERIFY(!sources.constFirst().toMap().value(QStringLiteral("favicon")).toString().isEmpty());
+
+    model.completeWork(QStringLiteral("turn-1"), 65000);
+    QVERIFY(!model.data(work, CodexTimelineModel::RunningRole).toBool());
+    QCOMPARE(model.data(work, CodexTimelineModel::ElapsedRole).toString(),
+             QStringLiteral("1m 5s"));
+}
+
+void CodexModelsTest::restoredCompletedWorkDoesNotRemainLive()
+{
+    CodexTimelineModel model;
+    model.replaceFromThread(QJsonObject{
+        {"turns", QJsonArray{QJsonObject{
+            {"id", "turn-restored"},
+            {"status", "completed"},
+            {"items", QJsonArray{QJsonObject{
+                {"id", "reason-restored"},
+                {"type", "reasoning"},
+                {"summary", QJsonArray{QStringLiteral("Restored activity")}}
+            }}}
+        }}}
+    });
+
+    QCOMPARE(model.rowCount(), 1);
+    const QModelIndex work = model.index(0);
+    QVERIFY(!model.data(work, CodexTimelineModel::RunningRole).toBool());
+    QCOMPARE(model.data(work, CodexTimelineModel::TitleRole).toString(),
+             QStringLiteral("Worked"));
+    QVERIFY(model.data(work, CodexTimelineModel::ElapsedRole).toString().isEmpty());
+}
+
 void CodexModelsTest::plansAndUnknownItemsRemainReadable()
 {
     CodexTimelineModel model;
@@ -124,8 +184,13 @@ void CodexModelsTest::plansAndUnknownItemsRemainReadable()
                      QJsonArray{QJsonObject{{"step", "Inspect"}, {"status", "completed"}},
                                 QJsonObject{{"step", "Fix"}, {"status", "inProgress"}}});
     QCOMPARE(model.rowCount(), 1);
-    QVERIFY(model.bodyAt(0).contains(QStringLiteral("Inspect")));
-    QVERIFY(model.bodyAt(0).contains(QStringLiteral("Fix")));
+    const QVariantList activities = model.data(
+        model.index(0), CodexTimelineModel::ActivitiesRole).toList();
+    QCOMPARE(activities.size(), 1);
+    const QString planBody = activities.constFirst().toMap()
+                                 .value(QStringLiteral("body")).toString();
+    QVERIFY(planBody.contains(QStringLiteral("Inspect")));
+    QVERIFY(planBody.contains(QStringLiteral("Fix")));
 
     model.upsertItem(QJsonObject{{"id", "future-1"}, {"type", "futureCapability"},
                                  {"status", "completed"}}, true);

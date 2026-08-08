@@ -28,6 +28,7 @@ class CodexChatController final : public QObject
     Q_PROPERTY(bool hasThread READ hasThread NOTIFY stateChanged)
     Q_PROPERTY(bool supportsFast READ supportsFast NOTIFY modelChanged)
     Q_PROPERTY(bool fastMode READ fastMode WRITE setFastMode NOTIFY modelChanged)
+    Q_PROPERTY(bool planMode READ planMode WRITE setPlanMode NOTIFY modelChanged)
     Q_PROPERTY(QString accountLabel READ accountLabel NOTIFY stateChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY stateChanged)
     Q_PROPERTY(QString activityText READ activityText NOTIFY stateChanged)
@@ -72,6 +73,7 @@ public:
     bool hasThread() const { return !m_threadId.isEmpty(); }
     bool supportsFast() const { return m_models.supportsFastFor(m_selectedModel); }
     bool fastMode() const { return m_fastMode; }
+    bool planMode() const { return m_planMode; }
     QString accountLabel() const { return m_accountLabel; }
     QString statusText() const { return m_statusText; }
     QString activityText() const { return m_activityText; }
@@ -111,6 +113,7 @@ public slots:
     void setSelectedModel(const QString &modelId);
     void setSelectedEffort(const QString &effort);
     void setFastMode(bool fast);
+    void setPlanMode(bool plan);
     void addAttachment(const QString &pathOrUrl);
     void attachClipboardImage();
     void removeAttachment(int row);
@@ -205,5 +208,6 @@ private:
     bool m_awaitingUserInput = false;
     bool m_userInputSecret = false;
     bool m_fastMode = false;
+    bool m_planMode = false;
     bool m_visualTestMode = false;
 };

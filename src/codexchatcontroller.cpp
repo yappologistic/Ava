@@ -345,6 +345,15 @@ void CodexChatController::setFastMode(bool fast)
     emit modelChanged();
 }
 
+void CodexChatController::setPlanMode(bool plan)
+{
+    if (m_planMode == plan)
+        return;
+    m_planMode = plan;
+    QSettings().setValue(QStringLiteral("codexChat/planMode"), m_planMode);
+    emit modelChanged();
+}
+
 void CodexChatController::addAttachment(const QString &pathOrUrl)
 {
     const QUrl url(pathOrUrl);
@@ -461,7 +470,7 @@ void CodexChatController::setVisualTestState(const QString &state)
                     {QStringLiteral("summary"),
                      QJsonArray{QStringLiteral("I’m tracing the failure through the request lifecycle and checking the existing test expectations.")}},
                     {QStringLiteral("status"), QStringLiteral("completed")}},
-        true);
+        true, QStringLiteral("visual-turn"));
     m_timeline.updatePlan(
         QStringLiteral("visual-turn"),
         QJsonArray{QJsonObject{{QStringLiteral("step"), QStringLiteral("Reproduce the failing test")},
@@ -477,7 +486,23 @@ void CodexChatController::setVisualTestState(const QString &state)
                     {QStringLiteral("cwd"), QStringLiteral("D:/projects/ava-demo")},
                     {QStringLiteral("status"), QStringLiteral("completed")},
                     {QStringLiteral("exitCode"), 0}},
-        true);
+        true, QStringLiteral("visual-turn"));
+    if (state == QStringLiteral("sources")
+        || state == QStringLiteral("sources-live")) {
+        m_timeline.upsertItem(
+            QJsonObject{
+                {QStringLiteral("id"), QStringLiteral("search-1")},
+                {QStringLiteral("type"), QStringLiteral("webSearch")},
+                {QStringLiteral("query"), QStringLiteral("Qt native text rendering")},
+                {QStringLiteral("results"),
+                 QJsonArray{
+                     QJsonObject{{QStringLiteral("title"), QStringLiteral("Qt Quick Text")},
+                                 {QStringLiteral("url"), QStringLiteral("https://doc.qt.io/qt-6/qml-qtquick-text.html")}},
+                     QJsonObject{{QStringLiteral("title"), QStringLiteral("Qt Quick Painted Item")},
+                                 {QStringLiteral("url"), QStringLiteral("https://doc.qt.io/qt-6/qquickpainteditem.html")}}
+                 }}},
+            true, QStringLiteral("visual-turn"));
+    }
     if (state == QStringLiteral("files")) {
         m_timeline.upsertItem(
             QJsonObject{{QStringLiteral("id"), QStringLiteral("files-1")},
@@ -504,6 +529,9 @@ void CodexChatController::setVisualTestState(const QString &state)
                     {QStringLiteral("text"),
                      state == QStringLiteral("markdown")
                          ? QStringLiteral("The implementation is now verified across the full flow.\n\n- **Message identity:** each submitted prompt appears once, using the server-owned item ID.\n- **Readable responses:** paragraphs and wrapped list items have consistent breathing room.\n- **Native activity:** thinking and tool work remain part of the conversation flow.\n\nThe focused tests and complete Release build both pass.")
+                         : (state == QStringLiteral("sources")
+                            || state == QStringLiteral("sources-live"))
+                         ? QStringLiteral("Qt's native rich-text flow is documented in [Qt Quick Text](https://doc.qt.io/qt-6/qml-qtquick-text.html), while custom scene-graph painting is covered by [QQuickPaintedItem](https://doc.qt.io/qt-6/qquickpainteditem.html).")
                          : QStringLiteral("The transition now preserves the previous state until the replacement is ready. The focused test and complete Release build both pass.")}},
         true);
     if (state == QStringLiteral("approval")) {
@@ -511,7 +539,8 @@ void CodexChatController::setVisualTestState(const QString &state)
         m_turnActive = true;
         m_approvalTitle = QStringLiteral("Allow this command?");
         m_approvalDetail = QStringLiteral("git push -u origin ava/refine-chat-window");
-    } else if (state == QStringLiteral("streaming")) {
+    } else if (state == QStringLiteral("streaming")
+               || state == QStringLiteral("sources-live")) {
         m_turnActive = true;
         m_statusText = QStringLiteral("Working");
         m_activityText = QStringLiteral("Running the full test suite");
@@ -519,7 +548,7 @@ void CodexChatController::setVisualTestState(const QString &state)
             QJsonObject{{QStringLiteral("id"), QStringLiteral("reason-live")},
                         {QStringLiteral("type"), QStringLiteral("reasoning")},
                         {QStringLiteral("status"), QStringLiteral("inProgress")}},
-            false);
+            false, QStringLiteral("visual-turn"));
     } else if (state == QStringLiteral("input")) {
         m_turnActive = true;
         m_awaitingUserInput = true;
@@ -529,6 +558,9 @@ void CodexChatController::setVisualTestState(const QString &state)
     } else if (state == QStringLiteral("error")) {
         m_errorMessage = QStringLiteral("The Codex connection closed unexpectedly. Your conversation is saved.");
     }
+    if (state != QStringLiteral("streaming")
+        && state != QStringLiteral("sources-live"))
+        m_timeline.completeWork(QStringLiteral("visual-turn"), 132000);
     emit projectChanged();
     emit modelChanged();
     emit approvalChanged();
@@ -565,6 +597,7 @@ void CodexChatController::loadSettings()
     m_selectedModel = settings.value(QStringLiteral("codexChat/model")).toString();
     m_selectedEffort = settings.value(QStringLiteral("codexChat/effort")).toString();
     m_fastMode = settings.value(QStringLiteral("codexChat/fastMode"), false).toBool();
+    m_planMode = settings.value(QStringLiteral("codexChat/planMode"), false).toBool();
 }
 
 void CodexChatController::requestInitialState()
@@ -734,6 +767,12 @@ void CodexChatController::handleNotification(const QString &method,
     if (method == QStringLiteral("turn/completed")) {
         flushDeltas();
         const QJsonObject turn = params.value(QStringLiteral("turn")).toObject();
+        const QString completedTurnId = turn.value(QStringLiteral("id")).toString(m_turnId);
+        qint64 durationMs = static_cast<qint64>(
+            turn.value(QStringLiteral("durationMs")).toDouble(-1));
+        if (durationMs < 0 && m_turnElapsed.isValid())
+            durationMs = m_turnElapsed.elapsed();
+        m_timeline.completeWork(completedTurnId, std::max<qint64>(0, durationMs));
         const QString status = turn.value(QStringLiteral("status")).toString();
         const bool success = status == QStringLiteral("completed");
         m_turnActive = false;
@@ -766,7 +805,8 @@ void CodexChatController::handleNotification(const QString &method,
         const QString id = item.value(QStringLiteral("id")).toString();
         if (completed)
             m_pendingDeltas.remove(id);
-        m_timeline.upsertItem(item, completed);
+        m_timeline.upsertItem(item, completed,
+                              params.value(QStringLiteral("turnId")).toString(m_turnId));
         const QString type = item.value(QStringLiteral("type")).toString();
         if (type == QStringLiteral("commandExecution"))
             setStatus(QStringLiteral("Working"), concise(item.value(QStringLiteral("command")).toString()));
@@ -936,6 +976,22 @@ void CodexChatController::startPendingTurn()
         params.insert(QStringLiteral("model"), m_selectedModel);
     if (!m_selectedEffort.isEmpty())
         params.insert(QStringLiteral("effort"), m_selectedEffort);
+    if (!m_selectedModel.isEmpty()) {
+        params.insert(
+            QStringLiteral("collaborationMode"),
+            QJsonObject{
+                {QStringLiteral("mode"),
+                 m_planMode ? QStringLiteral("plan") : QStringLiteral("default")},
+                {QStringLiteral("settings"),
+                 QJsonObject{
+                     {QStringLiteral("model"), m_selectedModel},
+                     {QStringLiteral("reasoning_effort"),
+                      m_selectedEffort.isEmpty()
+                          ? QJsonValue(QJsonValue::Null)
+                          : QJsonValue(m_selectedEffort)},
+                     {QStringLiteral("developer_instructions"),
+                      QJsonValue(QJsonValue::Null)}}}});
+    }
     const qint64 id = m_client->request(QStringLiteral("turn/start"), params);
     m_requestContext.insert(id, QStringLiteral("turn/start"));
 
