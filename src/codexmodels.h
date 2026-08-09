@@ -92,6 +92,7 @@ public:
         QString elapsed;
         QString turnId;
         QString clientId;
+        QString serverId;
         int additions = 0;
         int deletions = 0;
         qint64 timestamp = 0;
@@ -116,6 +117,8 @@ public:
                                     const QString &turnId);
     void failOptimisticTurn(const QString &clientMessageId,
                             const QString &message);
+    QString retryOptimisticTurn(const QString &clientMessageId,
+                                const QString &replacementClientMessageId);
     void upsertItem(const QJsonObject &item, bool completed,
                     const QString &turnId = {});
     void appendAgentDelta(const QString &itemId, const QString &delta);
@@ -123,7 +126,9 @@ public:
                          const QString &kind, const QString &bodyDelta,
                          const QString &detailDelta = {});
     void updatePlan(const QString &turnId, const QJsonArray &plan);
-    void completeWork(const QString &turnId, qint64 durationMs);
+    void completeWork(const QString &turnId, qint64 durationMs,
+                      const QString &terminalStatus = QStringLiteral("completed"),
+                      const QString &failureMessage = {});
     void appendError(const QString &message);
     Q_INVOKABLE QString bodyAt(int row) const;
     Q_INVOKABLE int rowForItem(const QString &id) const;
@@ -131,12 +136,16 @@ public:
 private:
     int rowForId(const QString &id) const;
     QString workGroupId(const QString &turnId) const;
-    void finishWorkGroup(const QString &groupId, qint64 durationMs = -1);
+    void finishWorkGroup(const QString &groupId, qint64 durationMs = -1,
+                         const QString &terminalStatus = QStringLiteral("completed"),
+                         const QString &failureMessage = {});
     void startHistoricalWorkSegment(const QString &turnId,
                                     const QString &messageId);
     void rebuildRowIndex();
     void removeEntryAt(int row);
     bool isDuplicateProtocolUserMessage(const Entry &entry) const;
+    int matchingOptimisticUserRow(const Entry &entry,
+                                  const QString &turnId) const;
     void insertOrReplace(Entry entry);
     void upsertWorkActivity(Entry activity, const QString &turnId);
     static bool belongsInWork(const Entry &entry);

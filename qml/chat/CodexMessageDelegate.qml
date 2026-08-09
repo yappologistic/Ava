@@ -26,6 +26,7 @@ Item {
 
     signal openDiffRequested(string path)
     signal openUrlRequested(string url)
+    signal retryRequested(string itemId)
 
     property bool expanded: kind === "file" && fileChanges.length <= 4
     readonly property bool conversational: kind === "user" || kind === "agent"
@@ -218,6 +219,8 @@ Item {
                 activities: root.activities
                 running: root.running
                 elapsed: root.elapsed
+                status: root.itemStatus
+                failureMessage: root.detail
                 onOpenUrlRequested: function(url) { root.openUrlRequested(url) }
             }
 
@@ -436,7 +439,8 @@ Item {
                     : (workDisclosure.visible ? workDisclosure.implicitHeight
                     : (planText.visible ? planText.y + planText.implicitHeight
                                         : messageText.y + messageText.implicitHeight))) + 8
-                visible: root.detail.length > 0 && (root.expanded || root.isError)
+                visible: root.kind !== "user" && root.detail.length > 0
+                         && (root.expanded || root.isError)
                 spacing: 6
 
                 Rectangle {
@@ -476,6 +480,64 @@ Item {
                 symbol: root.expanded ? "\uE70D" : "\uE70E"
                 accessibleName: root.expanded ? "Collapse details" : "Expand details"
                 onClicked: root.expanded = !root.expanded
+            }
+        }
+
+        Item {
+            id: deliveryState
+            width: parent.width
+            height: visible ? 18 : 0
+            visible: root.kind === "user"
+                     && (root.itemStatus === "sending"
+                         || root.itemStatus === "failed")
+            Accessible.role: Accessible.StaticText
+            Accessible.name: root.itemStatus === "failed"
+                             ? "Message not sent. Retry available."
+                             : "Sending message"
+
+            Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 9
+
+                Text {
+                    text: root.itemStatus === "failed" ? "Message not sent" : "Sending…"
+                    color: root.itemStatus === "failed" ? "#b9827e" : "#66666e"
+                    font.family: uiFont
+                    font.pixelSize: 10
+                }
+
+                Text {
+                    id: retryAction
+                    visible: root.itemStatus === "failed"
+                    text: "Retry"
+                    color: retryHover.hovered ? "#d6d6db" : "#92929a"
+                    font.family: uiFont
+                    font.pixelSize: 10
+                    font.weight: Font.DemiBold
+                    activeFocusOnTab: visible
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Retry message"
+
+                    Behavior on color {
+                        ColorAnimation { duration: reducedMotion ? 0 : 100 }
+                    }
+
+                    HoverHandler {
+                        id: retryHover
+                        cursorShape: Qt.PointingHandCursor
+                    }
+                    TapHandler {
+                        acceptedButtons: Qt.LeftButton
+                        onTapped: root.retryRequested(root.itemId)
+                    }
+                    Keys.onPressed: function(event) {
+                        if (event.key === Qt.Key_Return || event.key === Qt.Key_Space) {
+                            root.retryRequested(root.itemId)
+                            event.accepted = true
+                        }
+                    }
+                }
             }
         }
     }

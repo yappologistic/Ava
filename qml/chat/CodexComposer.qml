@@ -37,16 +37,18 @@ Item {
         var value = composer.text.trim()
         if (value.length === 0 || !chatController.canSubmit)
             return
-        composer.text = ""
         if (value === "/review" || value.startsWith("/review ")) {
+            composer.text = ""
             chatController.startReview(value.slice(7).trim())
             return
         }
         if (value === "/compact") {
+            composer.text = ""
             chatController.compactThread()
             return
         }
-        chatController.sendMessage(value)
+        if (chatController.sendMessage(value))
+            composer.text = ""
     }
 
     function runCommand(command) {

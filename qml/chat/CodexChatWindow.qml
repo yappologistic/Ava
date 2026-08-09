@@ -611,6 +611,9 @@ ApplicationWindow {
                     property string scrollMode: "follow-end"
                     property string anchorItemId: ""
                     property string navigationHighlightId: ""
+                    property string viewportAnchorItemId: ""
+                    property real viewportAnchorOffset: 0
+                    property bool viewportRestoreQueued: false
                     property int activePromptIndex: -1
 
                     function nearLiveEdge() {
@@ -630,6 +633,57 @@ ApplicationWindow {
                                 .promptIndexForSourceRow(row)
                     }
 
+                    function liveEdgeY() {
+                        return Math.max(0, contentHeight - height)
+                    }
+
+                    function scheduleLiveEdge() {
+                        Qt.callLater(function() {
+                            if (scrollMode === "follow-end")
+                                contentY = liveEdgeY()
+                        })
+                    }
+
+                    function captureViewportAnchor() {
+                        if (scrollMode !== "free" || moving || count <= 0)
+                            return
+                        let row = indexAt(1, contentY + 8)
+                        if (row < 0)
+                            row = indexAt(1, contentY + 28)
+                        const item = row >= 0 ? itemAtIndex(row) : null
+                        if (!item)
+                            return
+                        viewportAnchorItemId = item.itemId
+                        viewportAnchorOffset = item.y - contentY
+                    }
+
+                    function restoreViewportAnchor() {
+                        viewportRestoreQueued = false
+                        if (scrollMode !== "free" || viewportAnchorItemId.length === 0)
+                            return
+                        const row = chatController.timeline.rowForItem(viewportAnchorItemId)
+                        const item = row >= 0 ? itemAtIndex(row) : null
+                        if (!item)
+                            return
+                        contentY = Math.max(0, item.y - viewportAnchorOffset)
+                        updateActivePrompt()
+                    }
+
+                    function prepareViewportMutation() {
+                        if (scrollMode !== "free" || viewportRestoreQueued)
+                            return
+                        captureViewportAnchor()
+                        if (viewportAnchorItemId.length === 0)
+                            return
+                        viewportRestoreQueued = true
+                    }
+
+                    function finishViewportMutation() {
+                        if (!viewportRestoreQueued)
+                            return
+                        Qt.callLater(restoreViewportAnchor)
+                    }
+
                     function jumpToPrompt(row, messageId) {
                         if (row < 0)
                             return
@@ -647,6 +701,7 @@ ApplicationWindow {
                     function anchorSubmittedMessage(messageId) {
                         scrollMode = "anchor-new-turn"
                         anchorItemId = messageId
+                        viewportAnchorItemId = ""
                         Qt.callLater(function() {
                             const row = chatController.timeline.rowForItem(messageId)
                             if (row >= 0 && anchorItemId === messageId)
@@ -670,6 +725,26 @@ ApplicationWindow {
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                     Accessible.name: "Codex conversation"
 
+                    Connections {
+                        target: chatController.timeline
+                        function onDataChanged() {
+                            transcript.prepareViewportMutation()
+                            transcript.finishViewportMutation()
+                        }
+                        function onRowsAboutToBeInserted() {
+                            transcript.prepareViewportMutation()
+                        }
+                        function onRowsInserted() {
+                            transcript.finishViewportMutation()
+                        }
+                        function onRowsAboutToBeRemoved() {
+                            transcript.prepareViewportMutation()
+                        }
+                        function onRowsRemoved() {
+                            transcript.finishViewportMutation()
+                        }
+                    }
+
                     delegate: CodexMessageDelegate {
                         width: transcript.width
                         navigationHighlighted: itemId === transcript.navigationHighlightId
@@ -679,20 +754,28 @@ ApplicationWindow {
                         onOpenUrlRequested: function(url) {
                             Qt.openUrlExternally(url)
                         }
+                        onRetryRequested: function(messageId) {
+                            chatController.retryMessage(messageId)
+                        }
                     }
 
                     onCountChanged: {
                         if (scrollMode === "follow-end" || count <= 2)
-                            Qt.callLater(positionViewAtEnd)
+                            scheduleLiveEdge()
                         Qt.callLater(updateActivePrompt)
                     }
 
                     onContentYChanged: updateActivePrompt()
-                    onHeightChanged: Qt.callLater(updateActivePrompt)
+                    onHeightChanged: {
+                        if (scrollMode === "follow-end")
+                            scheduleLiveEdge()
+                        Qt.callLater(updateActivePrompt)
+                    }
 
                     onMovementStarted: {
                         scrollMode = "free"
                         anchorItemId = ""
+                        viewportAnchorItemId = ""
                     }
 
                     onMovementEnded: {
@@ -710,13 +793,8 @@ ApplicationWindow {
                     }
 
                     onContentHeightChanged: {
-                        if (scrollMode === "follow-end") {
-                            Qt.callLater(function() { transcript.positionViewAtEnd() })
-                        } else if (scrollMode === "anchor-new-turn"
-                                   && contentHeight - contentY > height + 40) {
-                            scrollMode = "follow-end"
-                            Qt.callLater(function() { transcript.positionViewAtEnd() })
-                        }
+                        if (scrollMode === "follow-end")
+                            scheduleLiveEdge()
                     }
                 }
 

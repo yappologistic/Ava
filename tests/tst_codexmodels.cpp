@@ -17,9 +17,13 @@ private slots:
     void timelineStreamsAndReconciles();
     void authoritativeUserMessageDoesNotDuplicate();
     void optimisticUserMessageAppearsAndReconcilesInPlace();
+    void optimisticUserMessageReconcilesWithoutClientId();
+    void duplicateOptimisticMessagesReconcileInOrder();
+    void failedMessageRetriesInPlace();
     void optimisticSteerCreatesAStableTimelineSegment();
     void failedSteerRestoresTheActiveWorkSegment();
     void failedOptimisticMessageRemainsVisible();
+    void workReceiptsPreserveTerminalState();
     void fileChangesExposeNativeDiffStats();
     void workActivitiesCollapseIntoTurnReceipt();
     void restoredCompletedWorkDoesNotRemainLive();
@@ -187,6 +191,83 @@ void CodexModelsTest::optimisticUserMessageAppearsAndReconcilesInPlace()
              QStringLiteral("reason-1"));
 }
 
+void CodexModelsTest::optimisticUserMessageReconcilesWithoutClientId()
+{
+    CodexTimelineModel model;
+    model.beginOptimisticTurn(QStringLiteral("client-user-2"),
+                              QStringLiteral("run focused tests"));
+    model.acknowledgeOptimisticTurn(QStringLiteral("client-user-2"),
+                                    QStringLiteral("turn-2"));
+
+    model.upsertItem(
+        QJsonObject{{"id", "server-user-2"}, {"type", "userMessage"},
+                    {"content", QJsonArray{QJsonObject{
+                         {"type", "text"}, {"text", "run focused tests"}}}}},
+        false, QStringLiteral("turn-2"));
+    model.upsertItem(
+        QJsonObject{{"id", "server-user-2"}, {"type", "userMessage"},
+                    {"content", QJsonArray{QJsonObject{
+                         {"type", "text"}, {"text", "run focused tests"}}}}},
+        true, QStringLiteral("turn-2"));
+
+    QCOMPARE(model.rowCount(), 2);
+    QCOMPARE(model.rowForItem(QStringLiteral("client-user-2")), 0);
+    QCOMPARE(model.rowForItem(QStringLiteral("server-user-2")), 0);
+    QCOMPARE(model.data(model.index(0), CodexTimelineModel::StatusRole).toString(),
+             QStringLiteral("sent"));
+}
+
+void CodexModelsTest::duplicateOptimisticMessagesReconcileInOrder()
+{
+    CodexTimelineModel model;
+    model.beginOptimisticTurn(QStringLiteral("client-first"),
+                              QStringLiteral("same prompt"));
+    model.acknowledgeOptimisticTurn(QStringLiteral("client-first"),
+                                    QStringLiteral("turn-same"));
+    model.beginOptimisticSteer(QStringLiteral("client-second"),
+                               QStringLiteral("same prompt"),
+                               QStringLiteral("turn-same"));
+
+    model.upsertItem(
+        QJsonObject{{"id", "server-first"}, {"type", "userMessage"},
+                    {"content", QJsonArray{QJsonObject{
+                         {"type", "text"}, {"text", "same prompt"}}}}},
+        true, QStringLiteral("turn-same"));
+    model.upsertItem(
+        QJsonObject{{"id", "server-second"}, {"type", "userMessage"},
+                    {"content", QJsonArray{QJsonObject{
+                         {"type", "text"}, {"text", "same prompt"}}}}},
+        true, QStringLiteral("turn-same"));
+
+    QCOMPARE(model.rowForItem(QStringLiteral("server-first")),
+             model.rowForItem(QStringLiteral("client-first")));
+    QCOMPARE(model.rowForItem(QStringLiteral("server-second")),
+             model.rowForItem(QStringLiteral("client-second")));
+    QVERIFY(model.rowForItem(QStringLiteral("client-first"))
+            < model.rowForItem(QStringLiteral("client-second")));
+}
+
+void CodexModelsTest::failedMessageRetriesInPlace()
+{
+    CodexTimelineModel model;
+    model.beginOptimisticTurn(QStringLiteral("client-failed"),
+                              QStringLiteral("inspect the failure"));
+    model.failOptimisticTurn(QStringLiteral("client-failed"),
+                             QStringLiteral("Connection closed"));
+
+    const QString prompt = model.retryOptimisticTurn(
+        QStringLiteral("client-failed"), QStringLiteral("client-retry"));
+
+    QCOMPARE(prompt, QStringLiteral("inspect the failure"));
+    QCOMPARE(model.rowCount(), 2);
+    QCOMPARE(model.rowForItem(QStringLiteral("client-failed")), -1);
+    QCOMPARE(model.rowForItem(QStringLiteral("client-retry")), 0);
+    QCOMPARE(model.data(model.index(0), CodexTimelineModel::StatusRole).toString(),
+             QStringLiteral("sending"));
+    QVERIFY(!model.data(model.index(0), CodexTimelineModel::ErrorRole).toBool());
+    QVERIFY(model.data(model.index(1), CodexTimelineModel::RunningRole).toBool());
+}
+
 void CodexModelsTest::optimisticSteerCreatesAStableTimelineSegment()
 {
     CodexTimelineModel model;
@@ -260,6 +341,43 @@ void CodexModelsTest::failedOptimisticMessageRemainsVisible()
     QVERIFY(model.data(model.index(0), CodexTimelineModel::ErrorRole).toBool());
     QCOMPARE(model.data(model.index(0), CodexTimelineModel::DetailRole).toString(),
              QStringLiteral("Codex is unavailable"));
+}
+
+void CodexModelsTest::workReceiptsPreserveTerminalState()
+{
+    CodexTimelineModel failed;
+    failed.appendWorkDelta(QStringLiteral("reason-failed"),
+                           QStringLiteral("turn-failed"),
+                           QStringLiteral("reasoning"),
+                           QStringLiteral("Checking the project"));
+    failed.completeWork(QStringLiteral("turn-failed"), 1800,
+                        QStringLiteral("failed"),
+                        QStringLiteral("Response stream disconnected"));
+
+    QCOMPARE(failed.data(failed.index(0), CodexTimelineModel::StatusRole).toString(),
+             QStringLiteral("failed"));
+    QCOMPARE(failed.data(failed.index(0), CodexTimelineModel::TitleRole).toString(),
+             QStringLiteral("Stopped with an error"));
+    QCOMPARE(failed.data(failed.index(0), CodexTimelineModel::DetailRole).toString(),
+             QStringLiteral("Response stream disconnected"));
+    QVERIFY(failed.data(failed.index(0), CodexTimelineModel::ErrorRole).toBool());
+    QVERIFY(!failed.data(failed.index(0), CodexTimelineModel::RunningRole).toBool());
+
+    CodexTimelineModel interrupted;
+    interrupted.appendWorkDelta(QStringLiteral("reason-stopped"),
+                                QStringLiteral("turn-stopped"),
+                                QStringLiteral("reasoning"),
+                                QStringLiteral("Checking the project"));
+    interrupted.completeWork(QStringLiteral("turn-stopped"), 900,
+                             QStringLiteral("interrupted"));
+    QCOMPARE(interrupted.data(interrupted.index(0),
+                              CodexTimelineModel::StatusRole).toString(),
+             QStringLiteral("interrupted"));
+    QCOMPARE(interrupted.data(interrupted.index(0),
+                              CodexTimelineModel::TitleRole).toString(),
+             QStringLiteral("Stopped"));
+    QVERIFY(!interrupted.data(interrupted.index(0),
+                              CodexTimelineModel::ErrorRole).toBool());
 }
 
 void CodexModelsTest::fileChangesExposeNativeDiffStats()

@@ -98,10 +98,14 @@ void CodexLiveTest::answersRealCodexInputRequest()
     });
 
     QSignalSpy completed(&controller, &CodexChatController::turnCompleted);
-    controller.sendMessage(QStringLiteral(
+    const auto *timelineBeforeSend = qobject_cast<QAbstractItemModel *>(controller.timeline());
+    QVERIFY(timelineBeforeSend);
+    const int rowsBeforeSend = timelineBeforeSend->rowCount();
+    QVERIFY(controller.sendMessage(QStringLiteral(
         "Before giving your plan, call request_user_input with one question: "
         "'Which option should the plan use?' and exactly two options named Alpha and Bravo. "
-        "After the user answers, do not change files. Reply with exactly SELECTED Alpha."));
+        "After the user answers, do not change files. Reply with exactly SELECTED Alpha.")));
+    QCOMPARE(timelineBeforeSend->rowCount(), rowsBeforeSend + 2);
     QVERIFY2(completed.wait(150000), qPrintable(controller.errorMessage()));
     QVERIFY(completed.constFirst().at(1).toBool());
     QVERIFY(sawInputRequest);
@@ -148,7 +152,14 @@ void CodexLiveTest::createsFileThroughRealAppServer()
         if (controller.awaitingApproval())
             controller.approveOnce();
     });
-    controller.sendMessage(QStringLiteral(
+    auto *timeline = qobject_cast<CodexTimelineModel *>(controller.timeline());
+    QVERIFY(timeline);
+    const int rowsBeforeSend = timeline->rowCount();
+    QVERIFY(controller.sendMessage(QStringLiteral(
+        "Create a text file named ava_e2e.txt containing exactly AVA_CODEX_E2E_OK followed by a newline. "
+        "Do not change any other file. After writing it, reply with exactly DONE.")));
+    QCOMPARE(timeline->rowCount(), rowsBeforeSend + 2);
+    QCOMPARE(timeline->bodyAt(rowsBeforeSend), QStringLiteral(
         "Create a text file named ava_e2e.txt containing exactly AVA_CODEX_E2E_OK followed by a newline. "
         "Do not change any other file. After writing it, reply with exactly DONE."));
     QVERIFY2(completed.wait(150000), qPrintable(controller.errorMessage()));

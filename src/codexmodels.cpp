@@ -489,8 +489,16 @@ void CodexTimelineModel::replaceFromThread(const QJsonObject &thread)
             || turnStatus == QStringLiteral("completed")
             || turnStatus == QStringLiteral("failed")
             || turnStatus == QStringLiteral("interrupted");
-        if (completed || durationMs >= 0)
-            completeWork(turnId, durationMs);
+        if (completed || durationMs >= 0) {
+            const QString failureMessage = turn.value(QStringLiteral("error"))
+                                               .toObject()
+                                               .value(QStringLiteral("message"))
+                                               .toString();
+            completeWork(turnId, durationMs,
+                         turnStatus.isEmpty() ? QStringLiteral("completed")
+                                              : turnStatus,
+                         failureMessage);
+        }
     }
     m_rebuilding = false;
     rebuildRowIndex();
@@ -509,6 +517,7 @@ void CodexTimelineModel::beginOptimisticTurn(const QString &clientMessageId,
     message.title = QStringLiteral("You");
     message.body = text;
     message.status = QStringLiteral("sending");
+    message.clientId = clientMessageId;
     message.timestamp = QDateTime::currentSecsSinceEpoch();
 
     Entry work;
@@ -645,6 +654,81 @@ void CodexTimelineModel::failOptimisticTurn(const QString &clientMessageId,
     }
 }
 
+QString CodexTimelineModel::retryOptimisticTurn(
+    const QString &clientMessageId,
+    const QString &replacementClientMessageId)
+{
+    if (clientMessageId.isEmpty() || replacementClientMessageId.isEmpty()
+        || rowForId(replacementClientMessageId) >= 0) {
+        return {};
+    }
+
+    const int messageRow = rowForId(clientMessageId);
+    if (messageRow < 0)
+        return {};
+    const Entry &candidate = m_entries.at(messageRow);
+    if (candidate.kind != QStringLiteral("user")
+        || candidate.status != QStringLiteral("failed")
+        || candidate.body.trimmed().isEmpty()) {
+        return {};
+    }
+
+    const QString prompt = candidate.body;
+    if (messageRow + 1 < m_entries.size()) {
+        const Entry &next = m_entries.at(messageRow + 1);
+        if (next.kind == QStringLiteral("work")
+            && (next.status == QStringLiteral("failed")
+                || next.status == QStringLiteral("interrupted"))) {
+            removeEntryAt(messageRow + 1);
+        }
+    }
+
+    Entry &message = m_entries[messageRow];
+    m_rowsById.remove(message.id);
+    if (!message.serverId.isEmpty())
+        m_rowsById.remove(message.serverId);
+    message.id = replacementClientMessageId;
+    message.clientId = replacementClientMessageId;
+    message.serverId.clear();
+    message.turnId.clear();
+    message.status = QStringLiteral("sending");
+    message.detail.clear();
+    message.error = false;
+    message.timestamp = QDateTime::currentSecsSinceEpoch();
+    m_rowsById.insert(message.id, messageRow);
+    emit dataChanged(index(messageRow), index(messageRow),
+                     {ItemIdRole, StatusRole, DetailRole, ErrorRole,
+                      TimestampRole});
+
+    Entry work;
+    work.id = QStringLiteral("work:pending:") + replacementClientMessageId;
+    work.turnId = QStringLiteral("pending:") + replacementClientMessageId;
+    work.kind = QStringLiteral("work");
+    work.title = QStringLiteral("Working");
+    work.status = QStringLiteral("inProgress");
+    work.running = true;
+    work.timestamp = message.timestamp;
+    work.activities.append(QVariantMap{
+        {QStringLiteral("id"),
+         QStringLiteral("thinking:") + replacementClientMessageId},
+        {QStringLiteral("kind"), QStringLiteral("reasoning")},
+        {QStringLiteral("title"), QStringLiteral("Thinking")},
+        {QStringLiteral("body"), QString()},
+        {QStringLiteral("detail"), QString()},
+        {QStringLiteral("status"), QStringLiteral("optimistic")},
+        {QStringLiteral("running"), true},
+        {QStringLiteral("error"), false},
+        {QStringLiteral("sources"), QVariantList{}}
+    });
+
+    const int workRow = messageRow + 1;
+    beginInsertRows({}, workRow, workRow);
+    m_entries.insert(workRow, std::move(work));
+    endInsertRows();
+    rebuildRowIndex();
+    return prompt;
+}
+
 void CodexTimelineModel::upsertItem(const QJsonObject &item, bool completed,
                                     const QString &turnId)
 {
@@ -655,6 +739,25 @@ void CodexTimelineModel::upsertItem(const QJsonObject &item, bool completed,
     if (belongsInWork(entry)) {
         upsertWorkActivity(std::move(entry), turnId);
         return;
+    }
+    if (entry.kind == QStringLiteral("user")) {
+        const int optimisticRow = matchingOptimisticUserRow(entry, turnId);
+        if (optimisticRow >= 0) {
+            Entry &optimistic = m_entries[optimisticRow];
+            const QString stableClientId = optimistic.id;
+            if (!entry.serverId.isEmpty())
+                m_rowsById.insert(entry.serverId, optimisticRow);
+            optimistic.serverId = entry.serverId;
+            optimistic.clientId = stableClientId;
+            optimistic.turnId = turnId;
+            optimistic.body = entry.body;
+            optimistic.status = QStringLiteral("sent");
+            optimistic.error = false;
+            optimistic.detail.clear();
+            emit dataChanged(index(optimisticRow), index(optimisticRow),
+                             {BodyRole, StatusRole, ErrorRole, DetailRole});
+            return;
+        }
     }
     if (entry.kind == QStringLiteral("user")
         && rowForId(entry.id) < 0
@@ -799,28 +902,42 @@ void CodexTimelineModel::updatePlan(const QString &turnId, const QJsonArray &pla
     upsertWorkActivity(std::move(entry), turnId);
 }
 
-void CodexTimelineModel::completeWork(const QString &turnId, qint64 durationMs)
+void CodexTimelineModel::completeWork(const QString &turnId, qint64 durationMs,
+                                      const QString &terminalStatus,
+                                      const QString &failureMessage)
 {
     const QString resolvedTurnId = turnId.isEmpty()
         ? QStringLiteral("current") : turnId;
     const QString groupId = workGroupId(resolvedTurnId);
     finishWorkGroup(groupId,
                     m_workSegmentCounts.value(resolvedTurnId, 1) > 1
-                        ? -1 : durationMs);
+                        ? -1 : durationMs,
+                    terminalStatus, failureMessage);
 }
 
-void CodexTimelineModel::finishWorkGroup(const QString &groupId, qint64 durationMs)
+void CodexTimelineModel::finishWorkGroup(const QString &groupId,
+                                         qint64 durationMs,
+                                         const QString &terminalStatus,
+                                         const QString &failureMessage)
 {
     const int row = rowForId(groupId);
     if (row < 0)
         return;
     Entry &work = m_entries[row];
     work.running = false;
-    work.status = QStringLiteral("completed");
+    work.status = terminalStatus.isEmpty()
+        ? QStringLiteral("completed") : terminalStatus;
+    work.error = work.status == QStringLiteral("failed");
+    work.detail = failureMessage;
     work.elapsed = durationMs >= 0 ? formatDuration(durationMs) : QString();
-    work.title = work.elapsed.isEmpty()
-        ? QStringLiteral("Worked")
-        : QStringLiteral("Worked for %1").arg(work.elapsed);
+    if (work.status == QStringLiteral("failed"))
+        work.title = QStringLiteral("Stopped with an error");
+    else if (work.status == QStringLiteral("interrupted"))
+        work.title = QStringLiteral("Stopped");
+    else
+        work.title = work.elapsed.isEmpty()
+            ? QStringLiteral("Worked")
+            : QStringLiteral("Worked for %1").arg(work.elapsed);
     for (QVariant &value : work.activities) {
         QVariantMap activity = value.toMap();
         activity.insert(QStringLiteral("running"), false);
@@ -828,7 +945,8 @@ void CodexTimelineModel::finishWorkGroup(const QString &groupId, qint64 duration
     }
     if (!m_rebuilding)
         emit dataChanged(index(row), index(row),
-                         {TitleRole, StatusRole, RunningRole, ActivitiesRole, ElapsedRole});
+                         {TitleRole, DetailRole, StatusRole, RunningRole,
+                          ErrorRole, ActivitiesRole, ElapsedRole});
 }
 
 void CodexTimelineModel::appendError(const QString &message)
@@ -1051,9 +1169,12 @@ void CodexTimelineModel::startHistoricalWorkSegment(const QString &turnId,
 void CodexTimelineModel::rebuildRowIndex()
 {
     m_rowsById.clear();
-    m_rowsById.reserve(m_entries.size());
-    for (int row = 0; row < m_entries.size(); ++row)
+    m_rowsById.reserve(m_entries.size() * 2);
+    for (int row = 0; row < m_entries.size(); ++row) {
         m_rowsById.insert(m_entries.at(row).id, row);
+        if (!m_entries.at(row).serverId.isEmpty())
+            m_rowsById.insert(m_entries.at(row).serverId, row);
+    }
 }
 
 void CodexTimelineModel::removeEntryAt(int row)
@@ -1080,20 +1201,70 @@ bool CodexTimelineModel::isDuplicateProtocolUserMessage(const Entry &entry) cons
         && previous.body == entry.body;
 }
 
+int CodexTimelineModel::matchingOptimisticUserRow(
+    const Entry &entry,
+    const QString &turnId) const
+{
+    if (entry.kind != QStringLiteral("user") || entry.body.isEmpty())
+        return -1;
+
+    if (!entry.clientId.isEmpty()) {
+        const int clientRow = rowForId(entry.clientId);
+        if (clientRow >= 0)
+            return clientRow;
+    }
+    if (!entry.serverId.isEmpty()) {
+        const int serverRow = rowForId(entry.serverId);
+        if (serverRow >= 0)
+            return serverRow;
+    }
+
+    for (int row = 0; row < m_entries.size(); ++row) {
+        const Entry &candidate = m_entries.at(row);
+        if (candidate.kind != QStringLiteral("user")
+            || candidate.clientId.isEmpty()
+            || !candidate.serverId.isEmpty()
+            || candidate.body != entry.body
+            || (candidate.status != QStringLiteral("sending")
+                && candidate.status != QStringLiteral("sent"))) {
+            continue;
+        }
+        if (turnId.isEmpty() || candidate.turnId.isEmpty()
+            || candidate.turnId == turnId) {
+            return row;
+        }
+    }
+    return -1;
+}
+
 void CodexTimelineModel::insertOrReplace(Entry entry)
 {
-    const int row = rowForId(entry.id);
+    int row = rowForId(entry.id);
+    if (row < 0 && !entry.serverId.isEmpty())
+        row = rowForId(entry.serverId);
     if (row < 0) {
         beginInsertRows({}, m_entries.size(), m_entries.size());
         m_entries.append(std::move(entry));
         m_rowsById.insert(m_entries.constLast().id, m_entries.size() - 1);
+        if (!m_entries.constLast().serverId.isEmpty())
+            m_rowsById.insert(m_entries.constLast().serverId,
+                              m_entries.size() - 1);
         endInsertRows();
         return;
     }
     const QString streamedBody = m_entries.at(row).body;
+    const Entry previous = m_entries.at(row);
     if (entry.body.isEmpty() && !streamedBody.isEmpty())
         entry.body = streamedBody;
+    if (previous.kind == QStringLiteral("user")
+        && !previous.clientId.isEmpty()) {
+        entry.id = previous.id;
+        entry.clientId = previous.clientId;
+        if (entry.serverId.isEmpty())
+            entry.serverId = previous.serverId;
+    }
     m_entries[row] = std::move(entry);
+    rebuildRowIndex();
     emit dataChanged(index(row), index(row));
 }
 
@@ -1188,6 +1359,7 @@ CodexTimelineModel::Entry CodexTimelineModel::fromItem(const QJsonObject &item,
 {
     Entry entry;
     entry.id = item.value(QStringLiteral("id")).toString();
+    entry.serverId = entry.id;
     entry.kind = item.value(QStringLiteral("type")).toString();
     entry.phase = item.value(QStringLiteral("phase")).toString();
     entry.status = item.value(QStringLiteral("status")).toString();

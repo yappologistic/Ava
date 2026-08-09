@@ -8,6 +8,8 @@ Item {
     required property var activities
     required property bool running
     required property string elapsed
+    required property string status
+    required property string failureMessage
 
     signal openUrlRequested(string url)
 
@@ -22,7 +24,10 @@ Item {
     readonly property bool compactingOnly: running && compacting
                                                    && activities.length === 1
 
-    implicitHeight: header.height
+    readonly property bool failed: status === "failed"
+    readonly property bool interrupted: status === "interrupted"
+
+    implicitHeight: header.height + failureNotice.height
                     + (expanded && !compactingOnly
                        ? activityColumn.implicitHeight + 8 : 0)
     clip: true
@@ -64,11 +69,14 @@ Item {
             anchors.leftMargin: root.running ? 8 : 0
             anchors.verticalCenter: parent.verticalCenter
             text: root.running ? (root.compacting ? "Compacting…" : "Thinking…")
+                               : (root.failed ? "Stopped with an error"
+                               : (root.interrupted ? "Stopped"
                                : (root.compacting ? "Context compacted"
                                : (root.elapsed.length > 0
                                   ? "Worked for " + root.elapsed : "Worked")
-                               )
-            color: headerHover.hovered ? "#aaaab1" : "#777780"
+                               )))
+            color: root.failed ? "#b9827e"
+                               : (headerHover.hovered ? "#aaaab1" : "#777780")
             font.family: uiFont
             font.pixelSize: 11
 
@@ -104,10 +112,27 @@ Item {
         }
     }
 
+    Text {
+        id: failureNotice
+        y: header.height
+        width: parent.width
+        height: visible ? implicitHeight + 4 : 0
+        visible: root.failed && root.failureMessage.length > 0
+        text: root.failureMessage
+        color: "#8f6d6a"
+        wrapMode: Text.Wrap
+        maximumLineCount: 2
+        elide: Text.ElideRight
+        lineHeight: 1.3
+        lineHeightMode: Text.ProportionalHeight
+        font.family: uiFont
+        font.pixelSize: 10
+    }
+
     Column {
         id: activityColumn
         x: 0
-        y: header.height
+        y: header.height + failureNotice.height
         width: parent.width
         spacing: 12
         visible: root.expanded && !root.compactingOnly

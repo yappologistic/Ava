@@ -113,7 +113,8 @@ public slots:
     void startNewChat(bool useWorktree);
     void selectThread(int row);
     void refreshThreads();
-    void sendMessage(const QString &text);
+    bool sendMessage(const QString &text);
+    void retryMessage(const QString &clientMessageId);
     void interrupt();
     void approveOnce();
     void approveForSession();
@@ -179,11 +180,13 @@ private:
     void flushDeltas();
     void queueItemDelta(const QString &kind, const QJsonObject &params,
                         bool detail = false);
-    void requestThreadStart(const QString &context);
+    bool requestThreadStart(const QString &context);
     void startPendingReview();
     void resetContextUsage();
     void requestThreadSearch();
     void updateElapsed();
+    void handleConnectionStateChanged();
+    void failActiveRequest(const QString &message, bool connectionLost);
     void resumeThread(const QString &threadId, const QString &cwd = {});
     QJsonArray buildInput(const QString &text, const QString &messageId) const;
     static QString concise(const QString &text, int maximum = 160);
@@ -210,6 +213,7 @@ private:
     QHash<QString, PendingItemDelta> m_pendingDeltas;
     QHash<qint64, QString> m_requestContext;
     QJsonArray m_threadSnapshot;
+    QJsonArray m_pendingInput;
     QJsonValue m_approvalRequestId;
     QJsonValue m_userInputRequestId;
     QString m_approvalMethod;
@@ -229,6 +233,10 @@ private:
     QString m_pendingReviewThreadId;
     QString m_threadSearchQuery;
     QString m_activeClientMessageId;
+    QStringList m_activeTurnClientMessageIds;
+    QHash<QString, QJsonArray> m_retryInputs;
+    QString m_turnFailureMessage;
+    QString m_reconnectThreadId;
     QString m_selectedModel;
     QString m_selectedEffort;
     QString m_diffText;
@@ -255,4 +263,6 @@ private:
     bool m_threadSearchPending = false;
     bool m_compactionRequested = false;
     bool m_visualTestMode = false;
+    bool m_connectionWasReady = false;
+    bool m_reconnectRequested = false;
 };
