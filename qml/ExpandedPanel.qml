@@ -133,7 +133,8 @@ Item {
     }
 
     function utilityMenuName(index) {
-        const names = ["Codex", "Timer", "Dwindle", "Sound", "Pin", "Wallpaper"]
+        const names = ["Codex", "Timer", "Dwindle", "Sound", "Pin", "Wallpaper",
+                       controller.pillMode ? "Pill Mode" : "Notch Mode"]
         return names[Math.max(0, Math.min(names.length - 1, index))]
     }
 
@@ -148,6 +149,8 @@ Item {
             return controller.pinned
         if (index === 5)
             return controller.wallpaperPanelOpen
+        if (index === 6)
+            return controller.pillMode
         return false
     }
 
@@ -164,6 +167,8 @@ Item {
             controller.togglePinned()
         else if (index === 5)
             controller.openWallpaperPanel()
+        else if (index === 6)
+            controller.togglePillMode()
     }
 
     function stepUtility(direction) {
@@ -1244,12 +1249,13 @@ Item {
 
             ListModel {
                 id: utilityMenu
-                ListElement { utilityIndex: 0; iconPath: "../assets/icons/codex-terminal-light.svg"; invertedPath: ""; usesDwindle: false }
-                ListElement { utilityIndex: 1; iconPath: "../assets/icons/timer-light.svg"; invertedPath: "../assets/icons/timer-dark.svg"; usesDwindle: false }
-                ListElement { utilityIndex: 2; iconPath: ""; invertedPath: ""; usesDwindle: true }
-                ListElement { utilityIndex: 3; iconPath: "../assets/icons/speaker-light.svg"; invertedPath: "../assets/icons/speaker-muted-dark.svg"; usesDwindle: false }
-                ListElement { utilityIndex: 4; iconPath: "../assets/icons/pin-light.svg"; invertedPath: "../assets/icons/pin-off-dark.svg"; usesDwindle: false }
-                ListElement { utilityIndex: 5; iconPath: "../assets/icons/wallpaper-light.svg"; invertedPath: "../assets/icons/wallpaper-dark.svg"; usesDwindle: false }
+                ListElement { utilityIndex: 0; iconPath: "../assets/icons/codex-terminal-light.svg"; invertedPath: ""; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 1; iconPath: "../assets/icons/timer-light.svg"; invertedPath: "../assets/icons/timer-dark.svg"; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 2; iconPath: ""; invertedPath: ""; usesDwindle: true; usesShellMode: false }
+                ListElement { utilityIndex: 3; iconPath: "../assets/icons/speaker-light.svg"; invertedPath: "../assets/icons/speaker-muted-dark.svg"; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 4; iconPath: "../assets/icons/pin-light.svg"; invertedPath: "../assets/icons/pin-off-dark.svg"; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 5; iconPath: "../assets/icons/wallpaper-light.svg"; invertedPath: "../assets/icons/wallpaper-dark.svg"; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 6; iconPath: ""; invertedPath: ""; usesDwindle: false; usesShellMode: true }
             }
 
             Item {
@@ -1312,14 +1318,23 @@ Item {
                         required property string iconPath
                         required property string invertedPath
                         required property bool usesDwindle
+                        required property bool usesShellMode
                         readonly property int menuDistance: Math.abs(index - root.utilityMenuIndex)
                         width: 25
                         height: 25
                         iconOnly: true
                         quiet: true
                         dwindleMorph: usesDwindle
-                        iconSource: iconPath.length > 0 ? Qt.resolvedUrl(iconPath) : ""
-                        invertedIconSource: invertedPath.length > 0 ? Qt.resolvedUrl(invertedPath) : ""
+                        iconSource: usesShellMode
+                                    ? Qt.resolvedUrl(controller.pillMode
+                                                     ? "../assets/icons/shell-pill-light.svg"
+                                                     : "../assets/icons/shell-notch-light.svg")
+                                    : (iconPath.length > 0 ? Qt.resolvedUrl(iconPath) : "")
+                        invertedIconSource: usesShellMode
+                                            ? Qt.resolvedUrl(controller.pillMode
+                                                             ? "../assets/icons/shell-pill-dark.svg"
+                                                             : "../assets/icons/shell-notch-dark.svg")
+                                            : (invertedPath.length > 0 ? Qt.resolvedUrl(invertedPath) : "")
                         iconSize: usesDwindle ? 15 : 14
                         selected: root.utilityMenuIsActive(utilityIndex)
                         baseScale: root.utilityIconScale(menuDistance)

@@ -5,6 +5,8 @@ Item {
     id: root
 
     property color surfaceColor: "#000000"
+    property bool pillMode: false
+    property real pillRadius: height / 2
     property real bottomRadius: 24
     property real earWidth: 16
     property real earDepth: 20
@@ -14,8 +16,17 @@ Item {
     readonly property real roundKappa: 0.5522847498
     readonly property real earKappa: 0.54
 
+    Rectangle {
+        anchors.fill: parent
+        visible: root.pillMode
+        color: root.surfaceColor
+        radius: Math.min(root.pillRadius, height / 2, width / 2)
+        antialiasing: true
+    }
+
     Shape {
         anchors.fill: parent
+        visible: !root.pillMode
         antialiasing: true
 
         ShapePath {

@@ -37,17 +37,29 @@ static QPainterPath islandSurfacePath(QQuickWindow *window, QObject *root)
     const qreal bodyWidth = root->property("islandVisualWidth").toReal();
     const qreal height = root->property("surfaceHeight").toReal();
     const qreal radius = root->property("dynamicCornerRadius").toReal();
+    const qreal pillRadius = root->property("pillCornerRadius").toReal();
     const qreal earWidth = root->property("dynamicEarWidth").toReal();
     const qreal earDepth = root->property("dynamicEarDepth").toReal();
+    const qreal top = root->property("islandSurfaceTop").toReal();
+    const bool pillMode = root->property("pillMode").toBool();
 
     constexpr qreal earKappa = 0.54;
     constexpr qreal roundKappa = 0.5522847498;
-    const qreal left = (window->width() - bodyWidth) / 2.0 - earWidth;
+    const qreal left = (window->width() - bodyWidth) / 2.0 - (pillMode ? 0.0 : earWidth);
     const qreal right = left + bodyWidth + earWidth * 2.0;
     const qreal bodyLeft = left + earWidth;
     const qreal bodyRight = right - earWidth;
 
     QPainterPath path;
+    if (pillMode) {
+        const qreal boundedRadius = qBound<qreal>(0.0,
+                                                  pillRadius,
+                                                  qMin(bodyWidth, height) / 2.0);
+        path.addRoundedRect(QRectF(left, top, bodyWidth, height),
+                            boundedRadius,
+                            boundedRadius);
+        return path;
+    }
     path.moveTo(left, 0.0);
     path.lineTo(right, 0.0);
     path.cubicTo(right - earWidth * earKappa,

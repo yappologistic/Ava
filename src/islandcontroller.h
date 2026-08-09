@@ -13,6 +13,7 @@ class IslandController final : public QObject
 
     Q_PROPERTY(bool expanded READ expanded WRITE setExpanded NOTIFY expandedChanged)
     Q_PROPERTY(bool pinned READ pinned WRITE setPinned NOTIFY pinnedChanged)
+    Q_PROPERTY(bool pillMode READ pillMode WRITE setPillMode NOTIFY pillModeChanged)
     Q_PROPERTY(bool reducedMotion READ reducedMotion NOTIFY reducedMotionChanged)
 
     Q_PROPERTY(QString timeText READ timeText NOTIFY clockChanged)
@@ -67,6 +68,7 @@ public:
 
     bool expanded() const { return m_expanded; }
     bool pinned() const { return m_pinned; }
+    bool pillMode() const { return m_pillMode; }
     bool reducedMotion() const { return m_reducedMotion; }
 
     QString timeText() const { return m_timeText; }
@@ -120,6 +122,8 @@ public slots:
     void toggleExpanded();
     void setPinned(bool pinned);
     void togglePinned();
+    void setPillMode(bool pillMode);
+    void togglePillMode();
 
     void openTimer();
     void closeTimer();
@@ -147,6 +151,7 @@ public slots:
 signals:
     void expandedChanged();
     void pinnedChanged();
+    void pillModeChanged();
     void reducedMotionChanged();
     void clockChanged();
     void timerChanged();
@@ -185,6 +190,7 @@ private:
 
     bool m_expanded = false;
     bool m_pinned = false;
+    bool m_pillMode = false;
     bool m_reducedMotion = false;
 
     QString m_timeText;

@@ -540,6 +540,7 @@ struct IslandController::PlatformState
 IslandController::IslandController(QObject *parent)
     : QObject(parent), m_platform(std::make_shared<PlatformState>())
 {
+    m_pillMode = QSettings().value(QStringLiteral("appearance/pillMode"), false).toBool();
     m_wallpaperIndex = qBound(0,
                               QSettings().value(QStringLiteral("wallpaper/index"), 0).toInt(),
                               static_cast<int>(wallpaperDefinitions.size()) - 1);
@@ -607,6 +608,21 @@ void IslandController::setPinned(bool pinned)
 void IslandController::togglePinned()
 {
     setPinned(!m_pinned);
+}
+
+void IslandController::setPillMode(bool pillMode)
+{
+    if (m_pillMode == pillMode) {
+        return;
+    }
+    m_pillMode = pillMode;
+    QSettings().setValue(QStringLiteral("appearance/pillMode"), m_pillMode);
+    emit pillModeChanged();
+}
+
+void IslandController::togglePillMode()
+{
+    setPillMode(!m_pillMode);
 }
 
 void IslandController::openTimer()

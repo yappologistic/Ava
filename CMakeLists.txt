@@ -168,6 +168,10 @@ qt_add_qml_module(Ava
         assets/icons/codex-complete-green.svg
         assets/icons/wallpaper-light.svg
         assets/icons/wallpaper-dark.svg
+        assets/icons/shell-notch-light.svg
+        assets/icons/shell-notch-dark.svg
+        assets/icons/shell-pill-light.svg
+        assets/icons/shell-pill-dark.svg
         assets/wallpapers/runtime/01-alpine-first-light.jpg
         assets/wallpapers/runtime/02-volcanic-coast-after-rain.jpg
         assets/wallpapers/runtime/03-redwood-creek-mist.jpg

@@ -32,7 +32,8 @@ Window {
     readonly property int codexPeekWidth: 242
     readonly property int canvasWidth: expandedWidth + 40
     readonly property int canvasHeight: Math.max(wallpaperExpandedHeight,
-                                                  launcherExpandedHeight) + 10
+                                                  launcherExpandedHeight)
+                                                + islandSurfaceTop + 10
     readonly property bool launcherOpen: appLauncher.open
     readonly property bool dragActive: dropTarget.containsDrag
     property bool shellExpandedVisual: controller.expanded || appLauncher.open
@@ -84,14 +85,21 @@ Window {
     readonly property real closeHeightDamping: 0.78
 
     readonly property real surfaceHeight: islandVisualHeight
+    readonly property bool pillMode: controller.pillMode
+    readonly property real islandSurfaceTop: pillMode ? 8 : 0
     readonly property real morphProgress: Math.max(0, Math.min(1,
         (surfaceHeight - compactHeight) / (baseExpandedHeight - compactHeight)))
     readonly property real dynamicCornerRadius: 17 + 11 * Math.sqrt(morphProgress)
+    readonly property real pillCornerRadius: Math.min(surfaceHeight / 2,
+        19.5 + 8.5 * Math.sqrt(morphProgress))
     readonly property real dynamicEarWidth: 9 + 7 * Math.sqrt(morphProgress)
                                              + hoverTension * 2
     readonly property real dynamicEarDepth: 9 + 9 * Math.sqrt(morphProgress)
-    readonly property real islandCaptureWidth: islandVisualWidth + dynamicEarWidth * 2
-    readonly property real islandCaptureHeight: islandVisualHeight + 8
+    readonly property real shellHorizontalOverflow: pillMode ? 0 : dynamicEarWidth
+    readonly property real islandCaptureWidth: islandVisualWidth
+                                               + shellHorizontalOverflow * 2
+    readonly property real islandCaptureHeight: islandSurfaceTop
+                                                + islandVisualHeight + 8
     readonly property bool nativeInputMaskEnabled: !qaMode && !automationMode
     readonly property bool keyboardCaptureArmed: appLauncher.open
                                                   || (codexBridge.panelOpen
@@ -417,6 +425,7 @@ Window {
     Item {
         id: islandHost
         anchors.top: parent.top
+        anchors.topMargin: window.islandSurfaceTop
         anchors.horizontalCenter: parent.horizontalCenter
         width: window.islandVisualWidth
         height: window.islandVisualHeight
@@ -426,10 +435,12 @@ Window {
         NotchSurface {
             id: surface
             z: 1
-            x: -window.dynamicEarWidth
-            width: parent.width + window.dynamicEarWidth * 2
+            x: -window.shellHorizontalOverflow
+            width: parent.width + window.shellHorizontalOverflow * 2
             height: window.surfaceHeight
             surfaceColor: colors.black
+            pillMode: window.pillMode
+            pillRadius: window.pillCornerRadius
             bottomRadius: window.dynamicCornerRadius
             earWidth: window.dynamicEarWidth
             earDepth: window.dynamicEarDepth
@@ -449,8 +460,8 @@ Window {
         MouseArea {
             id: shellInput
             z: 2
-            x: -window.dynamicEarWidth
-            width: parent.width + window.dynamicEarWidth * 2
+            x: -window.shellHorizontalOverflow
+            width: parent.width + window.shellHorizontalOverflow * 2
             height: window.surfaceHeight
             acceptedButtons: Qt.LeftButton
             cursorShape: Qt.PointingHandCursor
@@ -1277,8 +1288,8 @@ Window {
         DropArea {
             id: dropTarget
             z: 10
-            x: -window.dynamicEarWidth
-            width: parent.width + window.dynamicEarWidth * 2
+            x: -window.shellHorizontalOverflow
+            width: parent.width + window.shellHorizontalOverflow * 2
             height: window.surfaceHeight
             keys: ["text/uri-list"]
             onDropped: function(drop) {

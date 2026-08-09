@@ -11,6 +11,8 @@ There is no demo or placeholder state. Ava reads and controls real Windows servi
 ## Features
 
 - Compact always-on-top clock using the bundled Inter typeface.
+- Switchable Notch and Pill shell modes; Pill Mode keeps every interaction while
+  floating below the screen edge with consistent rounding on all four corners.
 - Apple-inspired timer with a snapping minute ruler, compact countdown, progress ring, pause/resume, cancel, add-one-minute, and a real Windows completion alert.
 - Live media title, artist, artwork, source-app icon, playback state, seekable timeline, transport controls, directional track handoffs, and a five-bar real Windows output-level indicator colored from the current artwork.
 - Windows Core Audio volume and mute controls.
@@ -24,6 +26,8 @@ There is no demo or placeholder state. Ava reads and controls real Windows servi
 
 - Hover over Ava for 280 ms or click it to expand.
 - Move away for 560 ms to collapse, unless it is pinned.
+- Open the utility carousel and choose the shell-mode item to switch between
+  Notch Mode and Pill Mode. Ava remembers the selection across restarts.
 - Open the timer from the right-side utility controls, select a duration on the ruler, and choose **Start Timer**.
 - Enable or disable Dwindle tiling from the utility controls or press `Win+Alt+T`.
 - Resize a tiled window along an internal edge to adjust its split.
