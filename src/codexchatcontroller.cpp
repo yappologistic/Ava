@@ -113,6 +113,8 @@ CodexChatController::CodexChatController(CodexAppServerClient *client,
     });
     connect(&m_git, &CodexGitManager::environmentFailed, this,
             [this](const QString &message) { setError(message); });
+    connect(&m_git, &CodexGitManager::changesChanged,
+            this, &CodexChatController::diffChanged);
 
     loadSettings();
     initializeConnections();

@@ -99,7 +99,11 @@ public:
     QString selectedModelName() const;
     QString selectedEffort() const { return m_selectedEffort; }
     QStringList availableEfforts() const;
-    QString diffText() const { return m_diffText; }
+    QString diffText() const
+    {
+        return m_diffText.isEmpty() && m_git.hasChanges()
+            ? QStringLiteral("Git changes detected") : m_diffText;
+    }
     QString approvalTitle() const { return m_approvalTitle; }
     QString approvalDetail() const { return m_approvalDetail; }
     QString userInputHeader() const { return m_userInputHeader; }
