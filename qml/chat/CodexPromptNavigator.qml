@@ -8,6 +8,7 @@ Item {
     property int activePromptIndex: -1
     property int hoveredPromptIndex: -1
     property bool enabledByLayout: true
+    property real previewOffset: 42
 
     signal jumpRequested(int sourceRow, string itemId)
 
@@ -21,7 +22,7 @@ Item {
             ? markerList.itemAtIndex(hoveredPromptIndex) : null
     }
 
-    width: hoveredItem ? 354 : 44
+    width: hoveredItem ? previewOffset + 312 : 44
     visible: enabledByLayout && itemCount >= 2
     z: 30
 
@@ -75,9 +76,10 @@ Item {
     ListView {
         id: markerList
         x: 4
-        y: 22
         width: 40
-        height: Math.max(1, root.height - 44)
+        height: Math.min(Math.max(1, root.height - 44), 216)
+        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenterOffset: 22
         model: root.promptModel
         spacing: 4
         clip: true
@@ -191,7 +193,7 @@ Item {
         id: preview
         readonly property var item: root.hoveredItem
 
-        x: 42
+        x: root.previewOffset
         y: item ? Math.max(0, Math.min(root.height - height,
                                       item.mapToItem(root, 0, item.height / 2).y
                                       + markerList.contentY * 0 - height / 2)) : 0

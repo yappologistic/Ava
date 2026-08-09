@@ -3,6 +3,7 @@
 #include "codexappserverclient.h"
 #include "codexgitmanager.h"
 #include "codexmodels.h"
+#include "codexthreadsnapshotstore.h"
 
 #include <QElapsedTimer>
 #include <QHash>
@@ -57,6 +58,9 @@ class CodexChatController final : public QObject
     Q_PROPERTY(int contextUsagePercent READ contextUsagePercent NOTIFY usageChanged)
     Q_PROPERTY(QString threadSearchQuery READ threadSearchQuery NOTIFY threadSearchChanged)
     Q_PROPERTY(bool threadSearchPending READ threadSearchPending NOTIFY threadSearchChanged)
+    Q_PROPERTY(bool restoringThread READ restoringThread NOTIFY restoreMetricsChanged)
+    Q_PROPERTY(qint64 restoreFirstPaintMs READ restoreFirstPaintMs NOTIFY restoreMetricsChanged)
+    Q_PROPERTY(qint64 restoreTotalMs READ restoreTotalMs NOTIFY restoreMetricsChanged)
 
 public:
     explicit CodexChatController(QObject *parent = nullptr);
@@ -107,6 +111,9 @@ public:
     int contextUsagePercent() const;
     QString threadSearchQuery() const { return m_threadSearchQuery; }
     bool threadSearchPending() const { return m_threadSearchPending; }
+    bool restoringThread() const { return m_threadRestoreInFlight; }
+    qint64 restoreFirstPaintMs() const { return m_restoreFirstPaintMs; }
+    qint64 restoreTotalMs() const { return m_restoreTotalMs; }
 
 public slots:
     void setProjectPath(const QString &path);
@@ -139,6 +146,9 @@ public slots:
     void compactThread();
     void setThreadSearchQuery(const QString &query);
     void clearThreadSearch();
+    void saveThreadViewport(const QString &itemId,
+                            qreal offset,
+                            bool followLiveEdge);
     void setVisualTestState(const QString &state);
 
 signals:
@@ -152,9 +162,13 @@ signals:
     void attachmentsChanged();
     void usageChanged();
     void threadSearchChanged();
+    void restoreMetricsChanged();
     void requestProjectSelection();
     void requestAttention();
     void messageSubmitted(const QString &clientMessageId);
+    void viewportRestoreRequested(const QString &itemId,
+                                  qreal offset,
+                                  bool followLiveEdge);
     void turnCompleted(const QString &threadId, bool success);
 
 private:
@@ -188,6 +202,20 @@ private:
     void handleConnectionStateChanged();
     void failActiveRequest(const QString &message, bool connectionLost);
     void resumeThread(const QString &threadId, const QString &cwd = {});
+    void requestLatestThreadTurns(const QString &threadId,
+                                  const QString &cwd,
+                                  bool applyToTimeline,
+                                  quint64 generation,
+                                  const QString &cursor = {},
+                                  int page = 0);
+    void refreshCurrentThreadSnapshot();
+    void cacheThread(const QJsonObject &thread);
+    QJsonObject threadFromTurns(const QString &threadId,
+                                const QString &cwd,
+                                const QJsonArray &newestFirstTurns) const;
+    void noteRestoreFirstPaint(const char *source);
+    void finishThreadRestore(const QJsonObject &thread);
+    bool notificationTargetsCurrentThread(const QJsonObject &params) const;
     QJsonArray buildInput(const QString &text, const QString &messageId) const;
     static QString concise(const QString &text, int maximum = 160);
 
@@ -199,10 +227,13 @@ private:
     CodexModelListModel m_models;
     CodexAttachmentModel m_attachments;
     CodexGitManager m_git;
+    CodexThreadSnapshotStore m_threadCache;
     QTimer m_deltaTimer;
     QTimer m_elapsedTimer;
     QTimer m_threadSearchTimer;
+    QTimer m_snapshotFlushTimer;
     QElapsedTimer m_turnElapsed;
+    QElapsedTimer m_restoreElapsed;
     struct PendingItemDelta {
         QString itemId;
         QString turnId;
@@ -211,8 +242,18 @@ private:
         QString detail;
     };
     QHash<QString, PendingItemDelta> m_pendingDeltas;
+    struct RestoreRequest {
+        quint64 generation = 0;
+        QString threadId;
+        QString cwd;
+        bool applyToTimeline = false;
+        bool authoritative = false;
+        int page = 0;
+    };
+    QHash<qint64, RestoreRequest> m_restoreRequests;
     QHash<qint64, QString> m_requestContext;
     QJsonArray m_threadSnapshot;
+    QJsonArray m_progressiveRestoreTurns;
     QJsonArray m_pendingInput;
     QJsonValue m_approvalRequestId;
     QJsonValue m_userInputRequestId;
@@ -252,6 +293,10 @@ private:
     int m_userInputIndex = 0;
     qint64 m_contextTokens = 0;
     qint64 m_contextWindow = 0;
+    qint64 m_restoreFirstPaintMs = -1;
+    qint64 m_restoreTotalMs = -1;
+    quint64 m_restoreGeneration = 0;
+    quint64 m_authoritativeRestoreGeneration = 0;
     bool m_authenticated = false;
     bool m_turnActive = false;
     bool m_startingTurn = false;
@@ -265,4 +310,5 @@ private:
     bool m_visualTestMode = false;
     bool m_connectionWasReady = false;
     bool m_reconnectRequested = false;
+    bool m_threadRestoreInFlight = false;
 };

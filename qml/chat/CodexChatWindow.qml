@@ -48,6 +48,7 @@ ApplicationWindow {
     function selectThreadRow(row) {
         if (row < 0)
             return
+        transcript.persistViewport()
         chatController.selectThread(row)
         if (threadSearchOpen) {
             threadSearchOpen = false
@@ -62,6 +63,7 @@ ApplicationWindow {
     }
 
     onClosing: function(close) {
+        transcript.persistViewport()
         if (chatController.busy) {
             close.accepted = false
             hide()
@@ -344,22 +346,27 @@ ApplicationWindow {
                     }
 
                     ChatIconButton {
+                        id: threadSearchAction
                         anchors.right: parent.right
                         anchors.rightMargin: 1
                         anchors.verticalCenter: parent.verticalCenter
-                        implicitWidth: 32
-                        implicitHeight: 32
+                        width: 32
+                        height: 32
                         symbol: chatController.threadSearchPending ? "\uE895" : "\uE711"
                         accessibleName: chatController.threadSearchPending
                                         ? "Searching conversations" : "Clear search"
                         enabled: !chatController.threadSearchPending
                         foregroundColor: "#777780"
-                        RotationAnimation on rotation {
+                        RotationAnimation on iconRotation {
                             running: chatController.threadSearchPending && !reducedMotion
                             from: 0
                             to: 360
                             duration: 850
                             loops: Animation.Infinite
+                            onRunningChanged: {
+                                if (!running)
+                                    threadSearchAction.iconRotation = 0
+                            }
                         }
                         onClicked: {
                             if (threadSearchField.text.length > 0)
@@ -657,6 +664,35 @@ ApplicationWindow {
                         viewportAnchorOffset = item.y - contentY
                     }
 
+                    function persistViewport() {
+                        if (!chatController.hasThread || count <= 0)
+                            return
+                        if (nearLiveEdge()) {
+                            chatController.saveThreadViewport("", 0, true)
+                            return
+                        }
+                        captureViewportAnchor()
+                        if (viewportAnchorItemId.length > 0)
+                            chatController.saveThreadViewport(
+                                viewportAnchorItemId, viewportAnchorOffset, false)
+                    }
+
+                    function restoreCachedViewport(itemId, offset, followLiveEdge) {
+                        if (followLiveEdge || itemId.length === 0) {
+                            scrollMode = "follow-end"
+                            scheduleLiveEdge()
+                            return
+                        }
+                        const row = chatController.timeline.rowForItem(itemId)
+                        if (row < 0)
+                            return
+                        scrollMode = "free"
+                        viewportAnchorItemId = itemId
+                        viewportAnchorOffset = offset
+                        positionViewAtIndex(row, ListView.Beginning)
+                        Qt.callLater(restoreViewportAnchor)
+                    }
+
                     function restoreViewportAnchor() {
                         viewportRestoreQueued = false
                         if (scrollMode !== "free" || viewportAnchorItemId.length === 0)
@@ -780,6 +816,7 @@ ApplicationWindow {
 
                     onMovementEnded: {
                         scrollMode = nearLiveEdge() ? "follow-end" : "free"
+                        persistViewport()
                     }
 
                     add: Transition {
@@ -811,9 +848,10 @@ ApplicationWindow {
                     readonly property real sideGutter: Math.max(
                         0, (transcript.width - laneWidth) / 2)
 
-                    x: Math.max(4, sideGutter - 44)
+                    x: Math.max(4, sideGutter - 88)
                     y: transcript.y
                     height: transcript.height
+                    previewOffset: Math.max(42, sideGutter - x)
                     promptModel: chatController.promptNavigator
                     activePromptIndex: transcript.activePromptIndex
                     enabledByLayout: sideGutter >= 48
@@ -1211,8 +1249,8 @@ ApplicationWindow {
         parent: Overlay.overlay
         x: window.sidebarOpen ? 12 : 56
         y: window.headerHeight + 50
-        width: 230
-        height: 112
+        width: 174
+        height: 100
         padding: 8
         modal: false
         focus: true
@@ -1222,7 +1260,7 @@ ApplicationWindow {
             spacing: 3
             ChatTextButton {
                 width: parent.width
-                height: 44
+                height: 40
                 text: "Local project"
                 enabled: chatController.hasProject
                 onClicked: {
@@ -1233,7 +1271,7 @@ ApplicationWindow {
             }
             ChatTextButton {
                 width: parent.width
-                height: 44
+                height: 40
                 text: "Isolated worktree"
                 enabled: chatController.hasProject
                 onClicked: {
@@ -1339,6 +1377,11 @@ ApplicationWindow {
         function onRequestProjectSelection() { folderDialog.open() }
         function onMessageSubmitted(clientMessageId) {
             transcript.anchorSubmittedMessage(clientMessageId)
+        }
+        function onViewportRestoreRequested(itemId, offset, followLiveEdge) {
+            Qt.callLater(function() {
+                transcript.restoreCachedViewport(itemId, offset, followLiveEdge)
+            })
         }
         function onTurnCompleted() {
             if (chatController.diffText.length > 0 && window.width >= 980)

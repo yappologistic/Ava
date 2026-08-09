@@ -33,12 +33,47 @@ QString textFromUserContent(const QJsonArray &content)
         const QString type = item.value(QStringLiteral("type")).toString();
         if (type == QStringLiteral("text"))
             parts.append(item.value(QStringLiteral("text")).toString());
-        else if (type == QStringLiteral("localImage") || type == QStringLiteral("mention"))
+        else if (type == QStringLiteral("mention"))
             parts.append(QFileInfo(item.value(QStringLiteral("path")).toString()).fileName());
-        else if (type == QStringLiteral("image"))
-            parts.append(QStringLiteral("Image"));
     }
     return parts.join(QStringLiteral("\n"));
+}
+
+QVariantList attachmentsFromUserContent(const QJsonArray &content)
+{
+    QVariantList attachments;
+    for (const QJsonValue &value : content) {
+        const QJsonObject item = value.toObject();
+        const QString type = item.value(QStringLiteral("type")).toString();
+        if (type != QStringLiteral("localImage")
+            && type != QStringLiteral("image")) {
+            continue;
+        }
+
+        const QString path = item.value(QStringLiteral("path")).toString();
+        QString previewUrl = item.value(QStringLiteral("url")).toString();
+        if (previewUrl.isEmpty())
+            previewUrl = item.value(QStringLiteral("imageUrl")).toString();
+
+        QString name = item.value(QStringLiteral("name")).toString();
+        if (!path.isEmpty()) {
+            const QFileInfo info(path);
+            if (name.isEmpty())
+                name = info.fileName();
+            if (previewUrl.isEmpty() && info.exists() && info.isFile())
+                previewUrl = QUrl::fromLocalFile(info.absoluteFilePath()).toString();
+        }
+        if (name.isEmpty())
+            name = QStringLiteral("Image");
+
+        attachments.append(QVariantMap{
+            {QStringLiteral("kind"), QStringLiteral("image")},
+            {QStringLiteral("name"), name},
+            {QStringLiteral("path"), path},
+            {QStringLiteral("previewUrl"), previewUrl}
+        });
+    }
+    return attachments;
 }
 
 QString compactNavigationPreview(const QString &text, int maximum = 320)
@@ -421,6 +456,7 @@ QVariant CodexTimelineModel::data(const QModelIndex &index, int role) const
     case AdditionsRole: return entry.additions;
     case DeletionsRole: return entry.deletions;
     case ActivitiesRole: return entry.activities;
+    case AttachmentsRole: return entry.attachments;
     case ElapsedRole: return entry.elapsed;
     default: return {};
     }
@@ -435,7 +471,8 @@ QHash<int, QByteArray> CodexTimelineModel::roleNames() const
             {TimestampRole, "timestamp"}, {RunningRole, "running"},
             {ErrorRole, "isError"}, {FileChangesRole, "fileChanges"},
             {AdditionsRole, "additions"}, {DeletionsRole, "deletions"},
-            {ActivitiesRole, "activities"}, {ElapsedRole, "elapsed"}};
+            {ActivitiesRole, "activities"}, {AttachmentsRole, "attachments"},
+            {ElapsedRole, "elapsed"}};
 }
 
 void CodexTimelineModel::clear()
@@ -505,8 +542,112 @@ void CodexTimelineModel::replaceFromThread(const QJsonObject &thread)
     endResetModel();
 }
 
+void CodexTimelineModel::reconcileFromThread(const QJsonObject &thread)
+{
+    CodexTimelineModel rebuilt;
+    rebuilt.replaceFromThread(thread);
+    QVector<Entry> next = std::move(rebuilt.m_entries);
+
+    if (m_entries.isEmpty()) {
+        if (next.isEmpty())
+            return;
+        beginInsertRows({}, 0, next.size() - 1);
+        m_entries = std::move(next);
+        endInsertRows();
+        m_activeWorkGroups = std::move(rebuilt.m_activeWorkGroups);
+        m_previousWorkGroups = std::move(rebuilt.m_previousWorkGroups);
+        m_workSegmentCounts = std::move(rebuilt.m_workSegmentCounts);
+        rebuildRowIndex();
+        return;
+    }
+
+    const int previousSize = m_entries.size();
+    const int extraRows = next.size() - previousSize;
+    bool currentIsSuffix = extraRows >= 0;
+    bool currentIsPrefix = extraRows >= 0;
+    if (extraRows >= 0) {
+        for (int row = 0; row < previousSize; ++row) {
+            if (m_entries.at(row).id != next.at(row + extraRows).id)
+                currentIsSuffix = false;
+            if (m_entries.at(row).id != next.at(row).id)
+                currentIsPrefix = false;
+            if (!currentIsSuffix && !currentIsPrefix)
+                break;
+        }
+    }
+
+    if (!currentIsSuffix && !currentIsPrefix) {
+        beginResetModel();
+        m_entries = std::move(next);
+        m_activeWorkGroups = std::move(rebuilt.m_activeWorkGroups);
+        m_previousWorkGroups = std::move(rebuilt.m_previousWorkGroups);
+        m_workSegmentCounts = std::move(rebuilt.m_workSegmentCounts);
+        rebuildRowIndex();
+        endResetModel();
+        return;
+    }
+
+    const bool prepend = currentIsSuffix;
+    const int matchedOffset = prepend ? extraRows : 0;
+    if (extraRows > 0 && prepend) {
+        beginInsertRows({}, 0, extraRows - 1);
+        QVector<Entry> merged;
+        merged.reserve(next.size());
+        for (int row = 0; row < extraRows; ++row)
+            merged.append(next.at(row));
+        for (Entry &entry : m_entries)
+            merged.append(std::move(entry));
+        m_entries = std::move(merged);
+        endInsertRows();
+    } else if (extraRows > 0) {
+        beginInsertRows({}, previousSize, next.size() - 1);
+        for (int row = previousSize; row < next.size(); ++row)
+            m_entries.append(next.at(row));
+        endInsertRows();
+    }
+
+    bool changed = extraRows > 0;
+    for (int itemIndex = 0; itemIndex < previousSize; ++itemIndex) {
+        const int row = itemIndex + matchedOffset;
+        const Entry &replacement = next.at(row);
+        Entry &current = m_entries[row];
+        if (current.kind == replacement.kind
+            && current.phase == replacement.phase
+            && current.title == replacement.title
+            && current.body == replacement.body
+            && current.detail == replacement.detail
+            && current.status == replacement.status
+            && current.cwd == replacement.cwd
+            && current.fileChanges == replacement.fileChanges
+            && current.activities == replacement.activities
+            && current.attachments == replacement.attachments
+            && current.elapsed == replacement.elapsed
+            && current.additions == replacement.additions
+            && current.deletions == replacement.deletions
+            && current.timestamp == replacement.timestamp
+            && current.running == replacement.running
+            && current.error == replacement.error) {
+            current.turnId = replacement.turnId;
+            current.clientId = replacement.clientId;
+            current.serverId = replacement.serverId;
+            current.sources = replacement.sources;
+            continue;
+        }
+        current = replacement;
+        changed = true;
+        emit dataChanged(index(row), index(row));
+    }
+
+    m_activeWorkGroups = std::move(rebuilt.m_activeWorkGroups);
+    m_previousWorkGroups = std::move(rebuilt.m_previousWorkGroups);
+    m_workSegmentCounts = std::move(rebuilt.m_workSegmentCounts);
+    if (changed)
+        rebuildRowIndex();
+}
+
 void CodexTimelineModel::beginOptimisticTurn(const QString &clientMessageId,
-                                             const QString &text)
+                                             const QString &text,
+                                             const QJsonArray &input)
 {
     if (clientMessageId.isEmpty() || text.isEmpty() || rowForId(clientMessageId) >= 0)
         return;
@@ -516,6 +657,7 @@ void CodexTimelineModel::beginOptimisticTurn(const QString &clientMessageId,
     message.kind = QStringLiteral("user");
     message.title = QStringLiteral("You");
     message.body = text;
+    message.attachments = attachmentsFromUserContent(input);
     message.status = QStringLiteral("sending");
     message.clientId = clientMessageId;
     message.timestamp = QDateTime::currentSecsSinceEpoch();
@@ -551,10 +693,11 @@ void CodexTimelineModel::beginOptimisticTurn(const QString &clientMessageId,
 
 void CodexTimelineModel::beginOptimisticSteer(const QString &clientMessageId,
                                               const QString &text,
-                                              const QString &turnId)
+                                              const QString &turnId,
+                                              const QJsonArray &input)
 {
     if (turnId.isEmpty()) {
-        beginOptimisticTurn(clientMessageId, text);
+        beginOptimisticTurn(clientMessageId, text, input);
         return;
     }
     if (clientMessageId.isEmpty() || text.isEmpty() || rowForId(clientMessageId) >= 0)
@@ -564,7 +707,7 @@ void CodexTimelineModel::beginOptimisticSteer(const QString &clientMessageId,
     if (rowForId(previousGroup) >= 0)
         finishWorkGroup(previousGroup);
 
-    beginOptimisticTurn(clientMessageId, text);
+    beginOptimisticTurn(clientMessageId, text, input);
     const QString pendingId = QStringLiteral("work:pending:") + clientMessageId;
     const int pendingRow = rowForId(pendingId);
     if (pendingRow < 0)
@@ -979,6 +1122,11 @@ int CodexTimelineModel::rowForItem(const QString &id) const
     return rowForId(id);
 }
 
+QString CodexTimelineModel::itemIdAt(int row) const
+{
+    return row >= 0 && row < m_entries.size() ? m_entries.at(row).id : QString();
+}
+
 int CodexTimelineModel::rowForId(const QString &id) const
 {
     const auto iterator = m_rowsById.constFind(id);
@@ -1377,7 +1525,9 @@ CodexTimelineModel::Entry CodexTimelineModel::fromItem(const QJsonObject &item,
             entry.id = clientId;
         entry.kind = QStringLiteral("user");
         entry.title = QStringLiteral("You");
-        entry.body = textFromUserContent(item.value(QStringLiteral("content")).toArray());
+        const QJsonArray content = item.value(QStringLiteral("content")).toArray();
+        entry.body = textFromUserContent(content);
+        entry.attachments = attachmentsFromUserContent(content);
         entry.running = false;
     } else if (entry.kind == QStringLiteral("agentMessage")) {
         entry.kind = QStringLiteral("agent");

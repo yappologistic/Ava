@@ -1,5 +1,6 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
+import QtQuick.Effects 6.5
 import Ava.Chat.Native 1.0
 
 Item {
@@ -20,6 +21,7 @@ Item {
     required property int additions
     required property int deletions
     required property var activities
+    required property var attachments
     required property string elapsed
 
     property bool navigationHighlighted: false
@@ -39,6 +41,9 @@ Item {
     readonly property int laneX: Math.max(24, (width - laneWidth) / 2)
     readonly property int contentWidth: kind === "user"
                                         ? Math.min(laneWidth, 650) : laneWidth
+    readonly property bool hasImageAttachments: kind === "user"
+                                                && attachments
+                                                && attachments.length > 0
 
     function fileTint(extension) {
         const ext = extension.toLowerCase()
@@ -57,6 +62,7 @@ Item {
     implicitHeight: contentColumn.implicitHeight + 18
     Accessible.role: Accessible.StaticText
     Accessible.name: title + (body.length > 0 ? ": " + body : "")
+                     + (hasImageAttachments ? ". Image attached" : "")
 
     Column {
         id: contentColumn
@@ -144,16 +150,19 @@ Item {
         Rectangle {
             id: surface
             width: root.kind === "user"
-                   ? Math.min(parent.width, Math.max(58, userMetrics.advanceWidth + 30))
+                   ? Math.min(parent.width,
+                              Math.max(root.hasImageAttachments ? 330 : 58,
+                                       userMetrics.advanceWidth + 30))
                    : parent.width
             x: root.kind === "user" ? parent.width - width : 0
-            implicitHeight: (fileCard.visible ? fileCard.implicitHeight
+            implicitHeight: root.kind === "user" ? userContent.implicitHeight + 20
+                            : (fileCard.visible ? fileCard.implicitHeight
                             : (workDisclosure.visible ? workDisclosure.implicitHeight
                             : (planText.visible ? planText.implicitHeight
                                                 : (richMessage.visible
                                                    ? richMessage.implicitHeight
                                                    : messageText.implicitHeight))
-                              + (root.kind === "user" ? 24 : 10)))
+                              + 10))
                             + (detailArea.visible ? detailArea.implicitHeight + 10 : 0)
             visible: !root.thinking
             radius: root.kind === "user" ? 15 : 12
@@ -180,7 +189,7 @@ Item {
                 y: root.kind === "user" ? 11 : 3
                 width: parent.width - (root.kind === "user" ? 30
                                                              : (root.toolActivity ? 17 : 0))
-                visible: root.kind !== "plan" && root.kind !== "file"
+                visible: root.kind !== "user" && root.kind !== "plan" && root.kind !== "file"
                          && root.kind !== "work"
                          && !(root.kind === "agent" && !root.running)
                 readOnly: true
@@ -200,6 +209,92 @@ Item {
                 font.pixelSize: root.kind === "command" ? 12 : 13
                 Accessible.name: root.body
                 onLinkActivated: function(link) { root.openUrlRequested(link) }
+            }
+
+            Column {
+                id: userContent
+                x: 10
+                y: 10
+                width: parent.width - 20
+                spacing: 9
+                visible: root.kind === "user"
+
+                Repeater {
+                    model: root.attachments
+
+                    delegate: Rectangle {
+                        id: attachmentPreview
+                        required property var modelData
+                        width: userContent.width
+                        height: modelData.previewUrl && modelData.previewUrl.length > 0 ? 190 : 36
+                        radius: 11
+                        color: "#0f0f11"
+                        antialiasing: true
+
+                        Image {
+                            id: attachmentSource
+                            anchors.fill: parent
+                            source: attachmentPreview.modelData.previewUrl || ""
+                            sourceSize.width: 640
+                            asynchronous: true
+                            cache: true
+                            fillMode: Image.PreserveAspectFit
+                            smooth: true
+                            mipmap: true
+                            visible: false
+                        }
+
+                        Rectangle {
+                            id: attachmentMask
+                            anchors.fill: parent
+                            radius: attachmentPreview.radius
+                            color: "white"
+                            antialiasing: true
+                            visible: false
+                            layer.enabled: true
+                            layer.smooth: true
+                        }
+
+                        MultiEffect {
+                            anchors.fill: parent
+                            source: attachmentSource
+                            visible: attachmentSource.status === Image.Ready
+                            maskEnabled: true
+                            maskSource: attachmentMask
+                            maskThresholdMin: 0.5
+                            maskSpreadAtMin: 1.0
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            width: parent.width - 20
+                            visible: attachmentSource.status === Image.Error
+                                     || !attachmentPreview.modelData.previewUrl
+                            text: attachmentPreview.modelData.name || "Image"
+                            color: "#85858e"
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideMiddle
+                            font.family: uiFont
+                            font.pixelSize: 11
+                        }
+                    }
+                }
+
+                TextEdit {
+                    width: parent.width
+                    visible: root.body.length > 0
+                    readOnly: true
+                    selectByMouse: true
+                    selectionColor: "#355b65"
+                    selectedTextColor: "#ffffff"
+                    text: root.body
+                    textFormat: TextEdit.PlainText
+                    wrapMode: TextEdit.Wrap
+                    color: "#dedee3"
+                    font.family: uiFont
+                    font.pixelSize: 13
+                    Accessible.name: root.body
+                }
             }
 
             CodexRichMessage {

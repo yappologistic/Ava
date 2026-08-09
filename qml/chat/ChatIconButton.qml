@@ -11,6 +11,7 @@ Button {
     property color pressedColor: "#29292e"
     property color foregroundColor: "#b7b7bd"
     property int radius: 9
+    property real iconRotation: 0
 
     implicitWidth: 34
     implicitHeight: 34
@@ -26,6 +27,8 @@ Button {
         font.pixelSize: 14
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
+        rotation: control.iconRotation
+        transformOrigin: Item.Center
 
         Behavior on color {
             ColorAnimation { duration: reducedMotion ? 0 : 110 }

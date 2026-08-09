@@ -74,6 +74,7 @@ public:
         AdditionsRole,
         DeletionsRole,
         ActivitiesRole,
+        AttachmentsRole,
         ElapsedRole
     };
 
@@ -88,6 +89,7 @@ public:
         QString cwd;
         QVariantList fileChanges;
         QVariantList activities;
+        QVariantList attachments;
         QVariantList sources;
         QString elapsed;
         QString turnId;
@@ -108,11 +110,14 @@ public:
 
     void clear();
     void replaceFromThread(const QJsonObject &thread);
+    void reconcileFromThread(const QJsonObject &thread);
     void beginOptimisticTurn(const QString &clientMessageId,
-                             const QString &text);
+                             const QString &text,
+                             const QJsonArray &input = {});
     void beginOptimisticSteer(const QString &clientMessageId,
                               const QString &text,
-                              const QString &turnId);
+                              const QString &turnId,
+                              const QJsonArray &input = {});
     void acknowledgeOptimisticTurn(const QString &clientMessageId,
                                     const QString &turnId);
     void failOptimisticTurn(const QString &clientMessageId,
@@ -132,6 +137,7 @@ public:
     void appendError(const QString &message);
     Q_INVOKABLE QString bodyAt(int row) const;
     Q_INVOKABLE int rowForItem(const QString &id) const;
+    Q_INVOKABLE QString itemIdAt(int row) const;
 
 private:
     int rowForId(const QString &id) const;

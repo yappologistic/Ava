@@ -1,10 +1,12 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QObject>
 #include <QProcess>
+#include <QQueue>
 #include <QStringList>
 
 class CodexAppServerClient final : public QObject
@@ -61,12 +63,15 @@ private:
     void sendObject(const QJsonObject &object);
     void consumeStandardOutput();
     void consumeLine(const QByteArray &line);
+    void processPendingLines();
+    void dispatchDocument(const QJsonDocument &document);
     void setReady(bool ready);
     void setError(const QString &message);
     void clearError();
 
     QProcess m_process;
     QByteArray m_outputBuffer;
+    QQueue<QByteArray> m_pendingLines;
     QString m_standardErrorTail;
     QHash<qint64, QString> m_pendingMethods;
     QStringList m_candidates;
@@ -74,8 +79,10 @@ private:
     QString m_errorMessage;
     qint64 m_nextRequestId = 1;
     qint64 m_initializeRequestId = 0;
+    quint64 m_parseGeneration = 0;
     int m_candidateIndex = -1;
     bool m_ready = false;
     bool m_stopping = false;
     bool m_seenProcessStart = false;
+    bool m_largeParseInFlight = false;
 };

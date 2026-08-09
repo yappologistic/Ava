@@ -13,7 +13,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS
-    Core Gui Network Qml Quick QuickControls2 QuickDialogs2 QuickLayouts Test)
+    Concurrent Core Gui Network Qml Quick QuickControls2 QuickDialogs2 QuickLayouts Test)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -38,12 +38,15 @@ qt_add_library(AvaCodexCore STATIC
     src/codexgitmanager.h
     src/codexmodels.cpp
     src/codexmodels.h
+    src/codexthreadsnapshotstore.cpp
+    src/codexthreadsnapshotstore.h
 )
 
 target_include_directories(AvaCodexCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(AvaCodexCore
     PUBLIC
         Qt6::Core
+        Qt6::Concurrent
         Qt6::Gui
 )
 

@@ -5,8 +5,10 @@
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QFutureWatcher>
 #include <QStandardPaths>
 #include <QTimer>
+#include <QtConcurrent/QtConcurrentRun>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -202,6 +204,8 @@ void CodexAppServerClient::start()
     m_stopping = false;
     m_seenProcessStart = false;
     m_outputBuffer.clear();
+    m_pendingLines.clear();
+    ++m_parseGeneration;
     m_standardErrorTail.clear();
     m_pendingMethods.clear();
     setReady(false);
@@ -294,11 +298,44 @@ void CodexAppServerClient::consumeStandardOutput()
 
 void CodexAppServerClient::consumeLine(const QByteArray &line)
 {
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(line, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
-        emit protocolWarning(QStringLiteral("Codex sent invalid JSON: %1")
-                                 .arg(parseError.errorString()));
+    m_pendingLines.enqueue(line);
+    processPendingLines();
+}
+
+void CodexAppServerClient::processPendingLines()
+{
+    if (m_largeParseInFlight)
+        return;
+
+    constexpr qsizetype kBackgroundParseThreshold = 128 * 1024;
+    while (!m_pendingLines.isEmpty()) {
+        const QByteArray line = m_pendingLines.dequeue();
+        if (line.size() >= kBackgroundParseThreshold) {
+            m_largeParseInFlight = true;
+            const quint64 generation = m_parseGeneration;
+            auto *watcher = new QFutureWatcher<QJsonDocument>(this);
+            connect(watcher, &QFutureWatcher<QJsonDocument>::finished, this,
+                    [this, watcher, generation]() {
+                const QJsonDocument document = watcher->result();
+                watcher->deleteLater();
+                m_largeParseInFlight = false;
+                if (generation == m_parseGeneration)
+                    dispatchDocument(document);
+                processPendingLines();
+            });
+            watcher->setFuture(QtConcurrent::run([line]() {
+                return QJsonDocument::fromJson(line);
+            }));
+            return;
+        }
+        dispatchDocument(QJsonDocument::fromJson(line));
+    }
+}
+
+void CodexAppServerClient::dispatchDocument(const QJsonDocument &document)
+{
+    if (!document.isObject()) {
+        emit protocolWarning(QStringLiteral("Codex sent invalid JSON"));
         return;
     }
 

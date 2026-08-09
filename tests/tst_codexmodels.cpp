@@ -1,6 +1,8 @@
 #include "codexmodels.h"
+#include "codexthreadsnapshotstore.h"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -16,6 +18,7 @@ private slots:
     void threadSearchPreservesRelevanceAndSnippet();
     void timelineStreamsAndReconciles();
     void authoritativeUserMessageDoesNotDuplicate();
+    void userImageAttachmentRendersFromLocalContent();
     void optimisticUserMessageAppearsAndReconcilesInPlace();
     void optimisticUserMessageReconcilesWithoutClientId();
     void duplicateOptimisticMessagesReconcileInOrder();
@@ -34,6 +37,8 @@ private slots:
     void compactionUsesTheWorkReceipt();
     void workDeltasStreamAndStayBounded();
     void promptNavigationTracksTurnsAndFinalResponses();
+    void progressiveRestorePrependsHistoryWithoutReset();
+    void threadSnapshotsAreBoundedAndPersistent();
     void modelsExposeCapabilities();
     void attachmentsClassifyLocalFiles();
 };
@@ -147,6 +152,45 @@ void CodexModelsTest::authoritativeUserMessageDoesNotDuplicate()
 
     QCOMPARE(model.rowCount(), 1);
     QCOMPARE(model.bodyAt(0), QStringLiteral("hello"));
+}
+
+void CodexModelsTest::userImageAttachmentRendersFromLocalContent()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString imagePath = directory.filePath(QStringLiteral("clipboard-image.png"));
+    QFile image(imagePath);
+    QVERIFY(image.open(QIODevice::WriteOnly));
+    image.write("image fixture");
+    image.close();
+
+    const QJsonArray content{
+        QJsonObject{{"type", "text"}, {"text", "describe this"}},
+        QJsonObject{{"type", "localImage"}, {"path", imagePath}}
+    };
+
+    CodexTimelineModel model;
+    model.beginOptimisticTurn(QStringLiteral("client-image"),
+                              QStringLiteral("describe this"), content);
+    QCOMPARE(model.bodyAt(0), QStringLiteral("describe this"));
+    QVariantList attachments = model.data(
+        model.index(0), CodexTimelineModel::AttachmentsRole).toList();
+    QCOMPARE(attachments.size(), 1);
+    QCOMPARE(attachments.constFirst().toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("clipboard-image.png"));
+    QVERIFY(attachments.constFirst().toMap()
+                .value(QStringLiteral("previewUrl")).toString()
+                .startsWith(QStringLiteral("file:")));
+
+    model.upsertItem(
+        QJsonObject{{"id", "server-image"}, {"clientId", "client-image"},
+                    {"type", "userMessage"}, {"content", content}},
+        true, QStringLiteral("turn-image"));
+    QCOMPARE(model.rowCount(), 2);
+    attachments = model.data(
+        model.index(0), CodexTimelineModel::AttachmentsRole).toList();
+    QCOMPARE(attachments.size(), 1);
+    QVERIFY(!model.bodyAt(0).contains(QStringLiteral("clipboard-image.png")));
 }
 
 void CodexModelsTest::optimisticUserMessageAppearsAndReconcilesInPlace()
@@ -719,6 +763,94 @@ void CodexModelsTest::attachmentsClassifyLocalFiles()
              QStringLiteral("image"));
     QCOMPARE(model.data(model.index(1), CodexAttachmentModel::KindRole).toString(),
              QStringLiteral("file"));
+}
+
+void CodexModelsTest::progressiveRestorePrependsHistoryWithoutReset()
+{
+    auto turn = [](int number) {
+        return QJsonObject{
+            {"id", QStringLiteral("turn-%1").arg(number)},
+            {"status", "completed"},
+            {"items", QJsonArray{
+                QJsonObject{{"id", QStringLiteral("user-%1").arg(number)},
+                            {"type", "userMessage"},
+                            {"content", QJsonArray{QJsonObject{
+                                {"type", "text"},
+                                {"text", QStringLiteral("Prompt %1").arg(number)}}}}},
+                QJsonObject{{"id", QStringLiteral("agent-%1").arg(number)},
+                            {"type", "agentMessage"},
+                            {"text", QStringLiteral("Response %1").arg(number)}}
+            }}
+        };
+    };
+
+    CodexTimelineModel model;
+    model.replaceFromThread(QJsonObject{{"turns", QJsonArray{turn(3), turn(4)}}});
+    QCOMPARE(model.rowCount(), 4);
+    QCOMPARE(model.itemIdAt(0), QStringLiteral("user-3"));
+
+    QSignalSpy resetSpy(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy insertedSpy(&model, &QAbstractItemModel::rowsInserted);
+    model.reconcileFromThread(
+        QJsonObject{{"turns", QJsonArray{turn(1), turn(2), turn(3), turn(4)}}});
+
+    QCOMPARE(resetSpy.count(), 0);
+    QCOMPARE(insertedSpy.count(), 1);
+    QCOMPARE(model.rowCount(), 8);
+    QCOMPARE(model.itemIdAt(0), QStringLiteral("user-1"));
+    QCOMPARE(model.itemIdAt(4), QStringLiteral("user-3"));
+    QCOMPARE(model.itemIdAt(7), QStringLiteral("agent-4"));
+
+    model.reconcileFromThread(
+        QJsonObject{{"turns", QJsonArray{turn(1), turn(2), turn(3), turn(4), turn(5)}}});
+    QCOMPARE(resetSpy.count(), 0);
+    QCOMPARE(insertedSpy.count(), 2);
+    QCOMPARE(model.rowCount(), 10);
+    QCOMPARE(model.itemIdAt(8), QStringLiteral("user-5"));
+}
+
+void CodexModelsTest::threadSnapshotsAreBoundedAndPersistent()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("snapshots.json"));
+
+    QJsonArray turns;
+    const QString largeBody(80 * 1024, QLatin1Char('x'));
+    for (int number = 0; number < 60; ++number) {
+        turns.append(QJsonObject{
+            {"id", QStringLiteral("turn-%1").arg(number)},
+            {"items", QJsonArray{QJsonObject{
+                {"id", QStringLiteral("agent-%1").arg(number)},
+                {"type", "agentMessage"},
+                {"text", largeBody}}}}
+        });
+    }
+
+    {
+        CodexThreadSnapshotStore store(path);
+        store.putThread(QJsonObject{{"id", "thread-1"}, {"cwd", "C:/project"},
+                                    {"turns", turns}});
+        store.updateViewport(QStringLiteral("thread-1"),
+                             QStringLiteral("agent-58"), -12.5, false);
+        store.putThread(QJsonObject{{"id", "thread-1"}, {"cwd", "C:/project"},
+                                    {"turns", turns}});
+        QVERIFY(store.flush());
+    }
+
+    QVERIFY(QFileInfo(path).size() <= 2 * 1024 * 1024 + 4096);
+    CodexThreadSnapshotStore restored(path);
+    const QJsonObject snapshot = restored.thread(QStringLiteral("thread-1"));
+    const QJsonArray restoredTurns = snapshot.value(QStringLiteral("turns")).toArray();
+    QVERIFY(!restoredTurns.isEmpty());
+    QVERIFY(restoredTurns.size() <= 48);
+    QCOMPARE(snapshot.value(QStringLiteral("_avaViewportItemId")).toString(),
+             QStringLiteral("agent-58"));
+    QCOMPARE(snapshot.value(QStringLiteral("_avaViewportOffset")).toDouble(), -12.5);
+    QVERIFY(!snapshot.value(QStringLiteral("_avaFollowLiveEdge")).toBool());
+    QCOMPARE(restoredTurns.at(restoredTurns.size() - 1).toObject()
+                 .value(QStringLiteral("id")).toString(),
+             QStringLiteral("turn-59"));
 }
 
 QTEST_GUILESS_MAIN(CodexModelsTest)

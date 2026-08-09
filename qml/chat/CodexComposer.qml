@@ -330,6 +330,7 @@ Item {
             id: effortButton
             visible: chatController.availableEfforts.length > 1
             height: 34
+            implicitWidth: effortContent.implicitWidth + leftPadding + rightPadding
             leftPadding: 9
             rightPadding: 9
             text: chatController.selectedEffort.length > 0
@@ -337,12 +338,25 @@ Item {
                     + chatController.selectedEffort.slice(1) : "Effort"
             Accessible.name: "Choose reasoning effort, current " + text
             onClicked: root.effortRequested(effortButton)
-            contentItem: Text {
-                text: effortButton.text
-                color: "#898991"
-                font.family: uiFont
-                font.pixelSize: 10
-                verticalAlignment: Text.AlignVCenter
+            contentItem: Row {
+                id: effortContent
+                spacing: 6
+
+                Text {
+                    text: "\uEA80"
+                    color: "#777780"
+                    font.family: "Segoe Fluent Icons"
+                    font.pixelSize: 14
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Text {
+                    text: effortButton.text
+                    color: "#898991"
+                    font.family: uiFont
+                    font.pixelSize: 10
+                    anchors.verticalCenter: parent.verticalCenter
+                }
             }
             background: Rectangle {
                 radius: 8
@@ -431,36 +445,13 @@ Item {
             contentItem: Row {
                 id: planContent
                 spacing: 6
-                Item {
-                    width: 13
-                    height: 13
+
+                Text {
+                    text: "\uE7C1"
+                    color: planButton.checked ? "#8ee6dd" : "#777780"
+                    font.family: "Segoe Fluent Icons"
+                    font.pixelSize: 14
                     anchors.verticalCenter: parent.verticalCenter
-
-                    Repeater {
-                        model: 3
-                        Item {
-                            required property int index
-                            x: 0
-                            y: index * 4.5 + 1
-                            width: 13
-                            height: 3
-
-                            Rectangle {
-                                width: 2.5
-                                height: 2.5
-                                radius: 1.25
-                                color: planButton.checked ? "#8ee6dd" : "#777780"
-                            }
-                            Rectangle {
-                                x: 5
-                                y: 0.75
-                                width: 8
-                                height: 1
-                                radius: 0.5
-                                color: planButton.checked ? "#8ee6dd" : "#777780"
-                            }
-                        }
-                    }
                 }
                 Text {
                     text: planButton.text

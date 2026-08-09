@@ -10,6 +10,7 @@
 #include <QJsonArray>
 #include <QMimeData>
 #include <QSettings>
+#include <QSet>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUuid>
@@ -74,6 +75,14 @@ CodexChatController::CodexChatController(CodexAppServerClient *client,
     m_threadSearchTimer.setInterval(180);
     connect(&m_threadSearchTimer, &QTimer::timeout,
             this, &CodexChatController::requestThreadSearch);
+
+    m_snapshotFlushTimer.setSingleShot(true);
+    m_snapshotFlushTimer.setTimerType(Qt::CoarseTimer);
+    m_snapshotFlushTimer.setInterval(400);
+    connect(&m_snapshotFlushTimer, &QTimer::timeout, this, [this]() {
+        if (!m_threadCache.flush())
+            qWarning("Ava could not persist the Codex thread snapshot cache");
+    });
 
     connect(&m_attachments, &QAbstractItemModel::rowsInserted,
             this, &CodexChatController::attachmentsChanged);
@@ -295,7 +304,7 @@ bool CodexChatController::sendMessage(const QString &text)
     m_retryInputs.insert(messageId, input);
 
     if (m_turnActive) {
-        m_timeline.beginOptimisticSteer(messageId, prompt, m_turnId);
+        m_timeline.beginOptimisticSteer(messageId, prompt, m_turnId, input);
         emit messageSubmitted(messageId);
 
         const QJsonObject params{
@@ -325,7 +334,7 @@ bool CodexChatController::sendMessage(const QString &text)
     m_activeTurnClientMessageIds = {messageId};
     m_turnFailureMessage.clear();
     m_startingTurn = true;
-    m_timeline.beginOptimisticTurn(m_pendingMessageId, prompt);
+    m_timeline.beginOptimisticTurn(m_pendingMessageId, prompt, input);
     setStatus(QStringLiteral("Starting"), concise(prompt));
     emit stateChanged();
     emit messageSubmitted(m_pendingMessageId);
@@ -904,6 +913,102 @@ void CodexChatController::handleResponse(qint64 id,
     QString context = m_requestContext.take(id);
     if (context.isEmpty())
         context = method;
+
+    const auto restoreIterator = m_restoreRequests.find(id);
+    if (restoreIterator != m_restoreRequests.end()) {
+        const RestoreRequest request = restoreIterator.value();
+        m_restoreRequests.erase(restoreIterator);
+        const bool isCurrent = request.generation == m_restoreGeneration
+            && request.threadId == m_threadId;
+
+        if (!error.isEmpty()) {
+            if (!isCurrent || !request.authoritative)
+                return;
+            m_threadRestoreInFlight = false;
+            m_startingTurn = false;
+            m_restoreTotalMs = m_restoreElapsed.isValid()
+                ? m_restoreElapsed.elapsed() : -1;
+            emit restoreMetricsChanged();
+            setError(error.value(QStringLiteral("message")).toString(
+                QStringLiteral("Codex could not restore this conversation")));
+            emit stateChanged();
+            return;
+        }
+
+        if (request.authoritative) {
+            const QJsonObject restoredThread = result.value(QStringLiteral("thread")).toObject();
+            if (!restoredThread.value(QStringLiteral("turns")).toArray().isEmpty())
+                cacheThread(restoredThread);
+            if (isCurrent)
+                finishThreadRestore(restoredThread);
+            return;
+        }
+
+        const QJsonObject pageThread = threadFromTurns(
+            request.threadId,
+            request.cwd,
+            result.value(QStringLiteral("data")).toArray());
+        const QJsonArray pageTurns = pageThread.value(QStringLiteral("turns")).toArray();
+        if (!request.applyToTimeline) {
+            if (!pageTurns.isEmpty())
+                cacheThread(pageThread);
+            return;
+        }
+        if (!isCurrent || m_authoritativeRestoreGeneration == request.generation
+            || pageTurns.isEmpty()) {
+            return;
+        }
+
+        if (request.page == 0) {
+            QHash<QString, int> rowsById;
+            for (int row = 0; row < m_progressiveRestoreTurns.size(); ++row) {
+                rowsById.insert(m_progressiveRestoreTurns.at(row).toObject()
+                                    .value(QStringLiteral("id")).toString(), row);
+            }
+            for (const QJsonValue &value : pageTurns) {
+                const QString turnId = value.toObject()
+                                           .value(QStringLiteral("id")).toString();
+                const int row = rowsById.value(turnId, -1);
+                if (!turnId.isEmpty() && row >= 0) {
+                    m_progressiveRestoreTurns.replace(row, value);
+                } else {
+                    m_progressiveRestoreTurns.append(value);
+                }
+            }
+        } else {
+            QSet<QString> knownIds;
+            for (const QJsonValue &value : std::as_const(m_progressiveRestoreTurns)) {
+                knownIds.insert(value.toObject().value(QStringLiteral("id")).toString());
+            }
+            QJsonArray combined;
+            for (const QJsonValue &value : pageTurns) {
+                if (!knownIds.contains(value.toObject()
+                                           .value(QStringLiteral("id")).toString())) {
+                    combined.append(value);
+                }
+            }
+            for (const QJsonValue &value : std::as_const(m_progressiveRestoreTurns))
+                combined.append(value);
+            m_progressiveRestoreTurns = combined;
+        }
+
+        QJsonObject restoredThread{{QStringLiteral("id"), request.threadId},
+                                   {QStringLiteral("cwd"), request.cwd},
+                                   {QStringLiteral("turns"), m_progressiveRestoreTurns}};
+        cacheThread(restoredThread);
+        m_timeline.reconcileFromThread(restoredThread);
+        noteRestoreFirstPaint("latest-turns");
+
+        const QString nextCursor = result.value(QStringLiteral("nextCursor")).toString();
+        if (!nextCursor.isEmpty() && request.page < 3
+            && m_authoritativeRestoreGeneration != request.generation) {
+            requestLatestThreadTurns(request.threadId, request.cwd, true,
+                                     request.generation, nextCursor,
+                                     request.page + 1);
+        }
+        return;
+    }
+
     if (!error.isEmpty()) {
         const QString message = error.value(QStringLiteral("message")).toString(
             QStringLiteral("Codex could not complete the request"));
@@ -1035,8 +1140,7 @@ void CodexChatController::handleResponse(qint64 id,
         setStatus(QStringLiteral("Ready"),
                   QStringLiteral("Conversation restored; retry when ready"));
         emit stateChanged();
-    } else if (context == QStringLiteral("thread/resume")
-               || context == QStringLiteral("thread/resume:review")) {
+    } else if (context == QStringLiteral("thread/resume:review")) {
         const QJsonObject thread = result.value(QStringLiteral("thread")).toObject();
         m_threadId = thread.value(QStringLiteral("id")).toString();
         if (!thread.value(QStringLiteral("cwd")).toString().isEmpty()) {
@@ -1049,19 +1153,13 @@ void CodexChatController::handleResponse(qint64 id,
         m_threads.upsert(thread);
         m_diffText.clear();
         emit diffChanged();
-        if (context == QStringLiteral("thread/resume:review")) {
-            if (!m_pendingReviewThreadId.isEmpty()
-                && m_pendingReviewThreadId != m_threadId) {
-                m_startingTurn = false;
-                setError(QStringLiteral("Codex opened a different conversation for review"));
-                m_pendingReviewThreadId.clear();
-            } else {
-                startPendingReview();
-            }
-        } else {
+        if (!m_pendingReviewThreadId.isEmpty()
+            && m_pendingReviewThreadId != m_threadId) {
             m_startingTurn = false;
-            setStatus(QStringLiteral("Ready"), QStringLiteral("Continue the conversation"));
-            emit stateChanged();
+            setError(QStringLiteral("Codex opened a different conversation for review"));
+            m_pendingReviewThreadId.clear();
+        } else {
+            startPendingReview();
         }
     } else if (context == QStringLiteral("thread/read")
                || context == QStringLiteral("thread/read:review")) {
@@ -1141,6 +1239,8 @@ void CodexChatController::handleResponse(qint64 id,
     } else if (context.startsWith(QStringLiteral("thread/archive:"))) {
         const QString archivedId = context.mid(QStringLiteral("thread/archive:").size());
         m_threads.removeById(archivedId);
+        m_threadCache.removeThread(archivedId);
+        m_snapshotFlushTimer.start();
         if (archivedId == m_threadId) {
             m_threadId.clear();
             m_turnId.clear();
@@ -1165,7 +1265,10 @@ void CodexChatController::handleNotification(const QString &method,
     }
     if (method == QStringLiteral("thread/deleted")
         || method == QStringLiteral("thread/archived")) {
-        m_threads.removeById(params.value(QStringLiteral("threadId")).toString());
+        const QString threadId = params.value(QStringLiteral("threadId")).toString();
+        m_threads.removeById(threadId);
+        m_threadCache.removeThread(threadId);
+        m_snapshotFlushTimer.start();
         return;
     }
     if (method == QStringLiteral("thread/name/updated")) {
@@ -1187,6 +1290,10 @@ void CodexChatController::handleNotification(const QString &method,
         else
             setError(params.value(QStringLiteral("error")).toString(
                 QStringLiteral("Codex sign-in did not finish")));
+        return;
+    }
+    if (method != QStringLiteral("thread/status/changed")
+        && !notificationTargetsCurrentThread(params)) {
         return;
     }
     if (method == QStringLiteral("turn/started")) {
@@ -1262,6 +1369,7 @@ void CodexChatController::handleNotification(const QString &method,
                                  : QStringLiteral("Codex finished the task"))
                           : QStringLiteral("The turn ended without completing"));
         refreshThreads();
+        refreshCurrentThreadSnapshot();
         emit stateChanged();
         emit elapsedChanged();
         emit requestAttention();
@@ -1369,6 +1477,11 @@ void CodexChatController::handleServerRequest(const QJsonValue &id,
                                               const QString &method,
                                               const QJsonObject &params)
 {
+    if (!notificationTargetsCurrentThread(params)) {
+        m_client->respondError(id, -32001,
+                               QStringLiteral("Request belongs to an inactive conversation"));
+        return;
+    }
     if (method == QStringLiteral("item/commandExecution/requestApproval")
         || method == QStringLiteral("item/fileChange/requestApproval")
         || method == QStringLiteral("execCommandApproval")
@@ -1764,6 +1877,19 @@ void CodexChatController::handleConnectionStateChanged()
     if (m_reconnectRequested)
         return;
 
+    if (m_threadRestoreInFlight) {
+        m_reconnectThreadId = m_threadId;
+        m_restoreRequests.clear();
+        m_threadRestoreInFlight = false;
+        m_startingTurn = false;
+        m_restoreTotalMs = m_restoreElapsed.isValid()
+            ? m_restoreElapsed.elapsed() : -1;
+        setError(QStringLiteral("Codex disconnected. The cached conversation is still available."));
+        emit restoreMetricsChanged();
+        emit stateChanged();
+        return;
+    }
+
     const bool hadActiveRequest = m_startingTurn || m_turnActive
         || !m_pendingMessageId.isEmpty()
         || !m_activeTurnClientMessageIds.isEmpty();
@@ -1802,6 +1928,7 @@ void CodexChatController::failActiveRequest(const QString &message,
     if (connectionLost && !m_threadId.isEmpty())
         m_reconnectThreadId = m_threadId;
     m_requestContext.clear();
+    m_restoreRequests.clear();
     m_pendingDeltas.clear();
     m_pendingPrompt.clear();
     m_pendingMessageId.clear();
@@ -1827,28 +1954,195 @@ void CodexChatController::failActiveRequest(const QString &message,
 void CodexChatController::resumeThread(const QString &threadId,
                                        const QString &cwd)
 {
-    if (!connected() || threadId.isEmpty() || busy())
+    if (!connected() || threadId.isEmpty()
+        || (busy() && !m_threadRestoreInFlight)) {
         return;
+    }
+
     clearError();
+    ++m_restoreGeneration;
+    m_authoritativeRestoreGeneration = 0;
+    m_threadRestoreInFlight = true;
+    m_restoreFirstPaintMs = -1;
+    m_restoreTotalMs = -1;
+    m_restoreElapsed.restart();
     m_threadId = threadId;
     m_turnId.clear();
     m_retryInputs.clear();
     m_reconnectThreadId.clear();
     resetContextUsage();
     m_diffText.clear();
-    m_timeline.clear();
+    const QJsonObject cached = m_threadCache.thread(threadId);
+    m_progressiveRestoreTurns = cached.value(QStringLiteral("turns")).toArray();
+    if (!cached.value(QStringLiteral("turns")).toArray().isEmpty()) {
+        m_timeline.reconcileFromThread(cached);
+        noteRestoreFirstPaint("cache");
+        if (cached.contains(QStringLiteral("_avaFollowLiveEdge"))) {
+            emit viewportRestoreRequested(
+                cached.value(QStringLiteral("_avaViewportItemId")).toString(),
+                cached.value(QStringLiteral("_avaViewportOffset")).toDouble(),
+                cached.value(QStringLiteral("_avaFollowLiveEdge")).toBool());
+        }
+    } else {
+        m_timeline.clear();
+    }
     m_startingTurn = true;
     if (!cwd.isEmpty()) {
         m_projectPath = cwd;
         emit projectChanged();
     }
     setStatus(QStringLiteral("Loading"), QStringLiteral("Restoring conversation"));
+    requestLatestThreadTurns(threadId, cwd, true, m_restoreGeneration);
+
     QJsonObject params{{QStringLiteral("threadId"), threadId}};
     if (!m_selectedModel.isEmpty())
         params.insert(QStringLiteral("model"), m_selectedModel);
     const qint64 id = m_client->request(QStringLiteral("thread/resume"), params);
+    if (id <= 0) {
+        m_threadRestoreInFlight = false;
+        m_startingTurn = false;
+        setError(QStringLiteral("Codex disconnected before restoring the conversation"));
+        emit restoreMetricsChanged();
+        emit stateChanged();
+        return;
+    }
     m_requestContext.insert(id, QStringLiteral("thread/resume"));
+    m_restoreRequests.insert(id, RestoreRequest{m_restoreGeneration,
+                                                 threadId,
+                                                 cwd,
+                                                 true,
+                                                 true});
+    emit restoreMetricsChanged();
     emit stateChanged();
+}
+
+void CodexChatController::requestLatestThreadTurns(const QString &threadId,
+                                                    const QString &cwd,
+                                                    bool applyToTimeline,
+                                                    quint64 generation,
+                                                    const QString &cursor,
+                                                    int page)
+{
+    if (!connected() || threadId.isEmpty())
+        return;
+    QJsonObject params{{QStringLiteral("threadId"), threadId},
+                       {QStringLiteral("limit"), 32},
+                       {QStringLiteral("sortDirection"), QStringLiteral("desc")},
+                       {QStringLiteral("itemsView"), QStringLiteral("full")}};
+    if (!cursor.isEmpty())
+        params.insert(QStringLiteral("cursor"), cursor);
+    const qint64 id = m_client->request(
+        QStringLiteral("thread/turns/list"),
+        params);
+    if (id <= 0)
+        return;
+    m_requestContext.insert(id, applyToTimeline
+                                    ? QStringLiteral("thread/turns/list:restore")
+                                    : QStringLiteral("thread/turns/list:cache"));
+    m_restoreRequests.insert(id, RestoreRequest{generation,
+                                                 threadId,
+                                                 cwd,
+                                                 applyToTimeline,
+                                                 false,
+                                                 page});
+}
+
+void CodexChatController::refreshCurrentThreadSnapshot()
+{
+    if (m_threadId.isEmpty())
+        return;
+    requestLatestThreadTurns(m_threadId, m_projectPath, false,
+                             m_restoreGeneration);
+}
+
+void CodexChatController::saveThreadViewport(const QString &itemId,
+                                             qreal offset,
+                                             bool followLiveEdge)
+{
+    if (m_threadId.isEmpty())
+        return;
+    m_threadCache.updateViewport(m_threadId, itemId, offset, followLiveEdge);
+    m_snapshotFlushTimer.start();
+}
+
+void CodexChatController::cacheThread(const QJsonObject &thread)
+{
+    if (thread.value(QStringLiteral("id")).toString().isEmpty())
+        return;
+    m_threadCache.putThread(thread);
+    m_snapshotFlushTimer.start();
+}
+
+QJsonObject CodexChatController::threadFromTurns(
+    const QString &threadId,
+    const QString &cwd,
+    const QJsonArray &newestFirstTurns) const
+{
+    QJsonArray chronological;
+    for (qsizetype index = newestFirstTurns.size(); index > 0; --index)
+        chronological.append(newestFirstTurns.at(index - 1));
+    return QJsonObject{{QStringLiteral("id"), threadId},
+                       {QStringLiteral("cwd"), cwd},
+                       {QStringLiteral("turns"), chronological}};
+}
+
+void CodexChatController::noteRestoreFirstPaint(const char *source)
+{
+    if (m_restoreFirstPaintMs >= 0 || m_timeline.rowCount() <= 0)
+        return;
+    m_restoreFirstPaintMs = m_restoreElapsed.isValid()
+        ? m_restoreElapsed.elapsed() : 0;
+    qInfo("Ava thread restore first paint: %lld ms (%s)",
+          static_cast<long long>(m_restoreFirstPaintMs), source);
+    emit restoreMetricsChanged();
+}
+
+void CodexChatController::finishThreadRestore(const QJsonObject &thread)
+{
+    const QString restoredThreadId = thread.value(QStringLiteral("id")).toString();
+    if (restoredThreadId.isEmpty() || restoredThreadId != m_threadId) {
+        m_threadRestoreInFlight = false;
+        m_startingTurn = false;
+        setError(QStringLiteral("Codex opened a different conversation"));
+        emit restoreMetricsChanged();
+        emit stateChanged();
+        return;
+    }
+
+    m_authoritativeRestoreGeneration = m_restoreGeneration;
+    const QString restoredCwd = thread.value(QStringLiteral("cwd")).toString();
+    if (!restoredCwd.isEmpty() && restoredCwd != m_projectPath) {
+        m_projectPath = restoredCwd;
+        emit projectChanged();
+    }
+    if (thread.contains(QStringLiteral("turns")))
+        m_timeline.reconcileFromThread(thread);
+    noteRestoreFirstPaint("authoritative");
+    cacheThread(thread);
+    m_threads.upsert(thread);
+    m_diffText.clear();
+    emit diffChanged();
+    m_threadRestoreInFlight = false;
+    m_startingTurn = false;
+    m_restoreTotalMs = m_restoreElapsed.isValid()
+        ? m_restoreElapsed.elapsed() : -1;
+    qInfo("Ava thread restore complete: first=%lld ms total=%lld ms rows=%d",
+          static_cast<long long>(m_restoreFirstPaintMs),
+          static_cast<long long>(m_restoreTotalMs),
+          m_timeline.rowCount());
+    setStatus(QStringLiteral("Ready"), QStringLiteral("Continue the conversation"));
+    emit restoreMetricsChanged();
+    emit stateChanged();
+}
+
+bool CodexChatController::notificationTargetsCurrentThread(
+    const QJsonObject &params) const
+{
+    QString threadId = params.value(QStringLiteral("threadId")).toString();
+    if (threadId.isEmpty())
+        threadId = params.value(QStringLiteral("thread")).toObject()
+                       .value(QStringLiteral("id")).toString();
+    return threadId.isEmpty() || m_threadId.isEmpty() || threadId == m_threadId;
 }
 
 QJsonArray CodexChatController::buildInput(const QString &text,
