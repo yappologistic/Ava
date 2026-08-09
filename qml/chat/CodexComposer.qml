@@ -25,7 +25,7 @@ Item {
                                                      && commandPrefix.charAt(0) === "/"
                                                      && commandPrefix.indexOf(" ") < 0
                                                      && filteredCommands.length > 0
-    readonly property int attachmentHeight: chatController.attachmentCount > 0 ? 52 : 0
+    readonly property int attachmentHeight: chatController.attachmentCount > 0 ? 46 : 0
 
     implicitHeight: 112 + attachmentHeight
 
@@ -158,83 +158,18 @@ Item {
         }
     }
 
-    ListView {
+    CodexAttachmentStrip {
         id: attachmentList
-        x: 12
-        y: 10
-        width: parent.width - 24
-        height: root.attachmentHeight > 0 ? 40 : 0
+        x: 10
+        y: 8
+        width: parent.width - 20
+        height: root.attachmentHeight > 0 ? 36 : 0
         visible: height > 0
-        orientation: ListView.Horizontal
-        spacing: 8
-        clip: true
-        model: chatController.attachments
-
-        delegate: Rectangle {
-            required property int index
-            required property string attachmentName
-            required property string attachmentKind
-            required property string previewUrl
-
-            height: 38
-            width: Math.min(190, attachmentLabel.implicitWidth + 56)
-            radius: 10
-            color: "#1a1a1f"
-            border.width: 1
-            border.color: "#2c2c32"
-
-            Image {
-                x: 5
-                anchors.verticalCenter: parent.verticalCenter
-                width: 28
-                height: 28
-                visible: attachmentKind === "image" && previewUrl.length > 0
-                source: previewUrl
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                smooth: true
-                mipmap: true
-            }
-
-            Text {
-                id: typeIcon
-                x: 12
-                anchors.verticalCenter: parent.verticalCenter
-                visible: attachmentKind !== "image"
-                text: attachmentKind === "audio" ? "\uE8D6" : "\uE8A5"
-                color: "#93939b"
-                font.family: "Segoe Fluent Icons"
-                font.pixelSize: 14
-            }
-
-            Text {
-                id: attachmentLabel
-                x: attachmentKind === "image" ? 40 : 36
-                anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - x - 27
-                text: attachmentName
-                color: "#c8c8ce"
-                elide: Text.ElideMiddle
-                font.family: uiFont
-                font.pixelSize: 10
-            }
-
-            ChatIconButton {
-                anchors.right: parent.right
-                anchors.rightMargin: 3
-                anchors.verticalCenter: parent.verticalCenter
-                width: 25
-                height: 25
-                symbol: "\uE711"
-                accessibleName: "Remove " + attachmentName
-                onClicked: chatController.removeAttachment(index)
-            }
-        }
-
-        add: Transition {
-            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: reducedMotion ? 0 : 140 }
-            NumberAnimation { property: "scale"; from: 0.94; to: 1; duration: reducedMotion ? 0 : 160; easing.type: Easing.OutCubic }
-        }
+        attachmentModel: chatController.attachments
+        uiFont: uiFont
+        reducedMotion: reducedMotion
+        devicePixelRatio: root.Window.window ? root.Window.window.screen.devicePixelRatio : 1
+        onRemoveRequested: function(index) { chatController.removeAttachment(index) }
     }
 
     TextArea {

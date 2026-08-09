@@ -793,6 +793,9 @@ ApplicationWindow {
                         onRetryRequested: function(messageId) {
                             chatController.retryMessage(messageId)
                         }
+                        onInspectImageRequested: function(source, name) {
+                            imageInspector.openImage(source, name)
+                        }
                     }
 
                     onCountChanged: {
@@ -1387,5 +1390,32 @@ ApplicationWindow {
             if (chatController.diffText.length > 0 && window.width >= 980)
                 window.inspectorOpen = true
         }
+    }
+
+    CodexAttachmentDropLayer {
+        id: attachmentDropLayer
+        z: 900
+        anchors.fill: shell
+        available: chatController.connected && chatController.authenticated
+        blocked: imageInspector.opened
+                 || chatController.awaitingApproval
+                 || chatController.awaitingUserInput
+        reducedMotion: reducedMotion
+        uiFont: uiFont
+        onFilesDropped: function(urls) {
+            for (var index = 0; index < urls.length; ++index)
+                chatController.addAttachment(urls[index].toString())
+            composer.focusComposer()
+        }
+    }
+
+    CodexImageInspector {
+        id: imageInspector
+        z: 1000
+        anchors.fill: shell
+        uiFont: uiFont
+        reducedMotion: reducedMotion
+        devicePixelRatio: window.screen.devicePixelRatio
+        onClosed: composer.focusComposer()
     }
 }

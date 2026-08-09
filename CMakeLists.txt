@@ -66,10 +66,14 @@ qt_add_qml_module(AvaChat
     QML_FILES
         qml/chat/ChatIconButton.qml
         qml/chat/ChatTextButton.qml
+        qml/chat/CodexAttachmentDropLayer.qml
+        qml/chat/CodexAttachmentGallery.qml
+        qml/chat/CodexAttachmentStrip.qml
         qml/chat/CodexChatWindow.qml
         qml/chat/CodexCodeBlock.qml
         qml/chat/CodexComposer.qml
         qml/chat/CodexDiffInspector.qml
+        qml/chat/CodexImageInspector.qml
         qml/chat/CodexMessageDelegate.qml
         qml/chat/CodexPromptNavigator.qml
         qml/chat/CodexRichMessage.qml
@@ -215,6 +219,15 @@ if (BUILD_TESTING)
     qt_add_executable(tst_codexgitmanager tests/tst_codexgitmanager.cpp)
     target_link_libraries(tst_codexgitmanager PRIVATE AvaCodexCore Qt6::Test)
     add_test(NAME codex_git_manager COMMAND tst_codexgitmanager)
+
+    qt_add_executable(tst_attachmentui tests/tst_attachmentui.cpp)
+    target_compile_definitions(tst_attachmentui PRIVATE
+        AVA_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(tst_attachmentui PRIVATE
+        Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Test)
+    add_test(NAME attachment_ui COMMAND tst_attachmentui)
+    set_tests_properties(attachment_ui PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
     qt_add_executable(tst_codexlive tests/tst_codexlive.cpp)
     target_link_libraries(tst_codexlive PRIVATE AvaCodexCore Qt6::Test)

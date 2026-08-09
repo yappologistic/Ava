@@ -1,6 +1,5 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
-import QtQuick.Effects 6.5
 import Ava.Chat.Native 1.0
 
 Item {
@@ -29,6 +28,7 @@ Item {
     signal openDiffRequested(string path)
     signal openUrlRequested(string url)
     signal retryRequested(string itemId)
+    signal inspectImageRequested(string source, string name)
 
     property bool expanded: kind === "file" && fileChanges.length <= 4
     readonly property bool conversational: kind === "user" || kind === "agent"
@@ -151,8 +151,10 @@ Item {
             id: surface
             width: root.kind === "user"
                    ? Math.min(parent.width,
-                              Math.max(root.hasImageAttachments ? 330 : 58,
-                                       userMetrics.advanceWidth + 30))
+                               Math.max(root.hasImageAttachments
+                                        ? (root.attachments.length > 1 ? 560 : 440)
+                                        : 58,
+                                        userMetrics.advanceWidth + 30))
                    : parent.width
             x: root.kind === "user" ? parent.width - width : 0
             implicitHeight: root.kind === "user" ? userContent.implicitHeight + 20
@@ -219,64 +221,16 @@ Item {
                 spacing: 9
                 visible: root.kind === "user"
 
-                Repeater {
-                    model: root.attachments
-
-                    delegate: Rectangle {
-                        id: attachmentPreview
-                        required property var modelData
-                        width: userContent.width
-                        height: modelData.previewUrl && modelData.previewUrl.length > 0 ? 190 : 36
-                        radius: 11
-                        color: "#0f0f11"
-                        antialiasing: true
-
-                        Image {
-                            id: attachmentSource
-                            anchors.fill: parent
-                            source: attachmentPreview.modelData.previewUrl || ""
-                            sourceSize.width: 640
-                            asynchronous: true
-                            cache: true
-                            fillMode: Image.PreserveAspectFit
-                            smooth: true
-                            mipmap: true
-                            visible: false
-                        }
-
-                        Rectangle {
-                            id: attachmentMask
-                            anchors.fill: parent
-                            radius: attachmentPreview.radius
-                            color: "white"
-                            antialiasing: true
-                            visible: false
-                            layer.enabled: true
-                            layer.smooth: true
-                        }
-
-                        MultiEffect {
-                            anchors.fill: parent
-                            source: attachmentSource
-                            visible: attachmentSource.status === Image.Ready
-                            maskEnabled: true
-                            maskSource: attachmentMask
-                            maskThresholdMin: 0.5
-                            maskSpreadAtMin: 1.0
-                        }
-
-                        Text {
-                            anchors.centerIn: parent
-                            width: parent.width - 20
-                            visible: attachmentSource.status === Image.Error
-                                     || !attachmentPreview.modelData.previewUrl
-                            text: attachmentPreview.modelData.name || "Image"
-                            color: "#85858e"
-                            horizontalAlignment: Text.AlignHCenter
-                            elide: Text.ElideMiddle
-                            font.family: uiFont
-                            font.pixelSize: 11
-                        }
+                CodexAttachmentGallery {
+                    width: userContent.width
+                    visible: root.hasImageAttachments
+                    attachments: root.attachments
+                    uiFont: uiFont
+                    reducedMotion: reducedMotion
+                    devicePixelRatio: root.Window.window
+                                      ? root.Window.window.screen.devicePixelRatio : 1
+                    onInspectImageRequested: function(source, name) {
+                        root.inspectImageRequested(source, name)
                     }
                 }
 
