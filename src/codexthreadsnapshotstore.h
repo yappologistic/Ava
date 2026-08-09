@@ -38,4 +38,6 @@ private:
     QString m_storagePath;
     QHash<QString, Entry> m_entries;
     bool m_dirty = false;
+
+    friend class CodexModelsTest;
 };

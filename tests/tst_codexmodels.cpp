@@ -1,3 +1,4 @@
+#include "codexappserverclient.h"
 #include "codexmodels.h"
 #include "codexthreadsnapshotstore.h"
 
@@ -38,7 +39,10 @@ private slots:
     void workDeltasStreamAndStayBounded();
     void promptNavigationTracksTurnsAndFinalResponses();
     void progressiveRestorePrependsHistoryWithoutReset();
+    void appServerPreservesOrderAcrossBackgroundParsing();
+    void appServerRejectsStaleBackgroundParsingAfterStop();
     void threadSnapshotsAreBoundedAndPersistent();
+    void threadSnapshotsEnforceHardBoundsAndSkipNoOpWrites();
     void modelsExposeCapabilities();
     void attachmentsClassifyLocalFiles();
 };
@@ -809,6 +813,69 @@ void CodexModelsTest::progressiveRestorePrependsHistoryWithoutReset()
     QCOMPARE(model.itemIdAt(8), QStringLiteral("user-5"));
 }
 
+void CodexModelsTest::appServerPreservesOrderAcrossBackgroundParsing()
+{
+    const bool disableWasSet = qEnvironmentVariableIsSet("AVA_CODEX_DISABLE_AUTOSTART");
+    const QByteArray previousDisable = qgetenv("AVA_CODEX_DISABLE_AUTOSTART");
+    qputenv("AVA_CODEX_DISABLE_AUTOSTART", QByteArrayLiteral("1"));
+    CodexAppServerClient client;
+    if (disableWasSet)
+        qputenv("AVA_CODEX_DISABLE_AUTOSTART", previousDisable);
+    else
+        qunsetenv("AVA_CODEX_DISABLE_AUTOSTART");
+
+    QSignalSpy notifications(&client, &CodexAppServerClient::notificationReceived);
+    const QByteArray largeLine = QJsonDocument(QJsonObject{
+        {"method", "large/first"},
+        {"params", QJsonObject{{"payload", QString(256 * 1024, QLatin1Char('x'))}}}
+    }).toJson(QJsonDocument::Compact);
+    const QByteArray followingLine = QJsonDocument(QJsonObject{
+        {"method", "small/second"},
+        {"params", QJsonObject{{"sequence", 2}}}
+    }).toJson(QJsonDocument::Compact);
+
+    client.consumeLine(largeLine);
+    client.consumeLine(followingLine);
+
+    QTRY_COMPARE_WITH_TIMEOUT(notifications.size(), 2, 5000);
+    QCOMPARE(notifications.at(0).at(0).toString(), QStringLiteral("large/first"));
+    QCOMPARE(notifications.at(1).at(0).toString(), QStringLiteral("small/second"));
+    QCOMPARE(client.m_backgroundParsesInFlight, 0);
+}
+
+void CodexModelsTest::appServerRejectsStaleBackgroundParsingAfterStop()
+{
+    const bool disableWasSet = qEnvironmentVariableIsSet("AVA_CODEX_DISABLE_AUTOSTART");
+    const QByteArray previousDisable = qgetenv("AVA_CODEX_DISABLE_AUTOSTART");
+    qputenv("AVA_CODEX_DISABLE_AUTOSTART", QByteArrayLiteral("1"));
+    CodexAppServerClient client;
+    if (disableWasSet)
+        qputenv("AVA_CODEX_DISABLE_AUTOSTART", previousDisable);
+    else
+        qunsetenv("AVA_CODEX_DISABLE_AUTOSTART");
+
+    QSignalSpy notifications(&client, &CodexAppServerClient::notificationReceived);
+    const QByteArray staleLine = QJsonDocument(QJsonObject{
+        {"method", "stale/old-generation"},
+        {"params", QJsonObject{{"payload", QString(256 * 1024, QLatin1Char('x'))}}}
+    }).toJson(QJsonDocument::Compact);
+    const QByteArray currentLine = QJsonDocument(QJsonObject{
+        {"method", "current/new-generation"},
+        {"params", QJsonObject{}}
+    }).toJson(QJsonDocument::Compact);
+
+    client.consumeLine(staleLine);
+    QCOMPARE(client.m_backgroundParsesInFlight, 1);
+    client.stop();
+    client.consumeLine(currentLine);
+
+    QCOMPARE(notifications.size(), 1);
+    QCOMPARE(notifications.constFirst().at(0).toString(),
+             QStringLiteral("current/new-generation"));
+    QTRY_COMPARE_WITH_TIMEOUT(client.m_backgroundParsesInFlight, 0, 5000);
+    QCOMPARE(notifications.size(), 1);
+}
+
 void CodexModelsTest::threadSnapshotsAreBoundedAndPersistent()
 {
     QTemporaryDir directory;
@@ -851,6 +918,75 @@ void CodexModelsTest::threadSnapshotsAreBoundedAndPersistent()
     QCOMPARE(restoredTurns.at(restoredTurns.size() - 1).toObject()
                  .value(QStringLiteral("id")).toString(),
              QStringLiteral("turn-59"));
+}
+
+void CodexModelsTest::threadSnapshotsEnforceHardBoundsAndSkipNoOpWrites()
+{
+    QJsonArray hugeItems;
+    for (int index = 0; index < 80; ++index) {
+        hugeItems.append(QJsonObject{
+            {"id", QStringLiteral("item-%1").arg(index)},
+            {"type", "agentMessage"},
+            {"text", QString(64 * 1024, QLatin1Char('x'))}
+        });
+    }
+    const QJsonObject oversizedThread{
+        {"id", "oversized"},
+        {"metadata", QJsonArray{QString(512 * 1024, QLatin1Char('m'))}},
+        {"turns", QJsonArray{
+            QJsonObject{{"id", "oldest"}},
+            QJsonObject{{"id", "newest"}, {"items", hugeItems}}
+        }}
+    };
+    constexpr qint64 maximumBytes = 128 * 1024;
+    const QJsonObject bounded = CodexThreadSnapshotStore::boundedThread(
+        oversizedThread, 48, maximumBytes);
+    const QByteArray boundedBytes = QJsonDocument(bounded).toJson(QJsonDocument::Compact);
+
+    QVERIFY(boundedBytes.size() <= maximumBytes);
+    const QJsonArray boundedTurns = bounded.value(QStringLiteral("turns")).toArray();
+    QVERIFY(!boundedTurns.isEmpty());
+    QCOMPARE(boundedTurns.at(boundedTurns.size() - 1).toObject()
+                 .value(QStringLiteral("id")).toString(),
+             QStringLiteral("newest"));
+
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("hard-bounded.json"));
+    CodexThreadSnapshotStore store(path);
+    const QJsonObject stableThread{
+        {"id", "stable"},
+        {"turns", QJsonArray{QJsonObject{{"id", "turn-1"}}}}
+    };
+    store.putThread(stableThread);
+    QVERIFY(store.m_dirty);
+    QVERIFY(store.flush());
+    QVERIFY(!store.m_dirty);
+    store.putThread(stableThread);
+    QVERIFY(!store.m_dirty);
+    store.updateViewport(QStringLiteral("stable"), QStringLiteral("turn-1"), -8.0, false);
+    QVERIFY(store.m_dirty);
+    QVERIFY(store.flush());
+    store.updateViewport(QStringLiteral("stable"), QStringLiteral("turn-1"), -8.0, false);
+    QVERIFY(!store.m_dirty);
+
+    QJsonArray chunks;
+    for (int index = 0; index < 40; ++index)
+        chunks.append(QString(64 * 1024, QLatin1Char('z')));
+    for (int index = 0; index < 12; ++index) {
+        store.putThread(QJsonObject{
+            {"id", QStringLiteral("large-%1").arg(index)},
+            {"turns", QJsonArray{QJsonObject{
+                {"id", QStringLiteral("turn-%1").arg(index)},
+                {"items", QJsonArray{QJsonObject{{"id", "output"}, {"chunks", chunks}}}}
+            }}}
+        });
+    }
+    QVERIFY(store.flush());
+    QVERIFY(QFileInfo(path).size() <= 12 * 1024 * 1024);
+    CodexThreadSnapshotStore restored(path);
+    QVERIFY(restored.count() > 0);
+    QVERIFY(restored.count() <= 12);
 }
 
 QTEST_GUILESS_MAIN(CodexModelsTest)

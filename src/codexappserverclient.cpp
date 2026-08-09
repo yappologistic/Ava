@@ -96,6 +96,7 @@ CodexAppServerClient::CodexAppServerClient(QObject *parent)
             this,
             [this](int exitCode, QProcess::ExitStatus status) {
         const bool stoppedIntentionally = m_stopping;
+        resetParsingState();
         setReady(false);
         m_pendingMethods.clear();
         m_initializeRequestId = 0;
@@ -203,9 +204,7 @@ void CodexAppServerClient::start()
         return;
     m_stopping = false;
     m_seenProcessStart = false;
-    m_outputBuffer.clear();
-    m_pendingLines.clear();
-    ++m_parseGeneration;
+    resetParsingState();
     m_standardErrorTail.clear();
     m_pendingMethods.clear();
     setReady(false);
@@ -219,6 +218,7 @@ void CodexAppServerClient::start()
 
 void CodexAppServerClient::stop()
 {
+    resetParsingState();
     if (m_process.state() == QProcess::NotRunning)
         return;
     m_stopping = true;
@@ -287,13 +287,17 @@ void CodexAppServerClient::sendObject(const QJsonObject &object)
 void CodexAppServerClient::consumeStandardOutput()
 {
     m_outputBuffer.append(m_process.readAllStandardOutput());
+    qsizetype cursor = 0;
     qsizetype newline = -1;
-    while ((newline = m_outputBuffer.indexOf('\n')) >= 0) {
-        QByteArray line = m_outputBuffer.left(newline).trimmed();
-        m_outputBuffer.remove(0, newline + 1);
+    while ((newline = m_outputBuffer.indexOf('\n', cursor)) >= 0) {
+        QByteArray line = m_outputBuffer.mid(cursor, newline - cursor).trimmed();
+        cursor = newline + 1;
         if (!line.isEmpty())
-            consumeLine(line);
+            m_pendingLines.enqueue(std::move(line));
     }
+    if (cursor > 0)
+        m_outputBuffer.remove(0, cursor);
+    processPendingLines();
 }
 
 void CodexAppServerClient::consumeLine(const QByteArray &line)
@@ -308,20 +312,24 @@ void CodexAppServerClient::processPendingLines()
         return;
 
     constexpr qsizetype kBackgroundParseThreshold = 128 * 1024;
-    while (!m_pendingLines.isEmpty()) {
+    const quint64 generation = m_parseGeneration;
+    while (generation == m_parseGeneration && !m_pendingLines.isEmpty()) {
         const QByteArray line = m_pendingLines.dequeue();
         if (line.size() >= kBackgroundParseThreshold) {
             m_largeParseInFlight = true;
-            const quint64 generation = m_parseGeneration;
+            ++m_backgroundParsesInFlight;
             auto *watcher = new QFutureWatcher<QJsonDocument>(this);
             connect(watcher, &QFutureWatcher<QJsonDocument>::finished, this,
                     [this, watcher, generation]() {
                 const QJsonDocument document = watcher->result();
                 watcher->deleteLater();
+                --m_backgroundParsesInFlight;
+                if (generation != m_parseGeneration)
+                    return;
                 m_largeParseInFlight = false;
+                dispatchDocument(document);
                 if (generation == m_parseGeneration)
-                    dispatchDocument(document);
-                processPendingLines();
+                    processPendingLines();
             });
             watcher->setFuture(QtConcurrent::run([line]() {
                 return QJsonDocument::fromJson(line);
@@ -330,6 +338,14 @@ void CodexAppServerClient::processPendingLines()
         }
         dispatchDocument(QJsonDocument::fromJson(line));
     }
+}
+
+void CodexAppServerClient::resetParsingState()
+{
+    ++m_parseGeneration;
+    m_outputBuffer.clear();
+    m_pendingLines.clear();
+    m_largeParseInFlight = false;
 }
 
 void CodexAppServerClient::dispatchDocument(const QJsonDocument &document)

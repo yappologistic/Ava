@@ -64,6 +64,7 @@ private:
     void consumeStandardOutput();
     void consumeLine(const QByteArray &line);
     void processPendingLines();
+    void resetParsingState();
     void dispatchDocument(const QJsonDocument &document);
     void setReady(bool ready);
     void setError(const QString &message);
@@ -85,4 +86,7 @@ private:
     bool m_stopping = false;
     bool m_seenProcessStart = false;
     bool m_largeParseInFlight = false;
+    int m_backgroundParsesInFlight = 0;
+
+    friend class CodexModelsTest;
 };

@@ -5,6 +5,8 @@ Item {
     id: root
 
     property string markdown: ""
+    readonly property var renderedSegments: root.visible
+                                            ? chatTextStyler.renderSegments(markdown) : []
     signal openUrlRequested(string url)
 
     implicitHeight: content.implicitHeight
@@ -15,7 +17,7 @@ Item {
         spacing: 10
 
         Repeater {
-            model: chatTextStyler.renderSegments(root.markdown)
+            model: root.renderedSegments
 
             delegate: Loader {
                 required property var modelData

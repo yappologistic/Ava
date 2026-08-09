@@ -11,6 +11,7 @@ private slots:
     void leavesLocalLinksUndecorated();
     void hidesInternalCitationMarkers();
     void codeFencesUseDedicatedSurface();
+    void completedRenderCacheHitsAndEvictsWithinBounds();
 };
 
 void ChatTextStylerTest::decoratesPublicWebLinksWithFavicons()
@@ -63,6 +64,48 @@ void ChatTextStylerTest::codeFencesUseDedicatedSurface()
     QVERIFY(html.contains(QStringLiteral("#include")));
     QVERIFY(html.contains(QStringLiteral("&lt;iostream&gt;")));
     QVERIFY(html.contains(QStringLiteral("color:")));
+}
+
+void ChatTextStylerTest::completedRenderCacheHitsAndEvictsWithinBounds()
+{
+    ChatTextStyler styler;
+    const QString markdown = QStringLiteral(
+        "Read [Qt](https://doc.qt.io/qt-6/qtextdocument.html).\n\n"
+        "```cpp\nint answer() { return 42; }\n```");
+
+    const QVariantList first = styler.renderSegments(markdown);
+    const quint64 missesAfterFirstRender = styler.m_renderCacheMisses;
+    const quint64 hitsBeforeSecondRender = styler.m_renderCacheHits;
+    const QVariantList second = styler.renderSegments(markdown);
+
+    QCOMPARE(second, first);
+    QCOMPARE(styler.m_renderCacheMisses, missesAfterFirstRender);
+    QCOMPARE(styler.m_renderCacheHits, hitsBeforeSecondRender + 1);
+    QVERIFY(first.constFirst().toMap().value(QStringLiteral("html")).toString()
+                .contains(QStringLiteral("icons.duckduckgo.com/ip3/doc.qt.io.ico")));
+    QCOMPARE(first.constLast().toMap().value(QStringLiteral("code")).toString(),
+             QStringLiteral("int answer() { return 42; }"));
+
+    for (qsizetype index = 0;
+         index < ChatTextStyler::kMaximumCacheEntries + 24;
+         ++index) {
+        styler.renderSegments(QStringLiteral("Unique completed response %1").arg(index));
+    }
+
+    QVERIFY(styler.m_renderCache.size() <= ChatTextStyler::kMaximumCacheEntries);
+    QVERIFY(styler.m_renderCacheBytes <= ChatTextStyler::kMaximumCacheBytes);
+    const qsizetype entriesBeforeBytePressure = styler.m_renderCache.size();
+    const QString largeBody(192 * 1024, QLatin1Char('x'));
+    for (int index = 0; index < 10; ++index) {
+        styler.renderSegments(QStringLiteral("Large response %1\n\n%2")
+                                  .arg(index)
+                                  .arg(largeBody));
+    }
+    QVERIFY(styler.m_renderCache.size() < entriesBeforeBytePressure);
+    QVERIFY(styler.m_renderCacheBytes <= ChatTextStyler::kMaximumCacheBytes);
+    const quint64 missesBeforeEvictedRender = styler.m_renderCacheMisses;
+    styler.renderSegments(markdown);
+    QVERIFY(styler.m_renderCacheMisses > missesBeforeEvictedRender);
 }
 
 QTEST_GUILESS_MAIN(ChatTextStylerTest)

@@ -6,6 +6,7 @@
 #include <QSet>
 #include <QTextDocument>
 #include <QUrl>
+#include <QVariantMap>
 
 namespace {
 
@@ -225,14 +226,7 @@ QString highlightedCodeHtml(const QString &code)
     return html;
 }
 
-} // namespace
-
-ChatTextStyler::ChatTextStyler(QObject *parent)
-    : QObject(parent)
-{
-}
-
-QString ChatTextStyler::renderMarkdown(const QString &markdown) const
+QString renderedMarkdownHtml(const QString &markdown)
 {
     const QString visibleMarkdown = sanitizedMarkdown(markdown);
 
@@ -277,8 +271,68 @@ QString ChatTextStyler::renderMarkdown(const QString &markdown) const
     return html;
 }
 
+qsizetype variantStorageBytes(const QVariant &value)
+{
+    constexpr qsizetype kNodeOverhead = 48;
+    if (value.metaType().id() == QMetaType::QString)
+        return kNodeOverhead + value.toString().size() * qsizetype(sizeof(QChar));
+    if (value.metaType().id() == QMetaType::QVariantList) {
+        qsizetype bytes = kNodeOverhead;
+        const QVariantList values = value.toList();
+        for (const QVariant &child : values)
+            bytes += variantStorageBytes(child);
+        return bytes;
+    }
+    if (value.metaType().id() == QMetaType::QVariantMap) {
+        qsizetype bytes = kNodeOverhead;
+        const QVariantMap values = value.toMap();
+        for (auto iterator = values.constBegin(); iterator != values.constEnd(); ++iterator) {
+            bytes += kNodeOverhead
+                + iterator.key().size() * qsizetype(sizeof(QChar))
+                + variantStorageBytes(iterator.value());
+        }
+        return bytes;
+    }
+    return kNodeOverhead;
+}
+
+QString renderCacheKey(QChar kind, const QString &markdown)
+{
+    QString key;
+    key.reserve(markdown.size() + 1);
+    key.append(kind);
+    key.append(markdown);
+    return key;
+}
+
+} // namespace
+
+ChatTextStyler::ChatTextStyler(QObject *parent)
+    : QObject(parent)
+{
+}
+
+QString ChatTextStyler::renderMarkdown(const QString &markdown) const
+{
+    const QString key = renderCacheKey(QChar(u'm'), markdown);
+    const QVariant cached = cachedRender(key);
+    if (cached.isValid())
+        return cached.toString();
+
+    ++m_renderCacheMisses;
+    const QString html = renderedMarkdownHtml(markdown);
+    cacheRender(key, html);
+    return html;
+}
+
 QVariantList ChatTextStyler::renderSegments(const QString &markdown) const
 {
+    const QString key = renderCacheKey(QChar(u's'), markdown);
+    const QVariant cached = cachedRender(key);
+    if (cached.isValid())
+        return cached.toList();
+
+    ++m_renderCacheMisses;
     const QString visibleMarkdown = sanitizedMarkdown(markdown);
     static const QRegularExpression fencePattern(
         QStringLiteral("```([^\\r\\n`]*)\\r?\\n([\\s\\S]*?)\\r?\\n```"));
@@ -321,7 +375,50 @@ QVariantList ChatTextStyler::renderSegments(const QString &markdown) const
             {QStringLiteral("html"), renderMarkdown(visibleMarkdown)}
         });
     }
+    cacheRender(key, segments);
     return segments;
+}
+
+QVariant ChatTextStyler::cachedRender(const QString &key) const
+{
+    const auto iterator = m_renderCache.constFind(key);
+    if (iterator == m_renderCache.constEnd())
+        return {};
+
+    ++m_renderCacheHits;
+    m_cacheRecency.removeOne(key);
+    m_cacheRecency.append(key);
+    return iterator->value;
+}
+
+void ChatTextStyler::cacheRender(const QString &key, const QVariant &value) const
+{
+    const qsizetype bytes = 64
+        + key.size() * qsizetype(sizeof(QChar))
+        + variantStorageBytes(value);
+    if (bytes > kMaximumCacheBytes)
+        return;
+
+    const auto previous = m_renderCache.find(key);
+    if (previous != m_renderCache.end()) {
+        m_renderCacheBytes -= previous->bytes;
+        m_renderCache.erase(previous);
+        m_cacheRecency.removeOne(key);
+    }
+    while (!m_cacheRecency.isEmpty()
+           && (m_renderCache.size() >= kMaximumCacheEntries
+               || m_renderCacheBytes + bytes > kMaximumCacheBytes)) {
+        const QString oldest = m_cacheRecency.takeFirst();
+        const auto oldestEntry = m_renderCache.find(oldest);
+        if (oldestEntry == m_renderCache.end())
+            continue;
+        m_renderCacheBytes -= oldestEntry->bytes;
+        m_renderCache.erase(oldestEntry);
+    }
+
+    m_renderCache.insert(key, CacheEntry{value, bytes});
+    m_cacheRecency.append(key);
+    m_renderCacheBytes += bytes;
 }
 
 void ChatTextStyler::copyText(const QString &text) const
