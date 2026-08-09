@@ -63,37 +63,55 @@ Item {
             tint: "#dddddf"
         }
 
-        Text {
-            id: headerText
+        Row {
+            id: headerLabel
             anchors.left: root.running ? orb.right : parent.left
             anchors.leftMargin: root.running ? 8 : 0
             anchors.verticalCenter: parent.verticalCenter
-            text: root.running ? (root.compacting ? "Compacting…" : "Thinking…")
-                               : (root.failed ? "Stopped with an error"
-                               : (root.interrupted ? "Stopped"
-                               : (root.compacting ? "Context compacted"
-                               : (root.elapsed.length > 0
-                                  ? "Worked for " + root.elapsed : "Worked")
-                               )))
-            color: root.failed ? "#b9827e"
-                               : (headerHover.hovered ? "#aaaab1" : "#777780")
-            font.family: uiFont
-            font.pixelSize: 11
+            spacing: 4
 
-            Behavior on color {
-                ColorAnimation { duration: reducedMotion ? 0 : 110 }
+            Text {
+                id: headerText
+                text: root.running ? (root.compacting ? "Compacting…" : "Thinking…")
+                                   : (root.failed ? "Stopped with an error"
+                                   : (root.interrupted ? "Stopped"
+                                   : (root.compacting ? "Context compacted"
+                                   : (root.elapsed.length > 0 ? "Worked for" : "Worked")
+                                   )))
+                color: root.failed ? "#b9827e"
+                                   : (headerHover.hovered ? "#aaaab1" : "#777780")
+                font.family: uiFont
+                font.pixelSize: 11
+
+                Behavior on color {
+                    ColorAnimation { duration: reducedMotion ? 0 : 110 }
+                }
+            }
+
+            Text {
+                visible: !root.running && !root.failed && !root.interrupted
+                         && !root.compacting && root.elapsed.length > 0
+                text: root.elapsed
+                color: headerHover.hovered ? "#aaaab1" : "#777780"
+                font.family: monoFont
+                font.pixelSize: 10
+
+                Behavior on color {
+                    ColorAnimation { duration: reducedMotion ? 0 : 110 }
+                }
             }
         }
 
-        Text {
-            anchors.left: headerText.right
+        Image {
+            anchors.left: headerLabel.right
             anchors.leftMargin: 8
             anchors.verticalCenter: parent.verticalCenter
-            text: "\uE76C"
+            width: 12
+            height: 12
+            source: Qt.resolvedUrl("../../assets/icons/fluent-chat/chevron-right.svg")
+            sourceSize: Qt.size(20, 20)
             rotation: root.expanded ? 90 : 0
-            color: "#66666e"
-            font.family: "Segoe Fluent Icons"
-            font.pixelSize: 9
+            opacity: 0.52
             visible: !root.compactingOnly
 
             Behavior on rotation {

@@ -121,7 +121,7 @@ Rectangle {
             horizontalAlignment: Text.AlignRight
             elide: Text.ElideRight
             font.family: uiFont
-            font.pixelSize: 9
+            font.pixelSize: 10
         }
 
         ChatIconButton {
@@ -129,7 +129,7 @@ Rectangle {
             anchors.right: closeButton.left
             anchors.rightMargin: 1
             anchors.verticalCenter: parent.verticalCenter
-            symbol: "\uE72C"
+            iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/refresh.svg")
             accessibleName: "Refresh Git changes"
             enabled: !chatController.git.busy
             onClicked: root.refresh()
@@ -140,7 +140,7 @@ Rectangle {
             anchors.right: parent.right
             anchors.rightMargin: 7
             anchors.verticalCenter: parent.verticalCenter
-            symbol: "\uE711"
+            iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/dismiss.svg")
             accessibleName: "Close changes"
             onClicked: root.closeRequested()
         }
@@ -180,7 +180,7 @@ Rectangle {
             required property int index
 
             width: fileList.width
-            height: 44
+            height: 48
             hoverEnabled: true
             Accessible.name: modelData.path + ", " + modelData.status + ", "
                              + modelData.additions + " additions, "
@@ -195,25 +195,25 @@ Rectangle {
                 Text {
                     id: fileName
                     x: 14
-                    y: 7
+                    y: 8
                     width: Math.max(40, parent.width - 126)
                     text: fileButton.modelData.path.split("/").pop()
                     color: fileButton.modelData.path === chatController.git.selectedPath
                            ? "#d8eae8" : "#c5c5cb"
                     elide: Text.ElideRight
                     font.family: uiFont
-                    font.pixelSize: 10
+                    font.pixelSize: 11
                     font.weight: Font.DemiBold
                 }
                 Text {
                     x: 14
-                    y: 24
+                    y: 27
                     width: Math.max(40, parent.width - 126)
                     text: fileButton.modelData.status + " · " + fileButton.modelData.path
-                    color: "#67676f"
+                    color: "#818189"
                     elide: Text.ElideMiddle
                     font.family: uiFont
-                    font.pixelSize: 8
+                    font.pixelSize: 9
                 }
                 Text {
                     anchors.right: deletionCount.left
@@ -223,7 +223,7 @@ Rectangle {
                           ? "+new" : "+" + fileButton.modelData.additions
                     color: "#8fc09f"
                     font.family: monoFont
-                    font.pixelSize: 9
+                    font.pixelSize: 10
                 }
                 Text {
                     id: deletionCount
@@ -234,7 +234,7 @@ Rectangle {
                     visible: !fileButton.modelData.untracked
                     color: "#c9908a"
                     font.family: monoFont
-                    font.pixelSize: 9
+                    font.pixelSize: 10
                 }
             }
 
@@ -257,9 +257,9 @@ Rectangle {
             visible: fileList.count === 0 && !chatController.git.busy
             text: chatController.git.repositoryPath.length > 0
                   ? "Working tree is clean" : "No Git repository loaded"
-            color: "#66666e"
+            color: "#85858d"
             font.family: uiFont
-            font.pixelSize: 10
+            font.pixelSize: 11
         }
     }
 
@@ -277,10 +277,10 @@ Rectangle {
             y: 8
             width: parent.width - 116
             text: chatController.git.selectedPath
-            color: "#aaaab1"
+            color: "#b8b8bf"
             elide: Text.ElideMiddle
             font.family: monoFont
-            font.pixelSize: 9
+            font.pixelSize: 10
         }
 
         Row {
@@ -293,14 +293,14 @@ Rectangle {
                       ? "+new" : "+" + chatController.git.selectedAdditions
                 color: "#8fc09f"
                 font.family: monoFont
-                font.pixelSize: 9
+                font.pixelSize: 10
             }
             Text {
                 text: "−" + chatController.git.selectedDeletions
                 visible: root.selectedChange.untracked !== true
                 color: "#c9908a"
                 font.family: monoFont
-                font.pixelSize: 9
+                font.pixelSize: 10
             }
         }
 
@@ -362,11 +362,11 @@ Rectangle {
             text: chatController.git.diffLoading
                   ? "<pre><font color='#66666e'>Loading diff…</font></pre>"
                   : root.diffHtml(chatController.git.selectedDiff)
-            color: "#b9b9c0"
+            color: "#cacad0"
             selectionColor: "#355b65"
             selectedTextColor: "#ffffff"
             font.family: monoFont
-            font.pixelSize: 11
+            font.pixelSize: 12
             wrapMode: TextEdit.NoWrap
             leftPadding: 14
             rightPadding: 14
@@ -402,6 +402,9 @@ Rectangle {
             ChatTextButton {
                 height: 31
                 text: "Stage"
+                baseColor: "#20282a"
+                foregroundColor: "#c8e7e3"
+                Accessible.name: "Stage selected file"
                 visible: !chatController.git.selectedStaged
                          && root.selectedChange.unstaged === true
                 enabled: !chatController.git.busy
@@ -412,6 +415,9 @@ Rectangle {
             ChatTextButton {
                 height: 31
                 text: "Unstage"
+                baseColor: "#20282a"
+                foregroundColor: "#c8e7e3"
+                Accessible.name: "Unstage selected file"
                 visible: chatController.git.selectedStaged
                          && root.selectedChange.staged === true
                 enabled: !chatController.git.busy
@@ -422,7 +428,10 @@ Rectangle {
             ChatTextButton {
                 height: 31
                 text: root.selectedChange.untracked === true ? "Delete file" : "Discard"
-                foregroundColor: "#c99691"
+                foregroundColor: "#e2a59f"
+                Accessible.name: root.selectedChange.untracked === true
+                                 ? "Delete selected untracked file"
+                                 : "Discard changes in selected file"
                 visible: !chatController.git.selectedStaged
                          && root.selectedChange.unstaged === true
                 enabled: !chatController.git.busy
@@ -444,13 +453,18 @@ Rectangle {
             ChatTextButton {
                 text: "Commit"
                 height: 31
-                baseColor: "#20282a"
+                baseColor: "#263b39"
+                hoverColor: "#304a47"
+                pressedColor: "#365652"
+                foregroundColor: "#dff5f2"
+                Accessible.name: "Commit staged changes"
                 enabled: chatController.git.hasChanges && !chatController.git.busy
                 onClicked: commitPopup.open()
             }
             ChatTextButton {
                 text: "Push"
                 height: 31
+                Accessible.name: "Push current branch"
                 enabled: chatController.git.repositoryPath.length > 0
                          && !chatController.git.busy
                 onClicked: chatController.git.push(chatController.projectPath)
@@ -458,6 +472,7 @@ Rectangle {
             ChatTextButton {
                 text: "Draft PR"
                 height: 31
+                Accessible.name: "Create a draft pull request"
                 enabled: chatController.git.repositoryPath.length > 0
                          && !chatController.git.busy
                 onClicked: chatController.git.createPullRequest(chatController.projectPath, true)
@@ -505,6 +520,7 @@ Rectangle {
                 anchors.right: parent.right
                 text: "Commit changes"
                 baseColor: "#242429"
+                Accessible.name: "Commit changes"
                 enabled: commitMessage.text.trim().length > 0
                 onClicked: {
                     chatController.git.commitAll(chatController.projectPath,
@@ -552,21 +568,23 @@ Rectangle {
                 color: "#9a9aa2"
                 elide: Text.ElideMiddle
                 font.family: monoFont
-                font.pixelSize: 9
+                font.pixelSize: 10
             }
             Text {
                 width: parent.width
                 text: "This affects one file and cannot be undone by Ava."
-                color: "#777780"
+                color: "#92929a"
                 wrapMode: Text.Wrap
                 font.family: uiFont
-                font.pixelSize: 9
+                font.pixelSize: 10
             }
             Row {
                 anchors.right: parent.right
                 spacing: 4
                 ChatTextButton {
+                    id: cancelDiscardButton
                     text: "Cancel"
+                    Accessible.name: "Cancel discard"
                     onClicked: discardPopup.close()
                 }
                 ChatTextButton {
@@ -574,6 +592,9 @@ Rectangle {
                     baseColor: "#39201f"
                     hoverColor: "#4a2725"
                     foregroundColor: "#efbbb5"
+                    Accessible.name: root.selectedChange.untracked === true
+                                     ? "Delete untracked file permanently"
+                                     : "Discard file changes permanently"
                     onClicked: {
                         const path = root.pendingDiscardPath
                         discardPopup.close()
@@ -590,6 +611,7 @@ Rectangle {
             border.width: 1
             border.color: "#49302e"
         }
+        onOpened: cancelDiscardButton.forceActiveFocus()
         onClosed: root.pendingDiscardPath = ""
     }
 }

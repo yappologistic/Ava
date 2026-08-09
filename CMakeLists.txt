@@ -66,6 +66,7 @@ qt_add_qml_module(AvaChat
     QML_FILES
         qml/chat/ChatIconButton.qml
         qml/chat/ChatTextButton.qml
+        qml/chat/ChatWindowResizeArea.qml
         qml/chat/CodexAttachmentDropLayer.qml
         qml/chat/CodexAttachmentGallery.qml
         qml/chat/CodexAttachmentStrip.qml
@@ -80,6 +81,32 @@ qt_add_qml_module(AvaChat
         qml/chat/CodexWorkDisclosure.qml
     RESOURCES
         assets/icons/codex-terminal-light.svg
+        assets/icons/fluent-chat/LICENSE
+        assets/icons/fluent-chat/add.svg
+        assets/icons/fluent-chat/attach.svg
+        assets/icons/fluent-chat/audio.svg
+        assets/icons/fluent-chat/changes.svg
+        assets/icons/fluent-chat/chevron-down.svg
+        assets/icons/fluent-chat/chevron-right.svg
+        assets/icons/fluent-chat/code.svg
+        assets/icons/fluent-chat/copy.svg
+        assets/icons/fluent-chat/dismiss.svg
+        assets/icons/fluent-chat/document.svg
+        assets/icons/fluent-chat/download.svg
+        assets/icons/fluent-chat/error.svg
+        assets/icons/fluent-chat/flash-filled.svg
+        assets/icons/fluent-chat/flash.svg
+        assets/icons/fluent-chat/image.svg
+        assets/icons/fluent-chat/maximize.svg
+        assets/icons/fluent-chat/minimize.svg
+        assets/icons/fluent-chat/navigation.svg
+        assets/icons/fluent-chat/plan.svg
+        assets/icons/fluent-chat/reasoning.svg
+        assets/icons/fluent-chat/refresh.svg
+        assets/icons/fluent-chat/restore.svg
+        assets/icons/fluent-chat/search.svg
+        assets/icons/fluent-chat/send.svg
+        assets/icons/fluent-chat/stop.svg
         assets/fonts/Inter[opsz,wght].ttf
         assets/fonts/OFL-Inter.txt
         assets/fonts/GeistMono[wght].ttf

@@ -1,4 +1,5 @@
 #include "codexappserverclient.h"
+#include "codexchatcontroller.h"
 #include "codexmodels.h"
 #include "codexthreadsnapshotstore.h"
 
@@ -45,7 +46,23 @@ private slots:
     void threadSnapshotsEnforceHardBoundsAndSkipNoOpWrites();
     void modelsExposeCapabilities();
     void attachmentsClassifyLocalFiles();
+    void dismissedErrorStaysHiddenUntilTheNextError();
 };
+
+void CodexModelsTest::dismissedErrorStaysHiddenUntilTheNextError()
+{
+    qputenv("AVA_CODEX_DISABLE_AUTOSTART", "1");
+    CodexChatController controller;
+
+    controller.setVisualTestState(QStringLiteral("error"));
+    QVERIFY(!controller.errorMessage().isEmpty());
+
+    controller.dismissError();
+    QVERIFY(controller.errorMessage().isEmpty());
+
+    controller.setVisualTestState(QStringLiteral("error"));
+    QVERIFY(!controller.errorMessage().isEmpty());
+}
 
 void CodexModelsTest::threadsAreSortedAndUpdated()
 {

@@ -20,10 +20,44 @@ ApplicationWindow {
     property bool inspectorOpen: false
     property bool threadSearchOpen: false
     property real revealProgress: 0
-    property int sidebarWidth: sidebarOpen ? 238 : 0
-    property int inspectorWidth: inspectorOpen ? Math.min(410, width * 0.37) : 0
+    readonly property int inspectorSidebarBreakpoint: 1360
+    readonly property int inspectorOverlayBreakpoint: 940
+    readonly property bool inspectorReplacesMain: inspectorOpen
+                                                   && width < inspectorOverlayBreakpoint
+    readonly property bool sidebarVisible: sidebarOpen
+                                           && !(inspectorOpen
+                                                && width < inspectorSidebarBreakpoint)
+    property int sidebarWidth: sidebarVisible ? 238 : 0
+    readonly property int inspectorMinimumWidth: 320
+    readonly property int inspectorMaximumWidth: 720
+    readonly property int mainMinimumWidth: 540
+    property real inspectorPreferredWidth: chatLayoutSettings.inspectorWidth
+    property bool inspectorDragging: false
+    readonly property int availableInspectorWidth: Math.max(
+        inspectorMinimumWidth,
+        width - sidebarWidth - mainMinimumWidth)
+    property int inspectorWidth: inspectorOpen
+                                 ? (inspectorReplacesMain
+                                    ? width
+                                    : Math.round(Math.min(
+                                        inspectorMaximumWidth,
+                                        availableInspectorWidth,
+                                        Math.max(inspectorMinimumWidth,
+                                                 inspectorPreferredWidth)))) : 0
     readonly property int headerHeight: 54
     readonly property color accent: "#79d8ce"
+
+    function clampInspectorWidth(value) {
+        return Math.round(Math.min(inspectorMaximumWidth,
+                                  availableInspectorWidth,
+                                  Math.max(inspectorMinimumWidth, value)))
+    }
+
+    function setInspectorWidth(value, persist) {
+        inspectorPreferredWidth = clampInspectorWidth(value)
+        if (persist)
+            chatLayoutSettings.saveInspectorWidth(inspectorPreferredWidth)
+    }
 
     function toggleMaximize() {
         if (visibility === Window.Maximized)
@@ -32,7 +66,46 @@ ApplicationWindow {
             showMaximized()
     }
 
+    function toggleSidebar() {
+        if (inspectorOpen && width < inspectorSidebarBreakpoint) {
+            inspectorOpen = false
+            sidebarOpen = true
+            return
+        }
+        sidebarOpen = !sidebarOpen
+    }
+
+    function toggleInspector() {
+        inspectorOpen = !inspectorOpen
+        if (inspectorOpen && threadSearchOpen) {
+            threadSearchOpen = false
+            threadSearchField.text = ""
+            chatController.clearThreadSearch()
+        }
+    }
+
+    function openPopupAtAnchor(popup, anchor) {
+        popup.open()
+        Qt.callLater(function() {
+            const margin = 8
+            const point = anchor.mapToItem(Overlay.overlay, 0, 0)
+            const maxX = Math.max(margin, Overlay.overlay.width - popup.width - margin)
+            const maxY = Math.max(margin, Overlay.overlay.height - popup.height - margin)
+            let targetY = point.y - popup.height - margin
+            if (targetY < margin)
+                targetY = point.y + anchor.height + margin
+            popup.x = Math.round(Math.max(margin, Math.min(point.x, maxX)))
+            popup.y = Math.round(Math.max(margin, Math.min(targetY, maxY)))
+        })
+    }
+
+    function openNewChatMenu(anchor) {
+        openPopupAtAnchor(newChatPopup, anchor)
+    }
+
     function openThreadSearch() {
+        if (inspectorOpen && width < inspectorSidebarBreakpoint)
+            inspectorOpen = false
         sidebarOpen = true
         threadSearchOpen = true
         Qt.callLater(function() { threadSearchField.forceActiveFocus() })
@@ -60,6 +133,13 @@ ApplicationWindow {
     Component.onCompleted: {
         revealProgress = 1
         composer.focusComposer()
+        if (qaMode && qaVisualState === "effort-menu") {
+            Qt.callLater(function() {
+                window.openPopupAtAnchor(effortPopup, composer.effortAnchorItem)
+            })
+        } else if (qaMode && qaVisualState === "inspector") {
+            inspectorOpen = true
+        }
     }
 
     onClosing: function(close) {
@@ -74,21 +154,23 @@ ApplicationWindow {
         NumberAnimation { duration: reducedMotion ? 0 : 180; easing.type: Easing.OutCubic }
     }
     Behavior on inspectorWidth {
+        enabled: !window.inspectorDragging
         NumberAnimation { duration: reducedMotion ? 0 : 190; easing.type: Easing.OutCubic }
     }
 
     Shortcut {
         sequence: "Ctrl+N"
-        onActivated: newChatPopup.open()
+        onActivated: window.openNewChatMenu(window.sidebarVisible
+                                            ? newChatButton : projectButton)
     }
     Shortcut {
         sequence: "Ctrl+B"
-        onActivated: window.sidebarOpen = !window.sidebarOpen
+        onActivated: window.toggleSidebar()
     }
     Shortcut {
         sequence: "Ctrl+Shift+D"
         enabled: chatController.diffText.length > 0
-        onActivated: window.inspectorOpen = !window.inspectorOpen
+        onActivated: window.toggleInspector()
     }
     Shortcut {
         sequence: "Ctrl+L"
@@ -146,15 +228,15 @@ ApplicationWindow {
                     id: sidebarToggle
                     anchors.verticalCenter: parent.verticalCenter
                     z: 2
-                    symbol: "\uE700"
-                    accessibleName: window.sidebarOpen ? "Hide conversations" : "Show conversations"
-                    onClicked: window.sidebarOpen = !window.sidebarOpen
+                    iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/navigation.svg")
+                    accessibleName: window.sidebarVisible ? "Hide conversations" : "Show conversations"
+                    onClicked: window.toggleSidebar()
                 }
 
                 ChatIconButton {
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: window.sidebarOpen
-                    symbol: "\uE721"
+                    visible: window.sidebarVisible
+                    iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/search.svg")
                     accessibleName: "Search conversations"
                     baseColor: window.threadSearchOpen ? "#1d1d21" : "transparent"
                     foregroundColor: window.threadSearchOpen ? "#d3d3d8" : "#8b8b93"
@@ -180,11 +262,12 @@ ApplicationWindow {
                             font.weight: Font.DemiBold
                             anchors.verticalCenter: parent.verticalCenter
                         }
-                        Text {
-                            text: "\uE70D"
-                            color: "#6f6f77"
-                            font.family: "Segoe Fluent Icons"
-                            font.pixelSize: 9
+                        Image {
+                            width: 12
+                            height: 12
+                            source: Qt.resolvedUrl("../../assets/icons/fluent-chat/chevron-down.svg")
+                            sourceSize: Qt.size(20, 20)
+                            opacity: 0.55
                             anchors.verticalCenter: parent.verticalCenter
                         }
                     }
@@ -225,11 +308,11 @@ ApplicationWindow {
                 ChatIconButton {
                     anchors.verticalCenter: parent.verticalCenter
                     visible: chatController.diffText.length > 0
-                    symbol: "\uE8A5"
+                    iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/changes.svg")
                     accessibleName: window.inspectorOpen ? "Hide changes" : "Show changes"
                     baseColor: window.inspectorOpen ? "#1f2b2b" : "transparent"
                     foregroundColor: window.inspectorOpen ? "#a2ddd6" : "#8b8b93"
-                    onClicked: window.inspectorOpen = !window.inspectorOpen
+                    onClicked: window.toggleInspector()
                 }
             }
 
@@ -242,20 +325,22 @@ ApplicationWindow {
 
                 ChatIconButton {
                     anchors.verticalCenter: parent.verticalCenter
-                    symbol: "\uE921"
+                    iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/minimize.svg")
                     accessibleName: "Minimize Ava Chat"
                     onClicked: window.showMinimized()
                 }
                 ChatIconButton {
                     anchors.verticalCenter: parent.verticalCenter
-                    symbol: window.visibility === Window.Maximized ? "\uE923" : "\uE922"
+                    iconSource: window.visibility === Window.Maximized
+                                ? Qt.resolvedUrl("../../assets/icons/fluent-chat/restore.svg")
+                                : Qt.resolvedUrl("../../assets/icons/fluent-chat/maximize.svg")
                     accessibleName: window.visibility === Window.Maximized
                                     ? "Restore Ava Chat" : "Maximize Ava Chat"
                     onClicked: window.toggleMaximize()
                 }
                 ChatIconButton {
                     anchors.verticalCenter: parent.verticalCenter
-                    symbol: "\uE8BB"
+                    iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/dismiss.svg")
                     accessibleName: "Close Ava Chat"
                     hoverColor: "#c42b1c"
                     pressedColor: "#a82519"
@@ -284,7 +369,7 @@ ApplicationWindow {
 
                 Rectangle {
                     id: threadSearchSurface
-                    x: window.sidebarOpen ? 10 : 0
+                    x: window.sidebarVisible ? 10 : 0
                     y: 8
                     width: 218
                     height: window.threadSearchOpen ? 36 : 0
@@ -294,13 +379,14 @@ ApplicationWindow {
                     visible: opacity > 0
                     clip: true
 
-                    Text {
+                    Image {
                         x: 11
                         anchors.verticalCenter: parent.verticalCenter
-                        text: "\uE721"
-                        color: "#74747c"
-                        font.family: "Segoe Fluent Icons"
-                        font.pixelSize: 12
+                        width: 15
+                        height: 15
+                        source: Qt.resolvedUrl("../../assets/icons/fluent-chat/search.svg")
+                        sourceSize: Qt.size(20, 20)
+                        opacity: 0.62
                     }
 
                     TextField {
@@ -352,7 +438,9 @@ ApplicationWindow {
                         anchors.verticalCenter: parent.verticalCenter
                         width: 32
                         height: 32
-                        symbol: chatController.threadSearchPending ? "\uE895" : "\uE711"
+                        iconSource: chatController.threadSearchPending
+                                    ? Qt.resolvedUrl("../../assets/icons/fluent-chat/refresh.svg")
+                                    : Qt.resolvedUrl("../../assets/icons/fluent-chat/dismiss.svg")
                         accessibleName: chatController.threadSearchPending
                                         ? "Searching conversations" : "Clear search"
                         enabled: !chatController.threadSearchPending
@@ -386,12 +474,12 @@ ApplicationWindow {
 
                 ListView {
                     id: threadList
-                    x: window.sidebarOpen ? 8 : 0
+                    x: window.sidebarVisible ? 8 : 0
                     y: window.threadSearchOpen ? 52 : 8
                     width: 222
                     height: sidebar.height - 64 - (window.threadSearchOpen ? 44 : 0)
-                    opacity: window.sidebarOpen ? 1 : 0
-                    enabled: window.sidebarOpen
+                    opacity: window.sidebarVisible ? 1 : 0
+                    enabled: window.sidebarVisible
                     model: chatController.threads
                     clip: true
                     spacing: 2
@@ -469,7 +557,7 @@ ApplicationWindow {
                                 wrapMode: Text.NoWrap
                                 maximumLineCount: 1
                                 font.family: uiFont
-                                font.pixelSize: 10
+                                font.pixelSize: 11
                                 font.weight: Font.DemiBold
                             }
                             Text {
@@ -477,12 +565,12 @@ ApplicationWindow {
                                 y: 28
                                 width: parent.width - 24
                                 text: threadRow.preview
-                                color: "#5f5f67"
+                                color: "#777780"
                                 elide: Text.ElideRight
                                 wrapMode: Text.NoWrap
                                 maximumLineCount: 1
                                 font.family: uiFont
-                                font.pixelSize: 8
+                                font.pixelSize: 9
                             }
                         }
 
@@ -517,23 +605,23 @@ ApplicationWindow {
 
                 Button {
                     id: newChatButton
-                    x: window.sidebarOpen ? 10 : 2
+                    x: window.sidebarVisible ? 10 : 2
                     anchors.bottom: parent.bottom
                     anchors.bottomMargin: 10
                     width: 218
                     height: 38
-                    opacity: window.sidebarOpen ? 1 : 0
-                    enabled: window.sidebarOpen
-                    onClicked: newChatPopup.open()
+                    opacity: window.sidebarVisible ? 1 : 0
+                    enabled: window.sidebarVisible
+                    onClicked: window.openNewChatMenu(newChatButton)
                     Accessible.name: "New Codex conversation"
                     contentItem: Row {
                         x: 11
                         spacing: 9
-                        Text {
-                            text: "\uE710"
-                            color: "#d8d8dd"
-                            font.family: "Segoe Fluent Icons"
-                            font.pixelSize: 13
+                        Image {
+                            width: 16
+                            height: 16
+                            source: Qt.resolvedUrl("../../assets/icons/fluent-chat/add.svg")
+                            sourceSize: Qt.size(20, 20)
                             anchors.verticalCenter: parent.verticalCenter
                         }
                         Text {
@@ -567,8 +655,10 @@ ApplicationWindow {
             Item {
                 id: mainRegion
                 x: window.sidebarWidth
-                width: parent.width - window.sidebarWidth - window.inspectorWidth
+                width: parent.width - window.sidebarWidth
+                       - (window.inspectorReplacesMain ? 0 : window.inspectorWidth)
                 height: parent.height
+                visible: !window.inspectorReplacesMain
 
                 Rectangle {
                     anchors.fill: parent
@@ -590,9 +680,12 @@ ApplicationWindow {
                     opacity: visible ? 1 : 0
 
                     Text {
-                        x: 13
+                        anchors.left: parent.left
+                        anchors.leftMargin: 13
+                        anchors.right: statusAction.visible
+                                       ? statusAction.left : dismissErrorButton.left
+                        anchors.rightMargin: 7
                         anchors.verticalCenter: parent.verticalCenter
-                        width: parent.width - 92
                         text: chatController.errorMessage.length > 0
                               ? chatController.errorMessage : "Sign in to Codex to begin"
                         color: chatController.errorMessage.length > 0 ? "#e7a09a" : "#b7b7bd"
@@ -601,8 +694,9 @@ ApplicationWindow {
                         font.pixelSize: 10
                     }
                     ChatTextButton {
+                        id: statusAction
                         anchors.right: parent.right
-                        anchors.rightMargin: 8
+                        anchors.rightMargin: dismissErrorButton.visible ? 43 : 8
                         anchors.verticalCenter: parent.verticalCenter
                         height: 28
                         text: chatController.connected ? "Sign in" : "Retry"
@@ -610,6 +704,19 @@ ApplicationWindow {
                         onClicked: chatController.connected
                                    ? chatController.startLogin()
                                    : chatController.retryConnection()
+                    }
+                    ChatIconButton {
+                        id: dismissErrorButton
+                        anchors.right: parent.right
+                        anchors.rightMargin: 5
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 32
+                        height: 32
+                        visible: chatController.errorMessage.length > 0
+                        iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/dismiss.svg")
+                        accessibleName: "Dismiss error"
+                        foregroundColor: "#b98985"
+                        onClicked: chatController.dismissError()
                     }
                 }
 
@@ -875,7 +982,8 @@ ApplicationWindow {
                               && transcript.count === 0
                               ? "Restoring conversation…"
                               : (chatController.hasProject
-                                 ? chatController.projectName : "Choose a project")
+                                 ? "Ask Codex about " + chatController.projectName
+                                 : "Choose a project")
                         color: "#dcdce1"
                         horizontalAlignment: Text.AlignHCenter
                         font.family: uiFont
@@ -891,11 +999,11 @@ ApplicationWindow {
                                  : chatController.projectPath)
                               : ""
                         visible: text.length > 0
-                        color: "#66666e"
+                        color: "#7a7a82"
                         horizontalAlignment: Text.AlignHCenter
                         elide: Text.ElideMiddle
                         font.family: chatController.environmentMode === "worktree" ? monoFont : uiFont
-                        font.pixelSize: 9
+                        font.pixelSize: 10
                     }
 
                     ChatTextButton {
@@ -956,7 +1064,7 @@ ApplicationWindow {
                         anchors.rightMargin: 7
                         anchors.top: parent.top
                         anchors.topMargin: 6
-                        symbol: "\uE711"
+                        iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/dismiss.svg")
                         accessibleName: "Continue without answering"
                         onClicked: chatController.cancelUserInput()
                     }
@@ -1114,21 +1222,18 @@ ApplicationWindow {
                     anchors.bottomMargin: 16
                     onAttachRequested: fileDialog.open()
                     onModelRequested: function(anchor) {
-                        modelPopup.x = Math.max(12, anchor.mapToItem(mainRegion, 0, 0).x)
-                        modelPopup.y = composer.y - modelPopup.height - 8
-                        modelPopup.open()
+                        window.openPopupAtAnchor(modelPopup, anchor)
                     }
                     onEffortRequested: function(anchor) {
-                        effortPopup.x = Math.max(12, anchor.mapToItem(mainRegion, 0, 0).x)
-                        effortPopup.y = composer.y - effortPopup.height - 8
-                        effortPopup.open()
+                        window.openPopupAtAnchor(effortPopup, anchor)
                     }
                 }
 
                 Popup {
                     id: modelPopup
+                    parent: Overlay.overlay
                     width: 260
-                    height: Math.min(330, modelList.contentHeight + 16)
+                    height: Math.min(330, Math.max(64, modelList.contentHeight + 16))
                     padding: 8
                     modal: false
                     focus: true
@@ -1140,6 +1245,10 @@ ApplicationWindow {
                         spacing: 2
                         model: chatController.models
                         currentIndex: chatController.models.rowForModel(chatController.selectedModel)
+                        keyNavigationEnabled: true
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.List
+                        Accessible.name: "Available Codex models"
 
                         delegate: Button {
                             required property int index
@@ -1151,6 +1260,10 @@ ApplicationWindow {
                             width: modelList.width
                             height: 48
                             hoverEnabled: true
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.RadioButton
+                            Accessible.name: displayName
+                            Accessible.checked: modelId === chatController.selectedModel
                             onClicked: {
                                 chatController.selectedModel = modelId
                                 modelPopup.close()
@@ -1192,38 +1305,75 @@ ApplicationWindow {
                         border.width: 1
                         border.color: "#34343a"
                     }
+                    onOpened: modelList.forceActiveFocus()
+                    onClosed: composer.focusComposer()
                 }
 
                 Popup {
                     id: effortPopup
+                    parent: Overlay.overlay
                     width: 150
-                    height: effortColumn.implicitHeight + 16
+                    height: Math.min(260, Math.max(54,
+                                                   chatController.availableEfforts.length * 38 + 16))
                     padding: 8
                     modal: false
                     focus: true
                     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
-                    contentItem: Column {
-                        id: effortColumn
-                        width: parent.width
+                    function selectCurrentEffort() {
+                        if (effortList.currentIndex < 0
+                                || effortList.currentIndex
+                                   >= chatController.availableEfforts.length)
+                            return
+                        chatController.selectedEffort =
+                            chatController.availableEfforts[effortList.currentIndex]
+                        effortPopup.close()
+                    }
+
+                    contentItem: ListView {
+                        id: effortList
+                        clip: true
                         spacing: 2
-                        Repeater {
-                            model: chatController.availableEfforts
-                            delegate: ChatTextButton {
-                                id: effortOption
-                                required property string modelData
-                                width: effortColumn.width
-                                height: 36
-                                text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
-                                foregroundColor: modelData === chatController.selectedEffort
-                                                 ? "#bce9e4" : "#aaaab2"
-                                baseColor: modelData === chatController.selectedEffort
-                                           ? "#1d2929" : "transparent"
-                                hoverColor: "#222226"
-                                onClicked: {
-                                    chatController.selectedEffort = modelData
-                                    effortPopup.close()
-                                }
+                        model: chatController.availableEfforts
+                        keyNavigationEnabled: true
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.List
+                        Accessible.name: "Reasoning effort options"
+                        ScrollBar.vertical: ScrollBar {
+                            policy: effortList.contentHeight > effortList.height
+                                    ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+                        }
+                        Keys.onReturnPressed: function(event) {
+                            effortPopup.selectCurrentEffort()
+                            event.accepted = true
+                        }
+                        Keys.onEnterPressed: function(event) {
+                            effortPopup.selectCurrentEffort()
+                            event.accepted = true
+                        }
+
+                        delegate: ChatTextButton {
+                            id: effortOption
+                            required property int index
+                            required property string modelData
+                            width: effortList.width
+                            height: 36
+                            text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
+                            checkable: true
+                            checked: modelData === chatController.selectedEffort
+                            foregroundColor: checked ? "#bce9e4" : "#aaaab2"
+                            baseColor: checked ? "#1d2929" : "transparent"
+                            hoverColor: "#222226"
+                            Accessible.role: Accessible.RadioButton
+                            Accessible.name: text + " reasoning effort"
+                            Accessible.checked: checked
+                            onActiveFocusChanged: {
+                                if (activeFocus)
+                                    effortList.currentIndex = index
+                            }
+                            onClicked: {
+                                chatController.selectedEffort = modelData
+                                effortPopup.close()
                             }
                         }
                     }
@@ -1232,6 +1382,98 @@ ApplicationWindow {
                         color: "#161619"
                         border.width: 0
                     }
+                    onOpened: {
+                        let selectedIndex = 0
+                        for (let index = 0;
+                             index < chatController.availableEfforts.length; ++index) {
+                            if (chatController.availableEfforts[index]
+                                    === chatController.selectedEffort) {
+                                selectedIndex = index
+                                break
+                            }
+                        }
+                        effortList.currentIndex = selectedIndex
+                        effortList.positionViewAtIndex(selectedIndex, ListView.Contain)
+                        effortList.forceActiveFocus()
+                    }
+                    onClosed: composer.focusComposer()
+                }
+            }
+
+            Item {
+                id: inspectorSplitter
+                x: inspector.x - width / 2
+                y: 0
+                z: 4
+                width: 10
+                height: parent.height
+                visible: window.inspectorOpen && !window.inspectorReplacesMain
+                enabled: visible
+                activeFocusOnTab: visible
+                Accessible.role: Accessible.Slider
+                Accessible.name: "Resize changes panel"
+                Accessible.description: "Use Left and Right Arrow keys to resize"
+
+                property real pressWorkspaceX: 0
+                property real pressInspectorWidth: 0
+
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: 1
+                    height: parent.height
+                    color: window.accent
+                    opacity: window.inspectorDragging
+                             || splitterHover.hovered
+                             || inspectorSplitter.activeFocus ? 0.48 : 0
+
+                    Behavior on opacity {
+                        NumberAnimation { duration: reducedMotion ? 0 : 100 }
+                    }
+                }
+
+                HoverHandler {
+                    id: splitterHover
+                    cursorShape: Qt.SplitHCursor
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.SplitHCursor
+                    acceptedButtons: Qt.LeftButton
+                    onPressed: function(mouse) {
+                        inspectorSplitter.forceActiveFocus()
+                        window.inspectorDragging = true
+                        inspectorSplitter.pressWorkspaceX =
+                            mapToItem(workspace, mouse.x, mouse.y).x
+                        inspectorSplitter.pressInspectorWidth = window.inspectorWidth
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (!pressed)
+                            return
+                        const currentX = mapToItem(workspace, mouse.x, mouse.y).x
+                        window.setInspectorWidth(
+                            inspectorSplitter.pressInspectorWidth
+                            + inspectorSplitter.pressWorkspaceX - currentX,
+                            false)
+                    }
+                    onReleased: {
+                        window.inspectorDragging = false
+                        window.setInspectorWidth(window.inspectorPreferredWidth, true)
+                    }
+                    onCanceled: window.inspectorDragging = false
+                }
+
+                Keys.onLeftPressed: function(event) {
+                    window.setInspectorWidth(window.inspectorPreferredWidth
+                                             + (event.modifiers & Qt.ShiftModifier ? 48 : 16),
+                                             true)
+                    event.accepted = true
+                }
+                Keys.onRightPressed: function(event) {
+                    window.setInspectorWidth(window.inspectorPreferredWidth
+                                             - (event.modifiers & Qt.ShiftModifier ? 48 : 16),
+                                             true)
+                    event.accepted = true
                 }
             }
 
@@ -1250,8 +1492,6 @@ ApplicationWindow {
     Popup {
         id: newChatPopup
         parent: Overlay.overlay
-        x: window.sidebarOpen ? 12 : 56
-        y: window.headerHeight + 50
         width: 174
         height: 100
         padding: 8
@@ -1265,6 +1505,7 @@ ApplicationWindow {
                 width: parent.width
                 height: 40
                 text: "Local project"
+                Accessible.name: "Start a new chat in the current project"
                 enabled: chatController.hasProject
                 onClicked: {
                     chatController.startNewChat(false)
@@ -1276,6 +1517,7 @@ ApplicationWindow {
                 width: parent.width
                 height: 40
                 text: "Isolated worktree"
+                Accessible.name: "Start a new chat in an isolated worktree"
                 enabled: chatController.hasProject
                 onClicked: {
                     chatController.startNewChat(true)
@@ -1290,6 +1532,7 @@ ApplicationWindow {
             border.width: 1
             border.color: "#34343a"
         }
+        onClosed: composer.focusComposer()
     }
 
     Popup {
@@ -1417,5 +1660,10 @@ ApplicationWindow {
         reducedMotion: reducedMotion
         devicePixelRatio: window.screen.devicePixelRatio
         onClosed: composer.focusComposer()
+    }
+
+    ChatWindowResizeArea {
+        z: 1200
+        targetWindow: window
     }
 }

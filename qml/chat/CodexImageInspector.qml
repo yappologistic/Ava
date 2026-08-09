@@ -106,12 +106,13 @@ FocusScope {
             spacing: 9
             visible: fullImage.status === Image.Error
 
-            Text {
+            Image {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "\uE91B"
-                color: "#777780"
-                font.family: "Segoe Fluent Icons"
-                font.pixelSize: 24
+                width: 24
+                height: 24
+                source: Qt.resolvedUrl("../../assets/icons/fluent-chat/error.svg")
+                sourceSize: Qt.size(20, 20)
+                opacity: 0.64
             }
 
             Text {
@@ -139,7 +140,7 @@ FocusScope {
         font.pixelSize: 10
     }
 
-    Button {
+    ChatIconButton {
         id: closeButton
         anchors.right: parent.right
         anchors.rightMargin: 14
@@ -147,29 +148,12 @@ FocusScope {
         anchors.topMargin: 12
         width: 34
         height: 34
-        padding: 0
-        hoverEnabled: true
-        activeFocusOnTab: true
-        Accessible.name: "Close image preview"
-        Accessible.role: Accessible.Button
+        iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/dismiss.svg")
+        accessibleName: "Close image preview"
+        baseColor: "#1b1b1f"
+        hoverColor: "#2b2b30"
+        pressedColor: "#38383e"
         onClicked: root.close()
-
-        contentItem: Text {
-            text: "\uE711"
-            color: closeButton.hovered ? "#f0f0f3" : "#b7b7bd"
-            font.family: "Segoe Fluent Icons"
-            font.pixelSize: 14
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-
-        background: Rectangle {
-            radius: 9
-            color: closeButton.down ? "#38383e"
-                   : (closeButton.hovered ? "#2b2b30" : "#1b1b1f")
-            border.width: closeButton.activeFocus ? 1 : 0
-            border.color: "#79d8ce"
-        }
     }
 
     Timer {

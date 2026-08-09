@@ -68,7 +68,7 @@ Item {
             width: 30
             height: 30
             radius: 8
-            symbol: "\uE8C8"
+            iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/copy.svg")
             accessibleName: "Copy code"
             baseColor: "transparent"
             hoverColor: "#222226"

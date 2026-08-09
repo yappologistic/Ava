@@ -18,7 +18,9 @@ Button {
     topPadding: 0
     bottomPadding: 0
     hoverEnabled: true
+    activeFocusOnTab: true
     Accessible.role: Accessible.Button
+    Accessible.name: text
 
     contentItem: Text {
         id: label
@@ -42,6 +44,8 @@ Button {
         color: !control.enabled ? "transparent"
               : control.down ? control.pressedColor
               : control.hovered ? control.hoverColor : control.baseColor
+        border.width: control.activeFocus ? 1 : 0
+        border.color: "#79d8ce"
 
         Behavior on color {
             ColorAnimation { duration: reducedMotion ? 0 : 100 }

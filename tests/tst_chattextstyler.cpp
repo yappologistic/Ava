@@ -22,7 +22,7 @@ void ChatTextStylerTest::decoratesPublicWebLinksWithFavicons()
 
     QVERIFY(html.contains(QStringLiteral("href=\"https://apnews.com/article/example\"")));
     QVERIFY(html.contains(QStringLiteral("icons.duckduckgo.com/ip3/apnews.com.ico")));
-    QVERIFY(html.contains(QStringLiteral("width=\"13\"")));
+    QVERIFY(html.contains(QStringLiteral("width=\"14\"")));
     QVERIFY(html.contains(QStringLiteral("align=\"middle\"")));
 }
 

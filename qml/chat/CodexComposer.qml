@@ -9,6 +9,7 @@ Item {
     signal effortRequested(Item anchor)
 
     property alias text: composer.text
+    property alias effortAnchorItem: effortButton
     property bool active: composer.activeFocus
     property int commandIndex: 0
     property bool commandMenuDismissed: false
@@ -25,7 +26,7 @@ Item {
                                                      && commandPrefix.charAt(0) === "/"
                                                      && commandPrefix.indexOf(" ") < 0
                                                      && filteredCommands.length > 0
-    readonly property int attachmentHeight: chatController.attachmentCount > 0 ? 46 : 0
+    readonly property int attachmentHeight: chatController.attachmentCount > 0 ? 50 : 0
 
     implicitHeight: 112 + attachmentHeight
 
@@ -163,7 +164,7 @@ Item {
         x: 10
         y: 8
         width: parent.width - 20
-        height: root.attachmentHeight > 0 ? 36 : 0
+        height: root.attachmentHeight > 0 ? 40 : 0
         visible: height > 0
         attachmentModel: chatController.attachments
         uiFont: uiFont
@@ -188,6 +189,7 @@ Item {
         font.family: uiFont
         font.pixelSize: 13
         wrapMode: TextEdit.Wrap
+        activeFocusOnTab: true
         background: null
         enabled: chatController.connected && chatController.authenticated
                  && !chatController.awaitingApproval
@@ -209,6 +211,13 @@ Item {
             } else if (root.commandMenuOpen && event.key === Qt.Key_Escape) {
                 root.commandMenuDismissed = true
                 event.accepted = true
+            } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                const forward = event.key !== Qt.Key_Backtab
+                                && !(event.modifiers & Qt.ShiftModifier)
+                const next = composer.nextItemInFocusChain(forward)
+                if (next)
+                    next.forceActiveFocus()
+                event.accepted = true
             } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                     && !(event.modifiers & Qt.ShiftModifier)) {
                 root.submit()
@@ -227,13 +236,13 @@ Item {
         spacing: 3
 
         ChatIconButton {
-            symbol: "\uE898"
+            iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/attach.svg")
             accessibleName: "Attach files"
             onClicked: root.attachRequested()
         }
 
         ChatIconButton {
-            symbol: "\uE8B9"
+            iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/image.svg")
             accessibleName: "Attach clipboard image"
             onClicked: chatController.attachClipboardImage()
         }
@@ -277,11 +286,12 @@ Item {
                 id: effortContent
                 spacing: 6
 
-                Text {
-                    text: "\uEA80"
-                    color: "#777780"
-                    font.family: "Segoe Fluent Icons"
-                    font.pixelSize: 14
+                Image {
+                    width: 15
+                    height: 15
+                    source: Qt.resolvedUrl("../../assets/icons/fluent-chat/reasoning.svg")
+                    sourceSize: Qt.size(20, 20)
+                    opacity: 0.64
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
@@ -315,39 +325,15 @@ Item {
             contentItem: Row {
                 id: fastContent
                 spacing: 6
-                Item {
-                    width: 12
-                    height: 14
+                Image {
+                    width: 15
+                    height: 15
                     anchors.verticalCenter: parent.verticalCenter
-
-                    Canvas {
-                        id: fastGlyph
-                        anchors.fill: parent
-                        onPaint: {
-                            var context = getContext("2d")
-                            context.clearRect(0, 0, width, height)
-                            context.beginPath()
-                            context.moveTo(7.1, 0.8)
-                            context.lineTo(1.8, 7.4)
-                            context.lineTo(5.8, 7.4)
-                            context.lineTo(4.5, 13.2)
-                            context.lineTo(10.7, 5.6)
-                            context.lineTo(6.8, 5.6)
-                            context.closePath()
-                            context.lineWidth = 1.15
-                            context.strokeStyle = fastButton.checked ? "#8ee6dd" : "#777780"
-                            context.fillStyle = "#8ee6dd"
-                            if (fastButton.checked)
-                                context.fill()
-                            else
-                                context.stroke()
-                        }
-
-                        Connections {
-                            target: fastButton
-                            function onCheckedChanged() { fastGlyph.requestPaint() }
-                        }
-                    }
+                    source: fastButton.checked
+                            ? Qt.resolvedUrl("../../assets/icons/fluent-chat/flash-filled.svg")
+                            : Qt.resolvedUrl("../../assets/icons/fluent-chat/flash.svg")
+                    sourceSize: Qt.size(20, 20)
+                    opacity: fastButton.checked ? 1 : 0.64
                 }
                 Text {
                     text: fastButton.text
@@ -381,11 +367,12 @@ Item {
                 id: planContent
                 spacing: 6
 
-                Text {
-                    text: "\uE7C1"
-                    color: planButton.checked ? "#8ee6dd" : "#777780"
-                    font.family: "Segoe Fluent Icons"
-                    font.pixelSize: 14
+                Image {
+                    width: 15
+                    height: 15
+                    source: Qt.resolvedUrl("../../assets/icons/fluent-chat/plan.svg")
+                    sourceSize: Qt.size(20, 20)
+                    opacity: planButton.checked ? 1 : 0.64
                     anchors.verticalCenter: parent.verticalCenter
                 }
                 Text {
@@ -522,7 +509,10 @@ Item {
         readonly property bool stopAction: chatController.busy
                                            && chatController.currentTurnId.length > 0
                                            && composer.text.trim().length === 0
-        symbol: stopAction ? "\uE769" : "\uE72A"
+        iconSource: stopAction
+                    ? Qt.resolvedUrl("../../assets/icons/fluent-chat/stop.svg")
+                    : Qt.resolvedUrl("../../assets/icons/fluent-chat/send.svg")
+        iconSize: 17
         accessibleName: stopAction ? "Stop Codex"
                                    : (chatController.busy
                                       ? "Send follow-up to Codex" : "Send message")

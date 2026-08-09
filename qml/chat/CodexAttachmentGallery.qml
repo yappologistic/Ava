@@ -111,12 +111,13 @@ Item {
                 visible: thumbnail.status === Image.Error
                          || attachmentTile.previewSource.length === 0
 
-                Text {
+                Image {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: "\uE91B"
-                    color: "#67676f"
-                    font.family: "Segoe Fluent Icons"
-                    font.pixelSize: 18
+                    width: 18
+                    height: 18
+                    source: Qt.resolvedUrl("../../assets/icons/fluent-chat/error.svg")
+                    sourceSize: Qt.size(20, 20)
+                    opacity: 0.55
                 }
 
                 Text {

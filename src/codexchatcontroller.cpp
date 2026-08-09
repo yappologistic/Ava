@@ -122,6 +122,8 @@ CodexChatController::CodexChatController(CodexAppServerClient *client,
 
 QString CodexChatController::errorMessage() const
 {
+    if (m_errorDismissed)
+        return {};
     if (!m_errorMessage.isEmpty())
         return m_errorMessage;
     return m_client ? m_client->errorMessage() : QStringLiteral("Codex is unavailable");
@@ -581,6 +583,15 @@ void CodexChatController::retryConnection()
     }
 }
 
+void CodexChatController::dismissError()
+{
+    if (errorMessage().isEmpty())
+        return;
+    m_errorDismissed = true;
+    m_errorMessage.clear();
+    emit stateChanged();
+}
+
 void CodexChatController::archiveCurrentThread()
 {
     archiveThread(m_threadId);
@@ -723,6 +734,8 @@ void CodexChatController::compactThread()
 void CodexChatController::setVisualTestState(const QString &state)
 {
     m_visualTestMode = true;
+    m_errorDismissed = false;
+    m_errorMessage.clear();
     m_authenticated = true;
     m_accountLabel = QStringLiteral("Codex Pro");
     m_projectPath = QStringLiteral("D:/projects/ava-demo");
@@ -869,7 +882,10 @@ void CodexChatController::initializeConnections()
     connect(m_client, &CodexAppServerClient::readyChanged,
             this, &CodexChatController::handleConnectionStateChanged);
     connect(m_client, &CodexAppServerClient::errorChanged,
-            this, &CodexChatController::stateChanged);
+            this, [this]() {
+                m_errorDismissed = false;
+                emit stateChanged();
+            });
     connect(m_client, &CodexAppServerClient::responseReceived,
             this, &CodexChatController::handleResponse);
     connect(m_client, &CodexAppServerClient::notificationReceived,
@@ -1784,6 +1800,7 @@ void CodexChatController::setStatus(const QString &status,
 
 void CodexChatController::setError(const QString &message)
 {
+    m_errorDismissed = false;
     m_errorMessage = message;
     m_statusText = QStringLiteral("Needs attention");
     m_activityText = message;
@@ -1793,9 +1810,10 @@ void CodexChatController::setError(const QString &message)
 
 void CodexChatController::clearError()
 {
-    if (m_errorMessage.isEmpty())
+    if (m_errorMessage.isEmpty() && !m_errorDismissed)
         return;
     m_errorMessage.clear();
+    m_errorDismissed = false;
     emit stateChanged();
 }
 

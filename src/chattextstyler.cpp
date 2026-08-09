@@ -233,9 +233,9 @@ QString renderedMarkdownHtml(const QString &markdown)
     QTextDocument document;
     document.setDefaultStyleSheet(QStringLiteral(
         "body { color: #dedee3; }"
-        "p { margin-top: 0px; margin-bottom: 10px; line-height: 138%; }"
+        "p { margin-top: 0px; margin-bottom: 11px; line-height: 142%; }"
         "ul, ol { margin-top: 7px; margin-bottom: 11px; margin-left: 20px; }"
-        "li { margin-top: 0px; margin-bottom: 5px; line-height: 138%; }"
+        "li { margin-top: 0px; margin-bottom: 6px; line-height: 142%; }"
         "pre { margin-top: 9px; margin-bottom: 12px; }"
         "blockquote { margin-top: 7px; margin-bottom: 10px; margin-left: 14px; }"));
     document.setMarkdown(visibleMarkdown, QTextDocument::MarkdownDialectGitHub);
@@ -263,7 +263,7 @@ QString renderedMarkdownHtml(const QString &markdown)
             "https://icons.duckduckgo.com/ip3/%1.ico")
             .arg(QString::fromLatin1(QUrl::toPercentEncoding(url.host())));
         const QString image = QStringLiteral(
-            "<img src=\"%1\" width=\"13\" height=\"13\" align=\"middle\" "
+            "<img src=\"%1\" width=\"14\" height=\"14\" align=\"middle\" "
             "style=\"vertical-align: middle;\" alt=\"\" />&nbsp;")
             .arg(favicon.toHtmlEscaped());
         html.insert(match.capturedEnd(0), image);

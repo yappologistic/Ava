@@ -13,7 +13,7 @@ Item {
 
     readonly property int itemCount: attachmentList.count
 
-    implicitHeight: itemCount > 0 ? 36 : 0
+    implicitHeight: itemCount > 0 ? 40 : 0
 
     ListView {
         id: attachmentList
@@ -41,17 +41,17 @@ Item {
             required property string attachmentKind
             required property string previewUrl
 
-            height: 34
-            width: Math.min(176, attachmentLabel.implicitWidth + 55)
-            radius: 9
+            height: 38
+            width: Math.min(214, attachmentLabel.implicitWidth + 64)
+            radius: 10
             color: "#19191d"
 
             Image {
                 id: attachmentImage
                 x: 4
                 anchors.verticalCenter: parent.verticalCenter
-                width: 26
-                height: 26
+                width: 30
+                height: 30
                 visible: attachmentChip.attachmentKind === "image"
                          && attachmentChip.previewUrl.length > 0
                          && status !== Image.Error
@@ -67,22 +67,25 @@ Item {
                 mipmap: false
             }
 
-            Text {
+            Image {
                 id: typeIcon
                 x: 10
                 anchors.verticalCenter: parent.verticalCenter
+                width: 14
+                height: 14
                 visible: !attachmentImage.visible
-                text: attachmentChip.attachmentKind === "audio" ? "\uE8D6" : "\uE8A5"
-                color: "#8b8b93"
-                font.family: "Segoe Fluent Icons"
-                font.pixelSize: 13
+                source: attachmentChip.attachmentKind === "audio"
+                        ? Qt.resolvedUrl("../../assets/icons/fluent-chat/audio.svg")
+                        : Qt.resolvedUrl("../../assets/icons/fluent-chat/document.svg")
+                sourceSize: Qt.size(20, 20)
+                opacity: 0.72
             }
 
             Text {
                 id: attachmentLabel
-                x: attachmentImage.visible ? 36 : 32
+                x: attachmentImage.visible ? 40 : 32
                 anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - x - 27
+                width: parent.width - x - 34
                 text: attachmentChip.attachmentName
                 color: "#c5c5cb"
                 elide: Text.ElideMiddle
@@ -90,46 +93,20 @@ Item {
                 font.pixelSize: 10
             }
 
-            Button {
+            ChatIconButton {
                 id: removeButton
                 anchors.right: parent.right
-                anchors.rightMargin: 2
+                anchors.rightMargin: 3
                 anchors.verticalCenter: parent.verticalCenter
-                width: 27
-                height: 27
-                padding: 0
-                hoverEnabled: true
-                activeFocusOnTab: true
-                Accessible.name: "Remove " + attachmentChip.attachmentName
-                Accessible.role: Accessible.Button
+                width: 32
+                height: 32
+                iconSource: Qt.resolvedUrl("../../assets/icons/fluent-chat/dismiss.svg")
+                iconSize: 14
+                accessibleName: "Remove " + attachmentChip.attachmentName
+                foregroundColor: "#888890"
+                hoverColor: "#252529"
+                pressedColor: "#303035"
                 onClicked: root.removeRequested(attachmentChip.index)
-
-                contentItem: Text {
-                    text: "\uE711"
-                    color: removeButton.enabled
-                           ? (removeButton.hovered ? "#d2d2d7" : "#888890")
-                           : "#505056"
-                    font.family: "Segoe Fluent Icons"
-                    font.pixelSize: 11
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-
-                    Behavior on color {
-                        ColorAnimation { duration: root.reducedMotion ? 0 : 90 }
-                    }
-                }
-
-                background: Rectangle {
-                    radius: 7
-                    color: removeButton.down ? "#303035"
-                           : (removeButton.hovered ? "#252529" : "transparent")
-                    border.width: removeButton.activeFocus ? 1 : 0
-                    border.color: "#79d8ce"
-
-                    Behavior on color {
-                        ColorAnimation { duration: root.reducedMotion ? 0 : 90 }
-                    }
-                }
             }
         }
 

@@ -51,7 +51,7 @@ Item {
                 selectedTextColor: "#ffffff"
                 color: "#dedee3"
                 font.family: uiFont
-                font.pixelSize: 13
+                font.pixelSize: 14
                 Accessible.name: root.markdown
                 onLinkActivated: function(link) { root.openUrlRequested(link) }
             }

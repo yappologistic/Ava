@@ -11,6 +11,7 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QJsonObject>
+#include <QObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlError>
@@ -28,6 +29,32 @@
 #endif
 
 namespace {
+
+class ChatLayoutSettings final : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(qreal inspectorWidth READ inspectorWidth CONSTANT)
+
+public:
+    explicit ChatLayoutSettings(QObject *parent = nullptr)
+        : QObject(parent)
+        , m_inspectorWidth(QSettings().value(
+              QStringLiteral("chatWindow/inspectorWidth"), 420.0).toReal())
+    {
+    }
+
+    qreal inspectorWidth() const { return m_inspectorWidth; }
+
+    Q_INVOKABLE void saveInspectorWidth(qreal width)
+    {
+        m_inspectorWidth = qBound(320.0, width, 720.0);
+        QSettings().setValue(QStringLiteral("chatWindow/inspectorWidth"),
+                             m_inspectorWidth);
+    }
+
+private:
+    qreal m_inspectorWidth = 420.0;
+};
 
 void activateWindow(QQuickWindow *window)
 {
@@ -165,11 +192,16 @@ int main(int argc, char *argv[])
         QStringList{QStringLiteral("screenshot")},
         QStringLiteral("Capture the window and exit."),
         QStringLiteral("path"));
+    const QCommandLineOption windowSizeOption(
+        QStringList{QStringLiteral("window-size")},
+        QStringLiteral("Set the QA capture size in WIDTHxHEIGHT form."),
+        QStringLiteral("size"));
     parser.addOption(workspaceOption);
     parser.addOption(newChatOption);
     parser.addOption(worktreeOption);
     parser.addOption(visualStateOption);
     parser.addOption(screenshotOption);
+    parser.addOption(windowSizeOption);
     parser.process(application);
 
     const bool screenshotMode = parser.isSet(screenshotOption);
@@ -201,6 +233,7 @@ int main(int argc, char *argv[])
 
     CodexChatController controller;
     ChatTextStyler textStyler;
+    ChatLayoutSettings chatLayoutSettings;
     if (parser.isSet(workspaceOption))
         controller.setProjectPath(parser.value(workspaceOption));
     if (parser.isSet(visualStateOption))
@@ -221,12 +254,16 @@ int main(int argc, char *argv[])
     }
     engine.rootContext()->setContextProperty(QStringLiteral("chatController"), &controller);
     engine.rootContext()->setContextProperty(QStringLiteral("chatTextStyler"), &textStyler);
+    engine.rootContext()->setContextProperty(QStringLiteral("chatLayoutSettings"),
+                                             &chatLayoutSettings);
     engine.rootContext()->setContextProperty(QStringLiteral("chatIpc"), &ipc);
     engine.rootContext()->setContextProperty(QStringLiteral("uiFont"), uiFont);
     engine.rootContext()->setContextProperty(QStringLiteral("monoFont"), monoFont);
     engine.rootContext()->setContextProperty(QStringLiteral("reducedMotion"),
                                              reducedMotionEnabled());
     engine.rootContext()->setContextProperty(QStringLiteral("qaMode"), screenshotMode);
+    engine.rootContext()->setContextProperty(QStringLiteral("qaVisualState"),
+                                             parser.value(visualStateOption));
     engine.loadFromModule(QStringLiteral("Ava.Chat"), QStringLiteral("CodexChatWindow"));
     if (engine.rootObjects().isEmpty())
         return -1;
@@ -237,6 +274,18 @@ int main(int argc, char *argv[])
     window->setPersistentGraphics(true);
     window->setPersistentSceneGraph(true);
     placeInitialWindow(window);
+    if (screenshotMode && parser.isSet(windowSizeOption)) {
+        const QStringList dimensions = parser.value(windowSizeOption)
+                                           .toLower().split(QLatin1Char('x'));
+        bool widthOk = false;
+        bool heightOk = false;
+        const int requestedWidth = dimensions.value(0).toInt(&widthOk);
+        const int requestedHeight = dimensions.value(1).toInt(&heightOk);
+        if (dimensions.size() == 2 && widthOk && heightOk) {
+            window->resize(qMax(window->minimumWidth(), requestedWidth),
+                           qMax(window->minimumHeight(), requestedHeight));
+        }
+    }
     applyNativeWindowTreatment(window);
     activateWindow(window);
 
@@ -288,3 +337,5 @@ int main(int argc, char *argv[])
 
     return application.exec();
 }
+
+#include "chatmain.moc"

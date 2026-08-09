@@ -182,7 +182,7 @@ Item {
                 id: userMetrics
                 text: root.body
                 font.family: uiFont
-                font.pixelSize: 13
+                font.pixelSize: 14
             }
 
             TextEdit {
@@ -208,7 +208,7 @@ Item {
                 horizontalAlignment: TextEdit.AlignLeft
                 color: root.kind === "reasoning" ? "#a1a1aa" : "#dedee3"
                 font.family: root.kind === "command" ? monoFont : uiFont
-                font.pixelSize: root.kind === "command" ? 12 : 13
+                font.pixelSize: root.kind === "command" ? 12 : 14
                 Accessible.name: root.body
                 onLinkActivated: function(link) { root.openUrlRequested(link) }
             }
@@ -246,7 +246,7 @@ Item {
                     wrapMode: TextEdit.Wrap
                     color: "#dedee3"
                     font.family: uiFont
-                    font.pixelSize: 13
+                    font.pixelSize: 14
                     Accessible.name: root.body
                 }
             }
@@ -320,15 +320,16 @@ Item {
                     width: parent.width - 16
                     height: 34
 
-                    Text {
+                    Image {
                         id: fileChevron
                         anchors.left: parent.left
                         anchors.verticalCenter: parent.verticalCenter
-                        text: "\uE76C"
+                        width: 14
+                        height: 14
+                        source: Qt.resolvedUrl("../../assets/icons/fluent-chat/chevron-right.svg")
+                        sourceSize: Qt.size(20, 20)
                         rotation: root.expanded ? 90 : 0
-                        color: "#777780"
-                        font.family: "Segoe Fluent Icons"
-                        font.pixelSize: 11
+                        opacity: 0.64
                         Behavior on rotation {
                             NumberAnimation {
                                 duration: reducedMotion ? 0 : 150
@@ -526,7 +527,9 @@ Item {
                 anchors.margins: 7
                 width: 28
                 height: 28
-                symbol: root.expanded ? "\uE70D" : "\uE70E"
+                iconSource: root.expanded
+                            ? Qt.resolvedUrl("../../assets/icons/fluent-chat/chevron-down.svg")
+                            : Qt.resolvedUrl("../../assets/icons/fluent-chat/chevron-right.svg")
                 accessibleName: root.expanded ? "Collapse details" : "Expand details"
                 onClicked: root.expanded = !root.expanded
             }

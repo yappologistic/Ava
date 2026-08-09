@@ -141,6 +141,7 @@ public slots:
     void removeAttachment(int row);
     void startLogin();
     void retryConnection();
+    void dismissError();
     void archiveCurrentThread();
     void archiveThread(const QString &threadId);
     void forkThread(const QString &threadId);
@@ -267,6 +268,7 @@ private:
     QString m_statusText = QStringLiteral("Connecting to Codex");
     QString m_activityText;
     QString m_errorMessage;
+    bool m_errorDismissed = false;
     QString m_projectPath;
     QString m_environmentMode = QStringLiteral("local");
     QString m_branchName;
