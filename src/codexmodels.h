@@ -2,6 +2,7 @@
 
 #include <QAbstractListModel>
 #include <QDateTime>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QStringList>
@@ -39,7 +40,9 @@ public:
     QHash<int, QByteArray> roleNames() const override;
 
     void replace(const QJsonArray &threads);
+    void replaceSearchResults(const QJsonArray &results);
     void upsert(const QJsonObject &thread);
+    void updateStatus(const QString &threadId, const QJsonValue &status);
     void removeById(const QString &threadId);
     Q_INVOKABLE QString threadIdAt(int row) const;
     Q_INVOKABLE QString cwdAt(int row) const;
@@ -88,6 +91,7 @@ public:
         QVariantList sources;
         QString elapsed;
         QString turnId;
+        QString clientId;
         int additions = 0;
         int deletions = 0;
         qint64 timestamp = 0;
@@ -103,22 +107,46 @@ public:
 
     void clear();
     void replaceFromThread(const QJsonObject &thread);
+    void beginOptimisticTurn(const QString &clientMessageId,
+                             const QString &text);
+    void beginOptimisticSteer(const QString &clientMessageId,
+                              const QString &text,
+                              const QString &turnId);
+    void acknowledgeOptimisticTurn(const QString &clientMessageId,
+                                    const QString &turnId);
+    void failOptimisticTurn(const QString &clientMessageId,
+                            const QString &message);
     void upsertItem(const QJsonObject &item, bool completed,
                     const QString &turnId = {});
     void appendAgentDelta(const QString &itemId, const QString &delta);
+    void appendWorkDelta(const QString &itemId, const QString &turnId,
+                         const QString &kind, const QString &bodyDelta,
+                         const QString &detailDelta = {});
     void updatePlan(const QString &turnId, const QJsonArray &plan);
     void completeWork(const QString &turnId, qint64 durationMs);
     void appendError(const QString &message);
     Q_INVOKABLE QString bodyAt(int row) const;
+    Q_INVOKABLE int rowForItem(const QString &id) const;
 
 private:
     int rowForId(const QString &id) const;
+    QString workGroupId(const QString &turnId) const;
+    void finishWorkGroup(const QString &groupId, qint64 durationMs = -1);
+    void startHistoricalWorkSegment(const QString &turnId,
+                                    const QString &messageId);
+    void rebuildRowIndex();
+    void removeEntryAt(int row);
+    bool isDuplicateProtocolUserMessage(const Entry &entry) const;
     void insertOrReplace(Entry entry);
     void upsertWorkActivity(Entry activity, const QString &turnId);
     static bool belongsInWork(const Entry &entry);
     static QVariantMap activityPresentation(const Entry &entry);
     static Entry fromItem(const QJsonObject &item, bool completed);
     QVector<Entry> m_entries;
+    QHash<QString, int> m_rowsById;
+    QHash<QString, QString> m_activeWorkGroups;
+    QHash<QString, QString> m_previousWorkGroups;
+    QHash<QString, int> m_workSegmentCounts;
     bool m_rebuilding = false;
 };
 

@@ -18,6 +18,7 @@ ApplicationWindow {
 
     property bool sidebarOpen: width >= 940
     property bool inspectorOpen: false
+    property bool threadSearchOpen: false
     property real revealProgress: 0
     property int sidebarWidth: sidebarOpen ? 238 : 0
     property int inspectorWidth: inspectorOpen ? Math.min(410, width * 0.37) : 0
@@ -29,6 +30,30 @@ ApplicationWindow {
             showNormal()
         else
             showMaximized()
+    }
+
+    function openThreadSearch() {
+        sidebarOpen = true
+        threadSearchOpen = true
+        Qt.callLater(function() { threadSearchField.forceActiveFocus() })
+    }
+
+    function closeThreadSearch() {
+        threadSearchOpen = false
+        threadSearchField.text = ""
+        chatController.clearThreadSearch()
+        composer.focusComposer()
+    }
+
+    function selectThreadRow(row) {
+        if (row < 0)
+            return
+        chatController.selectThread(row)
+        if (threadSearchOpen) {
+            threadSearchOpen = false
+            threadSearchField.text = ""
+        }
+        composer.focusComposer()
     }
 
     Component.onCompleted: {
@@ -66,6 +91,10 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+L"
         onActivated: composer.focusComposer()
+    }
+    Shortcut {
+        sequence: "Ctrl+F"
+        onActivated: window.openThreadSearch()
     }
 
     Rectangle {
@@ -118,6 +147,17 @@ ApplicationWindow {
                     symbol: "\uE700"
                     accessibleName: window.sidebarOpen ? "Hide conversations" : "Show conversations"
                     onClicked: window.sidebarOpen = !window.sidebarOpen
+                }
+
+                ChatIconButton {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: window.sidebarOpen
+                    symbol: "\uE721"
+                    accessibleName: "Search conversations"
+                    baseColor: window.threadSearchOpen ? "#1d1d21" : "transparent"
+                    foregroundColor: window.threadSearchOpen ? "#d3d3d8" : "#8b8b93"
+                    onClicked: window.threadSearchOpen
+                               ? window.closeThreadSearch() : window.openThreadSearch()
                 }
 
                 Button {
@@ -240,12 +280,109 @@ ApplicationWindow {
                 color: "#0d0d0f"
                 clip: true
 
+                Rectangle {
+                    id: threadSearchSurface
+                    x: window.sidebarOpen ? 10 : 0
+                    y: 8
+                    width: 218
+                    height: window.threadSearchOpen ? 36 : 0
+                    radius: 9
+                    color: "#17171a"
+                    opacity: window.threadSearchOpen ? 1 : 0
+                    visible: opacity > 0
+                    clip: true
+
+                    Text {
+                        x: 11
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "\uE721"
+                        color: "#74747c"
+                        font.family: "Segoe Fluent Icons"
+                        font.pixelSize: 12
+                    }
+
+                    TextField {
+                        id: threadSearchField
+                        x: 34
+                        width: parent.width - 68
+                        height: parent.height
+                        padding: 0
+                        color: "#d6d6db"
+                        placeholderText: "Search conversations"
+                        placeholderTextColor: "#686870"
+                        font.family: uiFont
+                        font.pixelSize: 10
+                        selectByMouse: true
+                        background: Item {}
+                        onTextChanged: {
+                            chatController.setThreadSearchQuery(text)
+                            threadList.currentIndex = 0
+                        }
+                        Keys.onUpPressed: function(event) {
+                            if (threadList.count > 0)
+                                threadList.currentIndex = Math.max(0, threadList.currentIndex - 1)
+                            event.accepted = true
+                        }
+                        Keys.onDownPressed: function(event) {
+                            if (threadList.count > 0)
+                                threadList.currentIndex = Math.min(threadList.count - 1,
+                                                                   threadList.currentIndex + 1)
+                            event.accepted = true
+                        }
+                        Keys.onReturnPressed: function(event) {
+                            if (threadList.count > 0)
+                                window.selectThreadRow(Math.max(0, threadList.currentIndex))
+                            event.accepted = true
+                        }
+                        Keys.onEscapePressed: function(event) {
+                            if (text.length > 0)
+                                text = ""
+                            else
+                                window.closeThreadSearch()
+                            event.accepted = true
+                        }
+                    }
+
+                    ChatIconButton {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 1
+                        anchors.verticalCenter: parent.verticalCenter
+                        implicitWidth: 32
+                        implicitHeight: 32
+                        symbol: chatController.threadSearchPending ? "\uE895" : "\uE711"
+                        accessibleName: chatController.threadSearchPending
+                                        ? "Searching conversations" : "Clear search"
+                        enabled: !chatController.threadSearchPending
+                        foregroundColor: "#777780"
+                        RotationAnimation on rotation {
+                            running: chatController.threadSearchPending && !reducedMotion
+                            from: 0
+                            to: 360
+                            duration: 850
+                            loops: Animation.Infinite
+                        }
+                        onClicked: {
+                            if (threadSearchField.text.length > 0)
+                                threadSearchField.text = ""
+                            else
+                                window.closeThreadSearch()
+                        }
+                    }
+
+                    Behavior on height {
+                        NumberAnimation { duration: reducedMotion ? 0 : 145; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on opacity {
+                        NumberAnimation { duration: reducedMotion ? 0 : 110 }
+                    }
+                }
+
                 ListView {
                     id: threadList
                     x: window.sidebarOpen ? 8 : 0
-                    y: 8
+                    y: window.threadSearchOpen ? 52 : 8
                     width: 222
-                    height: sidebar.height - 64
+                    height: sidebar.height - 64 - (window.threadSearchOpen ? 44 : 0)
                     opacity: window.sidebarOpen ? 1 : 0
                     enabled: window.sidebarOpen
                     model: chatController.threads
@@ -254,6 +391,17 @@ ApplicationWindow {
                     boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                     Accessible.name: "Codex conversations"
+                    onCountChanged: {
+                        if (window.threadSearchOpen)
+                            currentIndex = count > 0 ? 0 : -1
+                    }
+
+                    Behavior on y {
+                        NumberAnimation { duration: reducedMotion ? 0 : 145; easing.type: Easing.OutCubic }
+                    }
+                    Behavior on height {
+                        NumberAnimation { duration: reducedMotion ? 0 : 145; easing.type: Easing.OutCubic }
+                    }
 
                     Behavior on x {
                         NumberAnimation {
@@ -286,7 +434,10 @@ ApplicationWindow {
                             anchors.fill: parent
                             radius: 10
                             color: chatController.currentThreadId === threadId
-                                   ? "#1b1b20" : (threadHover.hovered ? "#151518" : "transparent")
+                                   ? "#1b1b20"
+                                   : (window.threadSearchOpen && threadList.currentIndex === index)
+                                     ? "#17171a"
+                                     : (threadHover.hovered ? "#151518" : "transparent")
                             border.width: chatController.currentThreadId === threadId ? 1 : 0
                             border.color: "#2b2b31"
 
@@ -332,7 +483,24 @@ ApplicationWindow {
                         TapHandler {
                             id: threadTap
                             acceptedButtons: Qt.LeftButton
-                            onTapped: chatController.selectThread(threadRow.index)
+                            onTapped: window.selectThreadRow(threadRow.index)
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            acceptedButtons: Qt.RightButton
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: function(mouse) {
+                                const point = mapToItem(Overlay.overlay, mouse.x, mouse.y)
+                                threadActions.threadId = threadRow.threadId
+                                threadActions.threadPinned = threadRow.pinned
+                                threadActions.x = Math.min(point.x,
+                                                           Overlay.overlay.width
+                                                           - threadActions.width - 8)
+                                threadActions.y = Math.min(point.y,
+                                                           Overlay.overlay.height
+                                                           - threadActions.height - 8)
+                                threadActions.open()
+                            }
                         }
                         Behavior on scale {
                             NumberAnimation { duration: reducedMotion ? 0 : 90; easing.type: Easing.OutCubic }
@@ -440,6 +608,23 @@ ApplicationWindow {
 
                 ListView {
                     id: transcript
+                    property string scrollMode: "follow-end"
+                    property string anchorItemId: ""
+
+                    function nearLiveEdge() {
+                        return Math.max(0, contentHeight - contentY - height) <= 40
+                    }
+
+                    function anchorSubmittedMessage(messageId) {
+                        scrollMode = "anchor-new-turn"
+                        anchorItemId = messageId
+                        Qt.callLater(function() {
+                            const row = chatController.timeline.rowForItem(messageId)
+                            if (row >= 0 && anchorItemId === messageId)
+                                positionViewAtIndex(row, ListView.Beginning)
+                        })
+                    }
+
                     x: 0
                     y: statusBanner.visible ? 62 : 8
                     width: parent.width
@@ -467,8 +652,17 @@ ApplicationWindow {
                     }
 
                     onCountChanged: {
-                        if (atYEnd || count <= 2)
+                        if (scrollMode === "follow-end" || count <= 2)
                             Qt.callLater(positionViewAtEnd)
+                    }
+
+                    onMovementStarted: {
+                        scrollMode = "free"
+                        anchorItemId = ""
+                    }
+
+                    onMovementEnded: {
+                        scrollMode = nearLiveEdge() ? "follow-end" : "free"
                     }
 
                     add: Transition {
@@ -479,11 +673,15 @@ ApplicationWindow {
                             duration: reducedMotion ? 0 : 150
                             easing.type: Easing.OutCubic
                         }
-                        NumberAnimation {
-                            property: "y"
-                            from: 7
-                            duration: reducedMotion ? 0 : 170
-                            easing.type: Easing.OutCubic
+                    }
+
+                    onContentHeightChanged: {
+                        if (scrollMode === "follow-end") {
+                            Qt.callLater(function() { transcript.positionViewAtEnd() })
+                        } else if (scrollMode === "anchor-new-turn"
+                                   && contentHeight - contentY > height + 40) {
+                            scrollMode = "follow-end"
+                            Qt.callLater(function() { transcript.positionViewAtEnd() })
                         }
                     }
                 }
@@ -496,7 +694,11 @@ ApplicationWindow {
 
                     Text {
                         width: parent.width
-                        text: chatController.hasProject ? chatController.projectName : "Choose a project"
+                        text: chatController.busy && chatController.hasThread
+                              && transcript.count === 0
+                              ? "Restoring conversation…"
+                              : (chatController.hasProject
+                                 ? chatController.projectName : "Choose a project")
                         color: "#dcdce1"
                         horizontalAlignment: Text.AlignHCenter
                         font.family: uiFont
@@ -913,6 +1115,69 @@ ApplicationWindow {
         }
     }
 
+    Popup {
+        id: threadActions
+        parent: Overlay.overlay
+        property string threadId: ""
+        property bool threadPinned: false
+        width: 184
+        height: 177
+        padding: 7
+        modal: false
+        focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+
+        contentItem: Column {
+            spacing: 2
+            ChatTextButton {
+                width: parent.width
+                height: 39
+                text: threadActions.threadPinned ? "Unpin conversation" : "Pin conversation"
+                onClicked: {
+                    chatController.setThreadPinned(threadActions.threadId,
+                                                   !threadActions.threadPinned)
+                    threadActions.close()
+                }
+            }
+            ChatTextButton {
+                width: parent.width
+                height: 39
+                text: "Fork conversation"
+                enabled: !chatController.busy
+                onClicked: {
+                    chatController.forkThread(threadActions.threadId)
+                    threadActions.close()
+                }
+            }
+            ChatTextButton {
+                width: parent.width
+                height: 39
+                text: "Review changes"
+                enabled: !chatController.busy
+                onClicked: {
+                    chatController.reviewThread(threadActions.threadId)
+                    threadActions.close()
+                }
+            }
+            ChatTextButton {
+                width: parent.width
+                height: 39
+                text: "Archive conversation"
+                enabled: !chatController.busy
+                foregroundColor: "#d49a94"
+                onClicked: {
+                    chatController.archiveThread(threadActions.threadId)
+                    threadActions.close()
+                }
+            }
+        }
+        background: Rectangle {
+            radius: 12
+            color: "#161619"
+            border.width: 0
+        }
+    }
+
     FolderDialog {
         id: folderDialog
         title: "Choose a Codex project"
@@ -936,6 +1201,9 @@ ApplicationWindow {
     Connections {
         target: chatController
         function onRequestProjectSelection() { folderDialog.open() }
+        function onMessageSubmitted(clientMessageId) {
+            transcript.anchorSubmittedMessage(clientMessageId)
+        }
         function onTurnCompleted() {
             if (chatController.diffText.length > 0 && window.width >= 980)
                 window.inspectorOpen = true

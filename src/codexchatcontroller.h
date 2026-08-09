@@ -22,6 +22,7 @@ class CodexChatController final : public QObject
     Q_PROPERTY(bool connected READ connected NOTIFY stateChanged)
     Q_PROPERTY(bool authenticated READ authenticated NOTIFY stateChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY stateChanged)
+    Q_PROPERTY(bool canSubmit READ canSubmit NOTIFY stateChanged)
     Q_PROPERTY(bool awaitingApproval READ awaitingApproval NOTIFY stateChanged)
     Q_PROPERTY(bool awaitingUserInput READ awaitingUserInput NOTIFY userInputChanged)
     Q_PROPERTY(bool hasProject READ hasProject NOTIFY projectChanged)
@@ -52,6 +53,9 @@ class CodexChatController final : public QObject
     Q_PROPERTY(bool userInputSecret READ userInputSecret NOTIFY userInputChanged)
     Q_PROPERTY(QString elapsedText READ elapsedText NOTIFY elapsedChanged)
     Q_PROPERTY(int attachmentCount READ attachmentCount NOTIFY attachmentsChanged)
+    Q_PROPERTY(int contextUsagePercent READ contextUsagePercent NOTIFY usageChanged)
+    Q_PROPERTY(QString threadSearchQuery READ threadSearchQuery NOTIFY threadSearchChanged)
+    Q_PROPERTY(bool threadSearchPending READ threadSearchPending NOTIFY threadSearchChanged)
 
 public:
     explicit CodexChatController(QObject *parent = nullptr);
@@ -67,6 +71,7 @@ public:
     bool connected() const { return m_client && m_client->ready(); }
     bool authenticated() const { return m_authenticated; }
     bool busy() const { return m_turnActive || m_startingTurn; }
+    bool canSubmit() const;
     bool awaitingApproval() const { return m_awaitingApproval; }
     bool awaitingUserInput() const { return m_awaitingUserInput; }
     bool hasProject() const { return !m_projectPath.isEmpty(); }
@@ -97,6 +102,9 @@ public:
     bool userInputSecret() const { return m_userInputSecret; }
     QString elapsedText() const;
     int attachmentCount() const { return m_attachments.rowCount(); }
+    int contextUsagePercent() const;
+    QString threadSearchQuery() const { return m_threadSearchQuery; }
+    bool threadSearchPending() const { return m_threadSearchPending; }
 
 public slots:
     void setProjectPath(const QString &path);
@@ -120,6 +128,14 @@ public slots:
     void startLogin();
     void retryConnection();
     void archiveCurrentThread();
+    void archiveThread(const QString &threadId);
+    void forkThread(const QString &threadId);
+    void setThreadPinned(const QString &threadId, bool pinned);
+    void startReview(const QString &instructions = {});
+    void reviewThread(const QString &threadId);
+    void compactThread();
+    void setThreadSearchQuery(const QString &query);
+    void clearThreadSearch();
     void setVisualTestState(const QString &state);
 
 signals:
@@ -131,8 +147,11 @@ signals:
     void userInputChanged();
     void elapsedChanged();
     void attachmentsChanged();
+    void usageChanged();
+    void threadSearchChanged();
     void requestProjectSelection();
     void requestAttention();
+    void messageSubmitted(const QString &clientMessageId);
     void turnCompleted(const QString &threadId, bool success);
 
 private:
@@ -156,6 +175,12 @@ private:
     void setError(const QString &message);
     void clearError();
     void flushDeltas();
+    void queueItemDelta(const QString &kind, const QJsonObject &params,
+                        bool detail = false);
+    void requestThreadStart(const QString &context);
+    void startPendingReview();
+    void resetContextUsage();
+    void requestThreadSearch();
     void updateElapsed();
     void resumeThread(const QString &threadId, const QString &cwd = {});
     QJsonArray buildInput(const QString &text, const QString &messageId) const;
@@ -170,9 +195,18 @@ private:
     CodexGitManager m_git;
     QTimer m_deltaTimer;
     QTimer m_elapsedTimer;
+    QTimer m_threadSearchTimer;
     QElapsedTimer m_turnElapsed;
-    QHash<QString, QString> m_pendingDeltas;
+    struct PendingItemDelta {
+        QString itemId;
+        QString turnId;
+        QString kind;
+        QString body;
+        QString detail;
+    };
+    QHash<QString, PendingItemDelta> m_pendingDeltas;
     QHash<qint64, QString> m_requestContext;
+    QJsonArray m_threadSnapshot;
     QJsonValue m_approvalRequestId;
     QJsonValue m_userInputRequestId;
     QString m_approvalMethod;
@@ -188,6 +222,10 @@ private:
     QString m_turnId;
     QString m_pendingPrompt;
     QString m_pendingMessageId;
+    QString m_pendingReviewInstructions;
+    QString m_pendingReviewThreadId;
+    QString m_threadSearchQuery;
+    QString m_activeClientMessageId;
     QString m_selectedModel;
     QString m_selectedEffort;
     QString m_diffText;
@@ -201,6 +239,8 @@ private:
     QJsonObject m_mcpContent;
     QJsonObject m_requestedPermissions;
     int m_userInputIndex = 0;
+    qint64 m_contextTokens = 0;
+    qint64 m_contextWindow = 0;
     bool m_authenticated = false;
     bool m_turnActive = false;
     bool m_startingTurn = false;
@@ -209,5 +249,7 @@ private:
     bool m_userInputSecret = false;
     bool m_fastMode = false;
     bool m_planMode = false;
+    bool m_threadSearchPending = false;
+    bool m_compactionRequested = false;
     bool m_visualTestMode = false;
 };

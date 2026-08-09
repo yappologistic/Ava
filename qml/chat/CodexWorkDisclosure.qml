@@ -12,8 +12,19 @@ Item {
     signal openUrlRequested(string url)
 
     property bool expanded: running
+    readonly property bool compacting: {
+        for (let index = 0; index < activities.length; ++index) {
+            if (activities[index].kind === "compaction")
+                return true
+        }
+        return false
+    }
+    readonly property bool compactingOnly: running && compacting
+                                                   && activities.length === 1
 
-    implicitHeight: header.height + (expanded ? activityColumn.implicitHeight + 8 : 0)
+    implicitHeight: header.height
+                    + (expanded && !compactingOnly
+                       ? activityColumn.implicitHeight + 8 : 0)
     clip: true
 
     onRunningChanged: {
@@ -25,7 +36,7 @@ Item {
 
     Behavior on implicitHeight {
         NumberAnimation {
-            duration: reducedMotion ? 0 : 180
+            duration: reducedMotion || root.running ? 0 : 180
             easing.type: Easing.OutCubic
         }
     }
@@ -52,9 +63,11 @@ Item {
             anchors.left: root.running ? orb.right : parent.left
             anchors.leftMargin: root.running ? 8 : 0
             anchors.verticalCenter: parent.verticalCenter
-            text: root.running ? "Thinking…"
+            text: root.running ? (root.compacting ? "Compacting…" : "Thinking…")
+                               : (root.compacting ? "Context compacted"
                                : (root.elapsed.length > 0
                                   ? "Worked for " + root.elapsed : "Worked")
+                               )
             color: headerHover.hovered ? "#aaaab1" : "#777780"
             font.family: uiFont
             font.pixelSize: 11
@@ -73,6 +86,7 @@ Item {
             color: "#66666e"
             font.family: "Segoe Fluent Icons"
             font.pixelSize: 9
+            visible: !root.compactingOnly
 
             Behavior on rotation {
                 NumberAnimation {
@@ -85,6 +99,7 @@ Item {
         HoverHandler { id: headerHover }
         TapHandler {
             acceptedButtons: Qt.LeftButton
+            enabled: !root.compactingOnly
             onTapped: root.expanded = !root.expanded
         }
     }
@@ -95,8 +110,8 @@ Item {
         y: header.height
         width: parent.width
         spacing: 12
-        visible: root.expanded
-        opacity: root.expanded ? 1 : 0
+        visible: root.expanded && !root.compactingOnly
+        opacity: visible ? 1 : 0
 
         Behavior on opacity {
             NumberAnimation { duration: reducedMotion ? 0 : 130 }

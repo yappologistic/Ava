@@ -10,6 +10,21 @@ Item {
 
     property alias text: composer.text
     property bool active: composer.activeFocus
+    property int commandIndex: 0
+    property bool commandMenuDismissed: false
+    readonly property string commandPrefix: composer.text.trim()
+    readonly property var commandItems: [
+        { command: "/review", label: "Review changes" },
+        { command: "/compact", label: "Compact conversation" }
+    ]
+    readonly property var filteredCommands: commandItems.filter(function(item) {
+        return item.command.indexOf(commandPrefix.toLowerCase()) === 0
+    })
+    readonly property bool commandMenuOpen: composer.activeFocus
+                                                     && !commandMenuDismissed
+                                                     && commandPrefix.charAt(0) === "/"
+                                                     && commandPrefix.indexOf(" ") < 0
+                                                     && filteredCommands.length > 0
     readonly property int attachmentHeight: chatController.attachmentCount > 0 ? 52 : 0
 
     implicitHeight: 112 + attachmentHeight
@@ -20,10 +35,113 @@ Item {
 
     function submit() {
         var value = composer.text.trim()
-        if (value.length === 0 || chatController.busy)
+        if (value.length === 0 || !chatController.canSubmit)
             return
         composer.text = ""
+        if (value === "/review" || value.startsWith("/review ")) {
+            chatController.startReview(value.slice(7).trim())
+            return
+        }
+        if (value === "/compact") {
+            chatController.compactThread()
+            return
+        }
         chatController.sendMessage(value)
+    }
+
+    function runCommand(command) {
+        composer.text = ""
+        commandMenuDismissed = true
+        if (command === "/review")
+            chatController.startReview()
+        else if (command === "/compact")
+            chatController.compactThread()
+    }
+
+    onCommandPrefixChanged: {
+        commandIndex = 0
+        commandMenuDismissed = false
+    }
+
+    Rectangle {
+        id: commandMenu
+        z: 20
+        x: 0
+        y: -height - 8
+        width: Math.min(root.width, 260)
+        height: commandColumn.implicitHeight + 12
+        radius: 12
+        color: "#161619"
+        visible: root.commandMenuOpen
+        opacity: visible ? 1 : 0
+        scale: visible ? 1 : 0.98
+        transformOrigin: Item.BottomLeft
+
+        Behavior on opacity {
+            NumberAnimation { duration: reducedMotion ? 0 : 120 }
+        }
+        Behavior on scale {
+            NumberAnimation {
+                duration: reducedMotion ? 0 : 140
+                easing.type: Easing.OutCubic
+            }
+        }
+
+        Column {
+            id: commandColumn
+            x: 6
+            y: 6
+            width: parent.width - 12
+
+            Repeater {
+                model: root.filteredCommands
+
+                delegate: Rectangle {
+                    required property int index
+                    required property var modelData
+                    width: commandColumn.width
+                    height: 38
+                    radius: 8
+                    color: index === root.commandIndex ? "#232327" : "transparent"
+
+                    Behavior on color {
+                        ColorAnimation { duration: reducedMotion ? 0 : 90 }
+                    }
+
+                    Text {
+                        x: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.command
+                        color: "#d7d7dc"
+                        font.family: monoFont
+                        font.pixelSize: 11
+                    }
+
+                    Text {
+                        anchors.right: parent.right
+                        anchors.rightMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.label
+                        color: "#74747c"
+                        font.family: uiFont
+                        font.pixelSize: 10
+                    }
+
+                    HoverHandler {
+                        id: commandHover
+                        cursorShape: Qt.PointingHandCursor
+                        onHoveredChanged: {
+                            if (hovered)
+                                root.commandIndex = index
+                        }
+                    }
+                    TapHandler {
+                        acceptedButtons: Qt.LeftButton
+                        onTapped: root.runCommand(modelData.command)
+                    }
+                }
+            }
+        }
     }
 
     Rectangle {
@@ -140,7 +258,21 @@ Item {
         Accessible.name: "Message Codex"
 
         Keys.onPressed: function(event) {
-            if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
+            if (root.commandMenuOpen && event.key === Qt.Key_Down) {
+                root.commandIndex = Math.min(root.filteredCommands.length - 1,
+                                             root.commandIndex + 1)
+                event.accepted = true
+            } else if (root.commandMenuOpen && event.key === Qt.Key_Up) {
+                root.commandIndex = Math.max(0, root.commandIndex - 1)
+                event.accepted = true
+            } else if (root.commandMenuOpen
+                       && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+                root.runCommand(root.filteredCommands[root.commandIndex].command)
+                event.accepted = true
+            } else if (root.commandMenuOpen && event.key === Qt.Key_Escape) {
+                root.commandMenuDismissed = true
+                event.accepted = true
+            } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter)
                     && !(event.modifiers & Qt.ShiftModifier)) {
                 root.submit()
                 event.accepted = true
@@ -342,6 +474,114 @@ Item {
                 border.width: 0
             }
         }
+
+        Item {
+            id: contextUsage
+            visible: chatController.contextUsagePercent >= 0
+            width: visible ? 30 : 0
+            height: 34
+            Accessible.role: Accessible.Indicator
+            Accessible.name: chatController.contextUsagePercent + "% of context used"
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: 26
+                height: 26
+                radius: 8
+                color: contextHover.hovered ? "#202024" : "transparent"
+
+                Behavior on color {
+                    ColorAnimation { duration: reducedMotion ? 0 : 90 }
+                }
+            }
+
+            Canvas {
+                id: contextRing
+                anchors.centerIn: parent
+                width: 15
+                height: 15
+                antialiasing: true
+                onPaint: {
+                    var context = getContext("2d")
+                    context.reset()
+                    context.lineWidth = 1.6
+                    context.strokeStyle = "#303037"
+                    context.beginPath()
+                    context.arc(width / 2, height / 2, 5.4, 0, Math.PI * 2)
+                    context.stroke()
+                    if (chatController.contextUsagePercent > 0) {
+                        context.strokeStyle = chatController.contextUsagePercent >= 85
+                                              ? "#d98a82" : "#79d8ce"
+                        context.lineCap = "round"
+                        context.beginPath()
+                        context.arc(width / 2, height / 2, 5.4, -Math.PI / 2,
+                                    -Math.PI / 2 + Math.PI * 2
+                                    * chatController.contextUsagePercent / 100)
+                        context.stroke()
+                    }
+                }
+
+                Connections {
+                    target: chatController
+                    function onUsageChanged() { contextRing.requestPaint() }
+                }
+            }
+
+            HoverHandler {
+                id: contextHover
+                cursorShape: Qt.PointingHandCursor
+            }
+
+            ToolTip {
+                id: contextHint
+                visible: contextHover.hovered
+                delay: 350
+                timeout: -1
+                x: Math.round((contextUsage.width - width) / 2)
+                y: -height - 7
+                leftPadding: 10
+                rightPadding: 10
+                topPadding: 6
+                bottomPadding: 6
+
+                contentItem: Text {
+                    text: chatController.contextUsagePercent + "% context"
+                    color: "#b8b8bf"
+                    font.family: uiFont
+                    font.pixelSize: 10
+                }
+
+                background: Rectangle {
+                    radius: 8
+                    color: "#1a1a1e"
+                }
+
+                enter: Transition {
+                    NumberAnimation {
+                        property: "opacity"
+                        from: 0
+                        to: 1
+                        duration: reducedMotion ? 0 : 110
+                    }
+                    NumberAnimation {
+                        property: "scale"
+                        from: 0.97
+                        to: 1
+                        duration: reducedMotion ? 0 : 130
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
+                exit: Transition {
+                    NumberAnimation {
+                        property: "opacity"
+                        from: 1
+                        to: 0
+                        duration: reducedMotion ? 0 : 80
+                    }
+                }
+            }
+        }
     }
 
     ChatIconButton {
@@ -351,14 +591,19 @@ Item {
         width: 34
         height: 34
         radius: 17
-        symbol: chatController.busy ? "\uE769" : "\uE72A"
-        accessibleName: chatController.busy ? "Stop Codex" : "Send message"
-        enabled: chatController.busy || (composer.text.trim().length > 0
-                                         && chatController.hasProject)
+        readonly property bool stopAction: chatController.busy
+                                           && chatController.currentTurnId.length > 0
+                                           && composer.text.trim().length === 0
+        symbol: stopAction ? "\uE769" : "\uE72A"
+        accessibleName: stopAction ? "Stop Codex"
+                                   : (chatController.busy
+                                      ? "Send follow-up to Codex" : "Send message")
+        enabled: stopAction || (composer.text.trim().length > 0
+                                && chatController.canSubmit)
         baseColor: "#242428"
         hoverColor: chatController.busy ? "#352226" : "#303036"
         pressedColor: chatController.busy ? "#47282e" : "#3a3a40"
         foregroundColor: enabled ? "#d7d7dc" : "#5d5d64"
-        onClicked: chatController.busy ? chatController.interrupt() : root.submit()
+        onClicked: stopAction ? chatController.interrupt() : root.submit()
     }
 }

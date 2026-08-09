@@ -1,6 +1,7 @@
 #include "codexmodels.h"
 
 #include <QFileInfo>
+#include <QJsonDocument>
 #include <QJsonValue>
 #include <QMimeDatabase>
 #include <QUrl>
@@ -56,6 +57,57 @@ QString reasoningText(const QJsonValue &value)
         }
     }
     return parts.join(QStringLiteral("\n"));
+}
+
+QString formattedReviewText(const QString &text)
+{
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(text.toUtf8(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject())
+        return text;
+
+    const QJsonObject review = document.object();
+    if (!review.contains(QStringLiteral("findings")))
+        return text;
+
+    QStringList sections;
+    const QJsonArray findings = review.value(QStringLiteral("findings")).toArray();
+    if (findings.isEmpty()) {
+        sections.append(QStringLiteral("No findings."));
+    } else {
+        for (const QJsonValue &value : findings) {
+            const QJsonObject finding = value.toObject();
+            QString section;
+            const QString title = finding.value(QStringLiteral("title")).toString().trimmed();
+            const QString body = finding.value(QStringLiteral("body")).toString().trimmed();
+            if (!title.isEmpty())
+                section.append(QStringLiteral("**%1**").arg(title));
+            if (!body.isEmpty()) {
+                if (!section.isEmpty())
+                    section.append(QStringLiteral("\n"));
+                section.append(body);
+            }
+            const QJsonObject location = finding.value(QStringLiteral("code_location")).toObject();
+            const QString path = location.value(QStringLiteral("absolute_file_path"))
+                                     .toString().trimmed();
+            const int line = location.value(QStringLiteral("line_range"))
+                                 .toObject().value(QStringLiteral("start")).toInt();
+            if (!path.isEmpty()) {
+                if (!section.isEmpty())
+                    section.append(QStringLiteral("\n"));
+                section.append(QStringLiteral("`%1%2`").arg(
+                    path, line > 0 ? QStringLiteral(":%1").arg(line) : QString()));
+            }
+            if (!section.isEmpty())
+                sections.append(section);
+        }
+    }
+
+    const QString explanation = review.value(QStringLiteral("overall_explanation"))
+                                    .toString().trimmed();
+    if (!explanation.isEmpty())
+        sections.append(QStringLiteral("**Overall**\n") + explanation);
+    return sections.isEmpty() ? text : sections.join(QStringLiteral("\n\n"));
 }
 
 qint64 epochFromValue(const QJsonValue &value)
@@ -155,6 +207,16 @@ QString formatDuration(qint64 durationMs)
         : QStringLiteral("%1m %2s").arg(minutes).arg(remaining);
 }
 
+void appendBounded(QString &target, const QString &delta, qsizetype maximum)
+{
+    if (delta.isEmpty())
+        return;
+    target.append(delta);
+    if (target.size() <= maximum)
+        return;
+    target = QStringLiteral("…\n") + target.right(maximum - 2);
+}
+
 } // namespace
 
 CodexThreadListModel::CodexThreadListModel(QObject *parent)
@@ -211,6 +273,28 @@ void CodexThreadListModel::replace(const QJsonArray &threads)
     endResetModel();
 }
 
+void CodexThreadListModel::replaceSearchResults(const QJsonArray &results)
+{
+    QVector<Entry> next;
+    next.reserve(results.size());
+    for (const QJsonValue &value : results) {
+        const QJsonObject result = value.toObject();
+        QJsonObject thread = result.value(QStringLiteral("thread")).toObject();
+        if (thread.isEmpty())
+            continue;
+        const QString snippet = result.value(QStringLiteral("snippet"))
+                                    .toString().simplified();
+        if (!snippet.isEmpty())
+            thread.insert(QStringLiteral("preview"), snippet);
+        const Entry entry = fromJson(thread);
+        if (!entry.id.isEmpty())
+            next.append(entry);
+    }
+    beginResetModel();
+    m_entries = std::move(next);
+    endResetModel();
+}
+
 void CodexThreadListModel::upsert(const QJsonObject &thread)
 {
     Entry entry = fromJson(thread);
@@ -231,6 +315,19 @@ void CodexThreadListModel::upsert(const QJsonObject &thread)
     beginInsertRows({}, 0, 0);
     m_entries.prepend(std::move(entry));
     endInsertRows();
+}
+
+void CodexThreadListModel::updateStatus(const QString &threadId,
+                                        const QJsonValue &status)
+{
+    const int row = rowForId(threadId);
+    if (row < 0)
+        return;
+    const QString next = normalizedStatus(status);
+    if (m_entries.at(row).status == next)
+        return;
+    m_entries[row].status = next;
+    emit dataChanged(index(row), index(row), {StatusRole});
 }
 
 void CodexThreadListModel::removeById(const QString &threadId)
@@ -337,6 +434,10 @@ void CodexTimelineModel::clear()
 {
     beginResetModel();
     m_entries.clear();
+    m_rowsById.clear();
+    m_activeWorkGroups.clear();
+    m_previousWorkGroups.clear();
+    m_workSegmentCounts.clear();
     endResetModel();
 }
 
@@ -345,6 +446,10 @@ void CodexTimelineModel::replaceFromThread(const QJsonObject &thread)
     beginResetModel();
     m_rebuilding = true;
     m_entries.clear();
+    m_rowsById.clear();
+    m_activeWorkGroups.clear();
+    m_previousWorkGroups.clear();
+    m_workSegmentCounts.clear();
     const QJsonArray turns = thread.value(QStringLiteral("turns")).toArray();
     for (const QJsonValue &turnValue : turns) {
         const QJsonObject turn = turnValue.toObject();
@@ -353,10 +458,17 @@ void CodexTimelineModel::replaceFromThread(const QJsonObject &thread)
             Entry entry = fromItem(itemValue.toObject(), true);
             if (entry.id.isEmpty())
                 continue;
-            if (belongsInWork(entry))
-                upsertWorkActivity(std::move(entry), turnId);
-            else
+            entry.turnId = turnId;
+            if (entry.kind == QStringLiteral("user")) {
+                if (isDuplicateProtocolUserMessage(entry))
+                    continue;
+                startHistoricalWorkSegment(turnId, entry.id);
                 m_entries.append(std::move(entry));
+            } else if (belongsInWork(entry)) {
+                upsertWorkActivity(std::move(entry), turnId);
+            } else {
+                m_entries.append(std::move(entry));
+            }
         }
         qint64 durationMs = static_cast<qint64>(
             turn.value(QStringLiteral("durationMs")).toDouble(-1));
@@ -373,7 +485,156 @@ void CodexTimelineModel::replaceFromThread(const QJsonObject &thread)
             completeWork(turnId, durationMs);
     }
     m_rebuilding = false;
+    rebuildRowIndex();
     endResetModel();
+}
+
+void CodexTimelineModel::beginOptimisticTurn(const QString &clientMessageId,
+                                             const QString &text)
+{
+    if (clientMessageId.isEmpty() || text.isEmpty() || rowForId(clientMessageId) >= 0)
+        return;
+
+    Entry message;
+    message.id = clientMessageId;
+    message.kind = QStringLiteral("user");
+    message.title = QStringLiteral("You");
+    message.body = text;
+    message.status = QStringLiteral("sending");
+    message.timestamp = QDateTime::currentSecsSinceEpoch();
+
+    Entry work;
+    work.id = QStringLiteral("work:pending:") + clientMessageId;
+    work.turnId = QStringLiteral("pending:") + clientMessageId;
+    work.kind = QStringLiteral("work");
+    work.title = QStringLiteral("Working");
+    work.status = QStringLiteral("inProgress");
+    work.running = true;
+    work.timestamp = message.timestamp;
+    work.activities.append(QVariantMap{
+        {QStringLiteral("id"), QStringLiteral("thinking:") + clientMessageId},
+        {QStringLiteral("kind"), QStringLiteral("reasoning")},
+        {QStringLiteral("title"), QStringLiteral("Thinking")},
+        {QStringLiteral("body"), QString()},
+        {QStringLiteral("detail"), QString()},
+        {QStringLiteral("status"), QStringLiteral("optimistic")},
+        {QStringLiteral("running"), true},
+        {QStringLiteral("error"), false},
+        {QStringLiteral("sources"), QVariantList{}}
+    });
+
+    const int first = m_entries.size();
+    beginInsertRows({}, first, first + 1);
+    m_entries.append(std::move(message));
+    m_entries.append(std::move(work));
+    m_rowsById.insert(m_entries.at(first).id, first);
+    m_rowsById.insert(m_entries.at(first + 1).id, first + 1);
+    endInsertRows();
+}
+
+void CodexTimelineModel::beginOptimisticSteer(const QString &clientMessageId,
+                                              const QString &text,
+                                              const QString &turnId)
+{
+    if (turnId.isEmpty()) {
+        beginOptimisticTurn(clientMessageId, text);
+        return;
+    }
+    if (clientMessageId.isEmpty() || text.isEmpty() || rowForId(clientMessageId) >= 0)
+        return;
+
+    const QString previousGroup = workGroupId(turnId);
+    if (rowForId(previousGroup) >= 0)
+        finishWorkGroup(previousGroup);
+
+    beginOptimisticTurn(clientMessageId, text);
+    const QString pendingId = QStringLiteral("work:pending:") + clientMessageId;
+    const int pendingRow = rowForId(pendingId);
+    if (pendingRow < 0)
+        return;
+
+    m_entries[pendingRow].turnId = turnId;
+    m_previousWorkGroups.insert(clientMessageId, previousGroup);
+    m_activeWorkGroups.insert(turnId, pendingId);
+    m_workSegmentCounts[turnId] = std::max(2, m_workSegmentCounts.value(turnId, 1) + 1);
+}
+
+void CodexTimelineModel::acknowledgeOptimisticTurn(const QString &clientMessageId,
+                                                   const QString &turnId)
+{
+    if (clientMessageId.isEmpty())
+        return;
+
+    const int messageRow = rowForId(clientMessageId);
+    if (messageRow >= 0) {
+        Entry &message = m_entries[messageRow];
+        message.status = QStringLiteral("sent");
+        message.turnId = turnId;
+        emit dataChanged(index(messageRow), index(messageRow),
+                         {StatusRole});
+    }
+
+    const QString pendingId = QStringLiteral("work:pending:") + clientMessageId;
+    const int pendingRow = rowForId(pendingId);
+    if (pendingRow < 0 || turnId.isEmpty())
+        return;
+
+    const bool steering = m_activeWorkGroups.value(turnId) == pendingId;
+    const QString authoritativeId = steering
+        ? QStringLiteral("work:%1:steer:%2").arg(turnId, clientMessageId)
+        : QStringLiteral("work:") + turnId;
+    const int authoritativeRow = rowForId(authoritativeId);
+    if (authoritativeRow >= 0 && authoritativeRow != pendingRow) {
+        removeEntryAt(pendingRow);
+        return;
+    }
+
+    m_rowsById.remove(pendingId);
+    Entry &work = m_entries[pendingRow];
+    work.id = authoritativeId;
+    work.turnId = turnId;
+    m_rowsById.insert(authoritativeId, pendingRow);
+    m_activeWorkGroups.insert(turnId, authoritativeId);
+    m_previousWorkGroups.remove(clientMessageId);
+    emit dataChanged(index(pendingRow), index(pendingRow),
+                     {ItemIdRole, StatusRole});
+}
+
+void CodexTimelineModel::failOptimisticTurn(const QString &clientMessageId,
+                                            const QString &message)
+{
+    if (clientMessageId.isEmpty())
+        return;
+
+    const int messageRow = rowForId(clientMessageId);
+    if (messageRow >= 0) {
+        Entry &entry = m_entries[messageRow];
+        entry.status = QStringLiteral("failed");
+        entry.error = true;
+        entry.detail = message;
+        emit dataChanged(index(messageRow), index(messageRow),
+                         {StatusRole, ErrorRole, DetailRole});
+    }
+
+    const QString pendingId = QStringLiteral("work:pending:") + clientMessageId;
+    const int pendingRow = rowForId(pendingId);
+    const QString turnId = pendingRow >= 0 ? m_entries.at(pendingRow).turnId : QString();
+    removeEntryAt(pendingRow);
+
+    const QString previousGroup = m_previousWorkGroups.take(clientMessageId);
+    if (!turnId.isEmpty() && !previousGroup.isEmpty()) {
+        m_activeWorkGroups.insert(turnId, previousGroup);
+        const int previousRow = rowForId(previousGroup);
+        if (previousRow >= 0) {
+            Entry &work = m_entries[previousRow];
+            work.running = true;
+            work.status = QStringLiteral("inProgress");
+            work.title = QStringLiteral("Working");
+            work.elapsed.clear();
+            emit dataChanged(index(previousRow), index(previousRow),
+                             {TitleRole, StatusRole, RunningRole, ElapsedRole});
+        }
+    }
 }
 
 void CodexTimelineModel::upsertItem(const QJsonObject &item, bool completed,
@@ -382,8 +643,14 @@ void CodexTimelineModel::upsertItem(const QJsonObject &item, bool completed,
     Entry entry = fromItem(item, completed);
     if (entry.id.isEmpty())
         return;
+    entry.turnId = turnId;
     if (belongsInWork(entry)) {
         upsertWorkActivity(std::move(entry), turnId);
+        return;
+    }
+    if (entry.kind == QStringLiteral("user")
+        && rowForId(entry.id) < 0
+        && isDuplicateProtocolUserMessage(entry)) {
         return;
     }
     insertOrReplace(std::move(entry));
@@ -405,12 +672,97 @@ void CodexTimelineModel::appendAgentDelta(const QString &itemId,
         entry.timestamp = QDateTime::currentSecsSinceEpoch();
         beginInsertRows({}, m_entries.size(), m_entries.size());
         m_entries.append(std::move(entry));
+        m_rowsById.insert(m_entries.constLast().id, m_entries.size() - 1);
         endInsertRows();
         row = m_entries.size() - 1;
     }
-    m_entries[row].body.append(delta);
+    appendBounded(m_entries[row].body, delta, 256 * 1024);
     m_entries[row].running = true;
     emit dataChanged(index(row), index(row), {BodyRole, RunningRole});
+}
+
+void CodexTimelineModel::appendWorkDelta(const QString &itemId,
+                                         const QString &turnId,
+                                         const QString &kind,
+                                         const QString &bodyDelta,
+                                         const QString &detailDelta)
+{
+    if (itemId.isEmpty() || (bodyDelta.isEmpty() && detailDelta.isEmpty()))
+        return;
+
+    const QString resolvedTurnId = turnId.isEmpty()
+        ? QStringLiteral("current") : turnId;
+    const QString groupId = workGroupId(resolvedTurnId);
+    int row = rowForId(groupId);
+    if (row < 0) {
+        Entry activity;
+        activity.id = itemId;
+        activity.kind = kind;
+        activity.title = kind == QStringLiteral("command")
+            ? QStringLiteral("Running command")
+            : (kind == QStringLiteral("plan") ? QStringLiteral("Plan")
+                                                : QStringLiteral("Reasoning"));
+        activity.running = true;
+        activity.status = QStringLiteral("inProgress");
+        activity.timestamp = QDateTime::currentSecsSinceEpoch();
+        appendBounded(activity.body, bodyDelta, 24 * 1024);
+        appendBounded(activity.detail, detailDelta, 48 * 1024);
+        upsertWorkActivity(std::move(activity), resolvedTurnId);
+        return;
+    }
+
+    Entry &work = m_entries[row];
+    for (int index = work.activities.size() - 1; index >= 0; --index) {
+        if (work.activities.at(index).toMap().value(QStringLiteral("status")).toString()
+            == QStringLiteral("optimistic")) {
+            work.activities.removeAt(index);
+        }
+    }
+
+    int activityIndex = -1;
+    for (int index = 0; index < work.activities.size(); ++index) {
+        if (work.activities.at(index).toMap().value(QStringLiteral("id")).toString()
+            == itemId) {
+            activityIndex = index;
+            break;
+        }
+    }
+    if (activityIndex < 0) {
+        QVariantMap activity{
+            {QStringLiteral("id"), itemId},
+            {QStringLiteral("kind"), kind},
+            {QStringLiteral("title"), kind == QStringLiteral("command")
+                 ? QStringLiteral("Running command")
+                 : (kind == QStringLiteral("plan") ? QStringLiteral("Plan")
+                                                     : QStringLiteral("Reasoning"))},
+            {QStringLiteral("body"), QString()},
+            {QStringLiteral("detail"), QString()},
+            {QStringLiteral("status"), QStringLiteral("inProgress")},
+            {QStringLiteral("running"), true},
+            {QStringLiteral("error"), false},
+            {QStringLiteral("sources"), QVariantList{}}
+        };
+        work.activities.append(activity);
+        activityIndex = work.activities.size() - 1;
+    }
+
+    QVariantMap activity = work.activities.at(activityIndex).toMap();
+    QString body = activity.value(QStringLiteral("body")).toString();
+    QString detail = activity.value(QStringLiteral("detail")).toString();
+    appendBounded(body, bodyDelta, 24 * 1024);
+    appendBounded(detail, detailDelta, 48 * 1024);
+    activity.insert(QStringLiteral("body"), body);
+    activity.insert(QStringLiteral("detail"), detail);
+    activity.insert(QStringLiteral("running"), true);
+    activity.insert(QStringLiteral("status"), QStringLiteral("inProgress"));
+    work.activities[activityIndex] = activity;
+    work.running = true;
+    work.status = QStringLiteral("inProgress");
+    work.title = QStringLiteral("Working");
+    work.elapsed.clear();
+    if (!m_rebuilding)
+        emit dataChanged(index(row), index(row),
+                         {TitleRole, StatusRole, RunningRole, ActivitiesRole, ElapsedRole});
 }
 
 void CodexTimelineModel::updatePlan(const QString &turnId, const QJsonArray &plan)
@@ -441,8 +793,16 @@ void CodexTimelineModel::updatePlan(const QString &turnId, const QJsonArray &pla
 
 void CodexTimelineModel::completeWork(const QString &turnId, qint64 durationMs)
 {
-    const QString groupId = QStringLiteral("work:")
-        + (turnId.isEmpty() ? QStringLiteral("current") : turnId);
+    const QString resolvedTurnId = turnId.isEmpty()
+        ? QStringLiteral("current") : turnId;
+    const QString groupId = workGroupId(resolvedTurnId);
+    finishWorkGroup(groupId,
+                    m_workSegmentCounts.value(resolvedTurnId, 1) > 1
+                        ? -1 : durationMs);
+}
+
+void CodexTimelineModel::finishWorkGroup(const QString &groupId, qint64 durationMs)
+{
     const int row = rowForId(groupId);
     if (row < 0)
         return;
@@ -479,6 +839,7 @@ void CodexTimelineModel::appendError(const QString &message)
     entry.timestamp = QDateTime::currentSecsSinceEpoch();
     beginInsertRows({}, m_entries.size(), m_entries.size());
     m_entries.append(std::move(entry));
+    m_rowsById.insert(m_entries.constLast().id, m_entries.size() - 1);
     endInsertRows();
 }
 
@@ -487,13 +848,70 @@ QString CodexTimelineModel::bodyAt(int row) const
     return row >= 0 && row < m_entries.size() ? m_entries.at(row).body : QString();
 }
 
+int CodexTimelineModel::rowForItem(const QString &id) const
+{
+    return rowForId(id);
+}
+
 int CodexTimelineModel::rowForId(const QString &id) const
 {
-    for (int row = 0; row < m_entries.size(); ++row) {
-        if (m_entries.at(row).id == id)
-            return row;
+    const auto iterator = m_rowsById.constFind(id);
+    return iterator == m_rowsById.cend() ? -1 : iterator.value();
+}
+
+QString CodexTimelineModel::workGroupId(const QString &turnId) const
+{
+    const QString resolvedTurnId = turnId.isEmpty()
+        ? QStringLiteral("current") : turnId;
+    return m_activeWorkGroups.value(
+        resolvedTurnId, QStringLiteral("work:") + resolvedTurnId);
+}
+
+void CodexTimelineModel::startHistoricalWorkSegment(const QString &turnId,
+                                                    const QString &messageId)
+{
+    if (turnId.isEmpty() || !m_activeWorkGroups.contains(turnId))
+        return;
+
+    finishWorkGroup(m_activeWorkGroups.value(turnId));
+    const int segment = m_workSegmentCounts.value(turnId, 1) + 1;
+    m_workSegmentCounts.insert(turnId, segment);
+    m_activeWorkGroups.insert(
+        turnId,
+        QStringLiteral("work:%1:segment:%2:%3").arg(turnId, QString::number(segment),
+                                                    messageId));
+}
+
+void CodexTimelineModel::rebuildRowIndex()
+{
+    m_rowsById.clear();
+    m_rowsById.reserve(m_entries.size());
+    for (int row = 0; row < m_entries.size(); ++row)
+        m_rowsById.insert(m_entries.at(row).id, row);
+}
+
+void CodexTimelineModel::removeEntryAt(int row)
+{
+    if (row < 0 || row >= m_entries.size())
+        return;
+    beginRemoveRows({}, row, row);
+    m_entries.removeAt(row);
+    endRemoveRows();
+    rebuildRowIndex();
+}
+
+bool CodexTimelineModel::isDuplicateProtocolUserMessage(const Entry &entry) const
+{
+    if (entry.kind != QStringLiteral("user") || !entry.clientId.isEmpty()
+        || entry.body.isEmpty() || m_entries.isEmpty()) {
+        return false;
     }
-    return -1;
+
+    const Entry &previous = m_entries.constLast();
+    return previous.kind == QStringLiteral("user")
+        && previous.clientId.isEmpty()
+        && previous.turnId == entry.turnId
+        && previous.body == entry.body;
 }
 
 void CodexTimelineModel::insertOrReplace(Entry entry)
@@ -502,6 +920,7 @@ void CodexTimelineModel::insertOrReplace(Entry entry)
     if (row < 0) {
         beginInsertRows({}, m_entries.size(), m_entries.size());
         m_entries.append(std::move(entry));
+        m_rowsById.insert(m_entries.constLast().id, m_entries.size() - 1);
         endInsertRows();
         return;
     }
@@ -519,7 +938,8 @@ bool CodexTimelineModel::belongsInWork(const Entry &entry)
         || entry.kind == QStringLiteral("command")
         || entry.kind == QStringLiteral("tool")
         || entry.kind == QStringLiteral("search")
-        || entry.kind == QStringLiteral("image");
+        || entry.kind == QStringLiteral("image")
+        || entry.kind == QStringLiteral("compaction");
 }
 
 QVariantMap CodexTimelineModel::activityPresentation(const Entry &entry)
@@ -542,7 +962,7 @@ void CodexTimelineModel::upsertWorkActivity(Entry activity,
 {
     const QString resolvedTurnId = turnId.isEmpty()
         ? QStringLiteral("current") : turnId;
-    const QString groupId = QStringLiteral("work:") + resolvedTurnId;
+    const QString groupId = workGroupId(resolvedTurnId);
     int row = rowForId(groupId);
     if (row < 0) {
         Entry work;
@@ -556,16 +976,27 @@ void CodexTimelineModel::upsertWorkActivity(Entry activity,
         work.activities.append(activityPresentation(activity));
         if (m_rebuilding) {
             m_entries.append(std::move(work));
+            m_rowsById.insert(m_entries.constLast().id, m_entries.size() - 1);
         } else {
             beginInsertRows({}, m_entries.size(), m_entries.size());
             m_entries.append(std::move(work));
+            m_rowsById.insert(m_entries.constLast().id, m_entries.size() - 1);
             endInsertRows();
         }
+        m_activeWorkGroups.insert(resolvedTurnId, groupId);
+        if (!m_workSegmentCounts.contains(resolvedTurnId))
+            m_workSegmentCounts.insert(resolvedTurnId, 1);
         return;
     }
 
     Entry &work = m_entries[row];
     const QVariantMap presentation = activityPresentation(activity);
+    for (int index = work.activities.size() - 1; index >= 0; --index) {
+        if (work.activities.at(index).toMap().value(QStringLiteral("status")).toString()
+            == QStringLiteral("optimistic")) {
+            work.activities.removeAt(index);
+        }
+    }
     bool replaced = false;
     for (int index = 0; index < work.activities.size(); ++index) {
         if (work.activities.at(index).toMap().value(QStringLiteral("id")).toString()
@@ -602,6 +1033,10 @@ CodexTimelineModel::Entry CodexTimelineModel::fromItem(const QJsonObject &item,
     entry.error = entry.status == QStringLiteral("failed");
 
     if (entry.kind == QStringLiteral("userMessage")) {
+        const QString clientId = item.value(QStringLiteral("clientId")).toString();
+        entry.clientId = clientId;
+        if (!clientId.isEmpty())
+            entry.id = clientId;
         entry.kind = QStringLiteral("user");
         entry.title = QStringLiteral("You");
         entry.body = textFromUserContent(item.value(QStringLiteral("content")).toArray());
@@ -609,6 +1044,9 @@ CodexTimelineModel::Entry CodexTimelineModel::fromItem(const QJsonObject &item,
     } else if (entry.kind == QStringLiteral("agentMessage")) {
         entry.kind = QStringLiteral("agent");
         entry.title = QStringLiteral("Codex");
+        entry.body = formattedReviewText(item.value(QStringLiteral("text")).toString());
+    } else if (entry.kind == QStringLiteral("plan")) {
+        entry.title = QStringLiteral("Plan");
         entry.body = item.value(QStringLiteral("text")).toString();
     } else if (entry.kind == QStringLiteral("reasoning")) {
         entry.title = QStringLiteral("Reasoning");
@@ -671,11 +1109,18 @@ CodexTimelineModel::Entry CodexTimelineModel::fromItem(const QJsonObject &item,
         entry.kind = QStringLiteral("image");
         entry.title = QStringLiteral("Inspected image");
         entry.body = item.value(QStringLiteral("path")).toString();
+    } else if (entry.kind == QStringLiteral("enteredReviewMode")
+               || entry.kind == QStringLiteral("exitedReviewMode")) {
+        // Review lifecycle markers accompany the normal agent message. Showing
+        // them would expose protocol internals and duplicate the final review.
+        entry.id.clear();
     } else if (entry.kind == QStringLiteral("contextCompaction")) {
-        entry.kind = QStringLiteral("activity");
-        entry.title = QStringLiteral("Conversation compacted");
-        entry.body = QStringLiteral("Codex condensed earlier context to keep working.");
-        entry.running = false;
+        entry.kind = QStringLiteral("compaction");
+        entry.title = entry.running ? QStringLiteral("Compacting context")
+                                    : QStringLiteral("Context compacted");
+        entry.body = entry.running
+            ? QStringLiteral("Condensing earlier conversation context")
+            : QStringLiteral("Earlier context was condensed for the next turn.");
     } else {
         entry.title = entry.kind.isEmpty() ? QStringLiteral("Activity") : entry.kind;
         entry.kind = QStringLiteral("activity");

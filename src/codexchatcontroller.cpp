@@ -14,6 +14,8 @@
 #include <QUrl>
 #include <QUuid>
 
+#include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace {
@@ -59,12 +61,18 @@ CodexChatController::CodexChatController(CodexAppServerClient *client,
 {
     m_deltaTimer.setSingleShot(true);
     m_deltaTimer.setTimerType(Qt::PreciseTimer);
-    m_deltaTimer.setInterval(16);
+    m_deltaTimer.setInterval(32);
     connect(&m_deltaTimer, &QTimer::timeout, this, &CodexChatController::flushDeltas);
 
     m_elapsedTimer.setInterval(1000);
     m_elapsedTimer.setTimerType(Qt::CoarseTimer);
     connect(&m_elapsedTimer, &QTimer::timeout, this, &CodexChatController::updateElapsed);
+
+    m_threadSearchTimer.setSingleShot(true);
+    m_threadSearchTimer.setTimerType(Qt::CoarseTimer);
+    m_threadSearchTimer.setInterval(180);
+    connect(&m_threadSearchTimer, &QTimer::timeout,
+            this, &CodexChatController::requestThreadSearch);
 
     connect(&m_attachments, &QAbstractItemModel::rowsInserted,
             this, &CodexChatController::attachmentsChanged);
@@ -80,6 +88,7 @@ CodexChatController::CodexChatController(CodexAppServerClient *client,
         m_branchName = branch;
         m_threadId.clear();
         m_turnId.clear();
+        resetContextUsage();
         m_diffText.clear();
         m_timeline.clear();
         QSettings settings;
@@ -135,6 +144,24 @@ QString CodexChatController::elapsedText() const
         .arg(seconds % 60, 2, 10, QLatin1Char('0'));
 }
 
+bool CodexChatController::canSubmit() const
+{
+    if (!connected() || !m_authenticated || !hasProject() || m_startingTurn
+        || m_awaitingApproval || m_awaitingUserInput) {
+        return false;
+    }
+    return !m_turnActive || (!m_threadId.isEmpty() && !m_turnId.isEmpty());
+}
+
+int CodexChatController::contextUsagePercent() const
+{
+    if (m_contextWindow <= 0)
+        return -1;
+    const double percent = 100.0 * static_cast<double>(m_contextTokens)
+        / static_cast<double>(m_contextWindow);
+    return std::clamp(static_cast<int>(std::round(percent)), 0, 100);
+}
+
 void CodexChatController::setProjectPath(const QString &path)
 {
     const QString local = QUrl(path).isLocalFile() ? QUrl(path).toLocalFile() : path;
@@ -168,9 +195,12 @@ void CodexChatController::startNewChat(bool useWorktree)
 void CodexChatController::selectThread(int row)
 {
     const QString id = m_threads.threadIdAt(row);
+    const QString cwd = m_threads.cwdAt(row);
     if (id.isEmpty() || id == m_threadId)
         return;
-    resumeThread(id, m_threads.cwdAt(row));
+    if (!m_threadSearchQuery.isEmpty())
+        clearThreadSearch();
+    resumeThread(id, cwd);
 }
 
 void CodexChatController::refreshThreads()
@@ -185,10 +215,63 @@ void CodexChatController::refreshThreads()
     m_requestContext.insert(id, QStringLiteral("thread/list"));
 }
 
+void CodexChatController::setThreadSearchQuery(const QString &query)
+{
+    const QString normalized = query.trimmed();
+    if (m_threadSearchQuery == normalized)
+        return;
+
+    m_threadSearchTimer.stop();
+    m_threadSearchQuery = normalized;
+    m_threadSearchPending = false;
+    emit threadSearchChanged();
+
+    if (m_threadSearchQuery.isEmpty()) {
+        m_threads.replace(m_threadSnapshot);
+        refreshThreads();
+        return;
+    }
+
+    QJsonArray localMatches;
+    for (const QJsonValue &value : std::as_const(m_threadSnapshot)) {
+        const QJsonObject thread = value.toObject();
+        const QString haystack = thread.value(QStringLiteral("name")).toString()
+            + QChar(' ') + thread.value(QStringLiteral("preview")).toString()
+            + QChar(' ') + thread.value(QStringLiteral("cwd")).toString();
+        if (haystack.contains(m_threadSearchQuery, Qt::CaseInsensitive))
+            localMatches.append(thread);
+    }
+    m_threads.replace(localMatches);
+    m_threadSearchTimer.start();
+}
+
+void CodexChatController::clearThreadSearch()
+{
+    setThreadSearchQuery({});
+}
+
+void CodexChatController::requestThreadSearch()
+{
+    if (!connected() || m_threadSearchQuery.isEmpty())
+        return;
+
+    m_threadSearchPending = true;
+    emit threadSearchChanged();
+    const QString query = m_threadSearchQuery;
+    const qint64 id = m_client->request(
+        QStringLiteral("thread/search"),
+        QJsonObject{{QStringLiteral("searchTerm"), query},
+                    {QStringLiteral("limit"), 100},
+                    {QStringLiteral("archived"), false},
+                    {QStringLiteral("sortKey"), QStringLiteral("recency_at")},
+                    {QStringLiteral("sortDirection"), QStringLiteral("desc")}});
+    m_requestContext.insert(id, QStringLiteral("thread/search:") + query);
+}
+
 void CodexChatController::sendMessage(const QString &text)
 {
     const QString prompt = text.trimmed();
-    if (prompt.isEmpty() || busy())
+    if (prompt.isEmpty() || !canSubmit())
         return;
     if (!connected()) {
         setError(QStringLiteral("Codex is still connecting"));
@@ -203,27 +286,36 @@ void CodexChatController::sendMessage(const QString &text)
         return;
     }
 
+    if (m_turnActive) {
+        clearError();
+        const QString messageId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        m_timeline.beginOptimisticSteer(messageId, prompt, m_turnId);
+        emit messageSubmitted(messageId);
+
+        const QJsonObject params{
+            {QStringLiteral("threadId"), m_threadId},
+            {QStringLiteral("expectedTurnId"), m_turnId},
+            {QStringLiteral("clientUserMessageId"), messageId},
+            {QStringLiteral("input"), buildInput(prompt, messageId)}
+        };
+        const qint64 id = m_client->request(QStringLiteral("turn/steer"), params);
+        m_requestContext.insert(id, QStringLiteral("turn/steer:") + messageId);
+        m_attachments.clear();
+        setStatus(QStringLiteral("Working"), concise(prompt));
+        return;
+    }
+
     clearError();
     m_pendingPrompt = prompt;
     m_pendingMessageId = QUuid::createUuid().toString(QUuid::WithoutBraces);
     m_startingTurn = true;
+    m_timeline.beginOptimisticTurn(m_pendingMessageId, prompt);
     setStatus(QStringLiteral("Starting"), concise(prompt));
     emit stateChanged();
+    emit messageSubmitted(m_pendingMessageId);
 
     if (m_threadId.isEmpty()) {
-        QJsonObject params{{QStringLiteral("cwd"), m_projectPath},
-                           {QStringLiteral("approvalPolicy"), QStringLiteral("on-request")},
-                           {QStringLiteral("sandbox"), QStringLiteral("workspace-write")},
-                           {QStringLiteral("serviceName"), QStringLiteral("ava_chat")}};
-        if (qEnvironmentVariableIntValue("AVA_CODEX_EPHEMERAL_THREADS") == 1)
-            params.insert(QStringLiteral("ephemeral"), true);
-        if (!m_selectedModel.isEmpty())
-            params.insert(QStringLiteral("model"), m_selectedModel);
-        params.insert(QStringLiteral("serviceTier"),
-                      m_fastMode ? QJsonValue(QStringLiteral("fast"))
-                                 : QJsonValue(QJsonValue::Null));
-        const qint64 id = m_client->request(QStringLiteral("thread/start"), params);
-        m_requestContext.insert(id, QStringLiteral("thread/start"));
+        requestThreadStart(QStringLiteral("thread/start"));
         return;
     }
 
@@ -418,12 +510,137 @@ void CodexChatController::retryConnection()
 
 void CodexChatController::archiveCurrentThread()
 {
-    if (!connected() || m_threadId.isEmpty() || busy())
+    archiveThread(m_threadId);
+}
+
+void CodexChatController::archiveThread(const QString &threadId)
+{
+    if (!connected() || threadId.isEmpty() || busy())
         return;
     const qint64 id = m_client->request(
         QStringLiteral("thread/archive"),
+        QJsonObject{{QStringLiteral("threadId"), threadId}});
+    m_requestContext.insert(id, QStringLiteral("thread/archive:") + threadId);
+}
+
+void CodexChatController::forkThread(const QString &threadId)
+{
+    if (!connected() || threadId.isEmpty() || busy())
+        return;
+    const qint64 id = m_client->request(
+        QStringLiteral("thread/fork"),
+        QJsonObject{{QStringLiteral("threadId"), threadId}});
+    m_requestContext.insert(id, QStringLiteral("thread/fork"));
+    setStatus(QStringLiteral("Opening fork"), QStringLiteral("Copying conversation history"));
+}
+
+void CodexChatController::setThreadPinned(const QString &threadId, bool pinned)
+{
+    if (!connected() || threadId.isEmpty())
+        return;
+    const qint64 id = m_client->request(
+        QStringLiteral("thread/metadata/update"),
+        QJsonObject{{QStringLiteral("threadId"), threadId},
+                    {QStringLiteral("isPinned"), pinned}});
+    m_requestContext.insert(id, QStringLiteral("thread/metadata/update"));
+}
+
+void CodexChatController::startReview(const QString &instructions)
+{
+    if (busy())
+        return;
+    if (!connected()) {
+        setError(QStringLiteral("Codex is still connecting"));
+        return;
+    }
+    if (!m_authenticated) {
+        setError(QStringLiteral("Sign in to Codex before starting a review"));
+        return;
+    }
+    if (m_projectPath.isEmpty()) {
+        emit requestProjectSelection();
+        return;
+    }
+
+    clearError();
+    m_pendingReviewInstructions = instructions.trimmed();
+    m_pendingReviewThreadId = m_threadId;
+    m_startingTurn = true;
+    setStatus(QStringLiteral("Starting review"),
+              m_pendingReviewInstructions.isEmpty()
+                  ? QStringLiteral("Checking uncommitted changes")
+                  : concise(m_pendingReviewInstructions));
+    emit stateChanged();
+
+    if (m_threadId.isEmpty()) {
+        requestThreadStart(QStringLiteral("thread/start:review"));
+        return;
+    }
+    startPendingReview();
+}
+
+void CodexChatController::reviewThread(const QString &threadId)
+{
+    if (threadId.isEmpty())
+        return;
+    if (threadId == m_threadId) {
+        startReview();
+        return;
+    }
+    if (busy())
+        return;
+    if (!connected()) {
+        setError(QStringLiteral("Codex is still connecting"));
+        return;
+    }
+    if (!m_authenticated) {
+        setError(QStringLiteral("Sign in to Codex before starting a review"));
+        return;
+    }
+
+    clearError();
+    m_pendingReviewInstructions.clear();
+    m_pendingReviewThreadId = threadId;
+    m_startingTurn = true;
+    m_threadId = threadId;
+    m_turnId.clear();
+    resetContextUsage();
+    m_diffText.clear();
+    m_timeline.clear();
+    emit diffChanged();
+    setStatus(QStringLiteral("Loading"), QStringLiteral("Opening conversation for review"));
+
+    QJsonObject params{{QStringLiteral("threadId"), threadId}};
+    if (!m_selectedModel.isEmpty())
+        params.insert(QStringLiteral("model"), m_selectedModel);
+    const qint64 id = m_client->request(QStringLiteral("thread/resume"), params);
+    m_requestContext.insert(id, QStringLiteral("thread/resume:review"));
+    emit stateChanged();
+}
+
+void CodexChatController::compactThread()
+{
+    if (busy() || m_threadId.isEmpty())
+        return;
+    if (!connected()) {
+        setError(QStringLiteral("Codex is still connecting"));
+        return;
+    }
+    if (!m_authenticated) {
+        setError(QStringLiteral("Sign in to Codex before compacting this conversation"));
+        return;
+    }
+
+    clearError();
+    m_compactionRequested = true;
+    m_startingTurn = true;
+    setStatus(QStringLiteral("Compacting"),
+              QStringLiteral("Condensing earlier conversation context"));
+    const qint64 id = m_client->request(
+        QStringLiteral("thread/compact/start"),
         QJsonObject{{QStringLiteral("threadId"), m_threadId}});
-    m_requestContext.insert(id, QStringLiteral("thread/archive"));
+    m_requestContext.insert(id, QStringLiteral("thread/compact/start"));
+    emit stateChanged();
 }
 
 void CodexChatController::setVisualTestState(const QString &state)
@@ -621,9 +838,9 @@ void CodexChatController::handleResponse(qint64 id,
                                          const QJsonObject &result,
                                          const QJsonObject &error)
 {
-    Q_UNUSED(id)
-    const QString context = method.isEmpty() ? m_requestContext.take(id) : method;
-    m_requestContext.remove(id);
+    QString context = m_requestContext.take(id);
+    if (context.isEmpty())
+        context = method;
     if (!error.isEmpty()) {
         const QString message = error.value(QStringLiteral("message")).toString(
             QStringLiteral("Codex could not complete the request"));
@@ -631,6 +848,39 @@ void CodexChatController::handleResponse(qint64 id,
             || context == QStringLiteral("thread/name/set")) {
             setStatus(QStringLiteral("Ready"), QStringLiteral("Start a new conversation"));
             return;
+        }
+        if (context.startsWith(QStringLiteral("thread/search:"))) {
+            const QString query = context.mid(QStringLiteral("thread/search:").size());
+            if (query == m_threadSearchQuery) {
+                m_threadSearchPending = false;
+                emit threadSearchChanged();
+            }
+            return;
+        }
+        if (context == QStringLiteral("thread/start")
+            || context == QStringLiteral("thread/start:review")
+            || context == QStringLiteral("turn/start")) {
+            const QString clientMessageId = m_activeClientMessageId.isEmpty()
+                ? m_pendingMessageId : m_activeClientMessageId;
+            m_timeline.failOptimisticTurn(clientMessageId, message);
+            m_pendingPrompt.clear();
+            m_pendingMessageId.clear();
+            m_pendingReviewInstructions.clear();
+            m_pendingReviewThreadId.clear();
+            m_activeClientMessageId.clear();
+        } else if (context.startsWith(QStringLiteral("turn/steer:"))) {
+            const QString clientMessageId = context.mid(
+                QStringLiteral("turn/steer:").size());
+            m_timeline.failOptimisticTurn(clientMessageId, message);
+        } else if (context == QStringLiteral("review/start")) {
+            m_pendingReviewInstructions.clear();
+            m_pendingReviewThreadId.clear();
+        } else if (context == QStringLiteral("thread/resume:review")
+                   || context == QStringLiteral("thread/read:review")) {
+            m_pendingReviewInstructions.clear();
+            m_pendingReviewThreadId.clear();
+        } else if (context == QStringLiteral("thread/compact/start")) {
+            m_compactionRequested = false;
         }
         setError(message);
         m_startingTurn = false;
@@ -664,57 +914,154 @@ void CodexChatController::handleResponse(qint64 id,
             m_fastMode = false;
         emit modelChanged();
     } else if (context == QStringLiteral("thread/list")) {
-        m_threads.replace(result.value(QStringLiteral("data")).toArray());
+        m_threadSnapshot = result.value(QStringLiteral("data")).toArray();
+        if (m_threadSearchQuery.isEmpty())
+            m_threads.replace(m_threadSnapshot);
         if (m_authenticated)
             setStatus(QStringLiteral("Ready"), QStringLiteral("Start a new conversation"));
-    } else if (context == QStringLiteral("thread/start")) {
+    } else if (context.startsWith(QStringLiteral("thread/search:"))) {
+        const QString query = context.mid(QStringLiteral("thread/search:").size());
+        if (query == m_threadSearchQuery) {
+            m_threadSearchPending = false;
+            m_threads.replaceSearchResults(result.value(QStringLiteral("data")).toArray());
+            emit threadSearchChanged();
+        }
+    } else if (context == QStringLiteral("thread/start")
+               || context == QStringLiteral("thread/start:review")) {
         const QJsonObject thread = result.value(QStringLiteral("thread")).toObject();
         m_threadId = thread.value(QStringLiteral("id")).toString();
         if (m_threadId.isEmpty()) {
             setError(QStringLiteral("Codex did not return a conversation"));
+            if (context == QStringLiteral("thread/start")) {
+                m_timeline.failOptimisticTurn(
+                    m_pendingMessageId,
+                    QStringLiteral("Codex did not return a conversation"));
+            }
+            m_pendingPrompt.clear();
+            m_pendingMessageId.clear();
+            m_pendingReviewInstructions.clear();
+            m_pendingReviewThreadId.clear();
             m_startingTurn = false;
             return;
         }
         m_threads.upsert(thread);
-        startPendingTurn();
-    } else if (context == QStringLiteral("thread/resume")) {
+        if (context == QStringLiteral("thread/start:review"))
+            startPendingReview();
+        else
+            startPendingTurn();
+    } else if (context == QStringLiteral("thread/resume")
+               || context == QStringLiteral("thread/resume:review")) {
         const QJsonObject thread = result.value(QStringLiteral("thread")).toObject();
         m_threadId = thread.value(QStringLiteral("id")).toString();
         if (!thread.value(QStringLiteral("cwd")).toString().isEmpty()) {
             m_projectPath = thread.value(QStringLiteral("cwd")).toString();
             emit projectChanged();
         }
-        const qint64 read = m_client->request(
-            QStringLiteral("thread/read"),
-            QJsonObject{{QStringLiteral("threadId"), m_threadId},
-                        {QStringLiteral("includeTurns"), true}});
-        m_requestContext.insert(read, QStringLiteral("thread/read"));
-    } else if (context == QStringLiteral("thread/read")) {
+        // thread/resume already returns the authoritative turn history. Rendering
+        // it directly avoids a second full rollout read on large conversations.
+        m_timeline.replaceFromThread(thread);
+        m_threads.upsert(thread);
+        m_diffText.clear();
+        emit diffChanged();
+        if (context == QStringLiteral("thread/resume:review")) {
+            if (!m_pendingReviewThreadId.isEmpty()
+                && m_pendingReviewThreadId != m_threadId) {
+                m_startingTurn = false;
+                setError(QStringLiteral("Codex opened a different conversation for review"));
+                m_pendingReviewThreadId.clear();
+            } else {
+                startPendingReview();
+            }
+        } else {
+            m_startingTurn = false;
+            setStatus(QStringLiteral("Ready"), QStringLiteral("Continue the conversation"));
+            emit stateChanged();
+        }
+    } else if (context == QStringLiteral("thread/read")
+               || context == QStringLiteral("thread/read:review")) {
         const QJsonObject thread = result.value(QStringLiteral("thread")).toObject();
         m_timeline.replaceFromThread(thread);
         m_threads.upsert(thread);
         m_diffText.clear();
         emit diffChanged();
-        setStatus(QStringLiteral("Ready"), QStringLiteral("Continue the conversation"));
-        emit stateChanged();
+        if (context == QStringLiteral("thread/read:review")) {
+            if (!m_pendingReviewThreadId.isEmpty()
+                && m_pendingReviewThreadId != m_threadId) {
+                m_startingTurn = false;
+                setError(QStringLiteral("Codex opened a different conversation for review"));
+                m_pendingReviewThreadId.clear();
+            } else {
+                startPendingReview();
+            }
+        } else {
+            setStatus(QStringLiteral("Ready"), QStringLiteral("Continue the conversation"));
+            emit stateChanged();
+        }
     } else if (context == QStringLiteral("turn/start")) {
         const QJsonObject turn = result.value(QStringLiteral("turn")).toObject();
         m_turnId = turn.value(QStringLiteral("id")).toString();
         m_startingTurn = false;
         m_turnActive = true;
+        m_timeline.acknowledgeOptimisticTurn(m_activeClientMessageId, m_turnId);
+        emit stateChanged();
+    } else if (context.startsWith(QStringLiteral("turn/steer:"))) {
+        const QString clientMessageId = context.mid(
+            QStringLiteral("turn/steer:").size());
+        const QString turnId = result.value(QStringLiteral("turnId")).toString(m_turnId);
+        m_timeline.acknowledgeOptimisticTurn(clientMessageId, turnId);
+    } else if (context == QStringLiteral("review/start")) {
+        const QJsonObject turn = result.value(QStringLiteral("turn")).toObject();
+        m_turnId = turn.value(QStringLiteral("id")).toString(m_turnId);
+        m_startingTurn = false;
+        m_turnActive = !m_turnId.isEmpty();
+        setStatus(QStringLiteral("Reviewing"), QStringLiteral("Inspecting the changes"));
+        emit stateChanged();
+    } else if (context == QStringLiteral("thread/compact/start")) {
+        // The request is only an acknowledgement. Standard turn and item
+        // notifications carry the real progress and completion state.
+        setStatus(QStringLiteral("Compacting"),
+                  QStringLiteral("Condensing earlier conversation context"));
         emit stateChanged();
     } else if (context == QStringLiteral("account/login/start")) {
         const QUrl url(result.value(QStringLiteral("authUrl")).toString());
         if (url.isValid())
             QDesktopServices::openUrl(url);
-    } else if (context == QStringLiteral("thread/archive")) {
-        m_threads.removeById(m_threadId);
-        m_threadId.clear();
+    } else if (context == QStringLiteral("thread/metadata/update")) {
+        m_threads.upsert(result.value(QStringLiteral("thread")).toObject());
+    } else if (context == QStringLiteral("thread/fork")) {
+        const QJsonObject thread = result.value(QStringLiteral("thread")).toObject();
+        const QString forkId = thread.value(QStringLiteral("id")).toString();
+        if (forkId.isEmpty()) {
+            setError(QStringLiteral("Codex did not return the forked conversation"));
+            return;
+        }
+        m_threads.upsert(thread);
+        m_threadId = forkId;
         m_turnId.clear();
-        m_timeline.clear();
+        resetContextUsage();
+        const QString cwd = result.value(QStringLiteral("cwd")).toString(
+            thread.value(QStringLiteral("cwd")).toString());
+        if (!cwd.isEmpty()) {
+            m_projectPath = cwd;
+            emit projectChanged();
+        }
+        m_timeline.replaceFromThread(thread);
         m_diffText.clear();
         emit diffChanged();
         emit stateChanged();
+        setStatus(QStringLiteral("Ready"), QStringLiteral("Continue from the fork"));
+    } else if (context.startsWith(QStringLiteral("thread/archive:"))) {
+        const QString archivedId = context.mid(QStringLiteral("thread/archive:").size());
+        m_threads.removeById(archivedId);
+        if (archivedId == m_threadId) {
+            m_threadId.clear();
+            m_turnId.clear();
+            resetContextUsage();
+            m_timeline.clear();
+            m_diffText.clear();
+            emit diffChanged();
+            emit stateChanged();
+        }
         setStatus(QStringLiteral("Archived"), QStringLiteral("Conversation moved out of the way"));
     }
 }
@@ -757,9 +1104,14 @@ void CodexChatController::handleNotification(const QString &method,
         m_turnId = turn.value(QStringLiteral("id")).toString();
         m_turnActive = true;
         m_startingTurn = false;
+        m_timeline.acknowledgeOptimisticTurn(m_activeClientMessageId, m_turnId);
         m_turnElapsed.restart();
         m_elapsedTimer.start();
-        setStatus(QStringLiteral("Working"), QStringLiteral("Understanding the task"));
+        setStatus(m_compactionRequested ? QStringLiteral("Compacting")
+                                        : QStringLiteral("Working"),
+                  m_compactionRequested
+                      ? QStringLiteral("Condensing earlier conversation context")
+                      : QStringLiteral("Understanding the task"));
         emit stateChanged();
         emit elapsedChanged();
         return;
@@ -777,6 +1129,7 @@ void CodexChatController::handleNotification(const QString &method,
         const bool success = status == QStringLiteral("completed");
         m_turnActive = false;
         m_startingTurn = false;
+        m_activeClientMessageId.clear();
         m_awaitingApproval = false;
         m_elapsedTimer.stop();
         m_approvalRequestId = QJsonValue(QJsonValue::Undefined);
@@ -786,10 +1139,15 @@ void CodexChatController::handleNotification(const QString &method,
         if (m_awaitingUserInput)
             clearUserInput();
         emit approvalChanged();
-        setStatus(success ? QStringLiteral("Done")
+        const bool wasCompaction = m_compactionRequested;
+        m_compactionRequested = false;
+        setStatus(success ? (wasCompaction ? QStringLiteral("Compacted")
+                                           : QStringLiteral("Done"))
                           : (status == QStringLiteral("interrupted")
                                  ? QStringLiteral("Stopped") : QStringLiteral("Failed")),
-                  success ? QStringLiteral("Codex finished the task")
+                  success ? (wasCompaction
+                                 ? QStringLiteral("Conversation context is ready")
+                                 : QStringLiteral("Codex finished the task"))
                           : QStringLiteral("The turn ended without completing"));
         refreshThreads();
         emit stateChanged();
@@ -804,7 +1162,7 @@ void CodexChatController::handleNotification(const QString &method,
         const QJsonObject item = params.value(QStringLiteral("item")).toObject();
         const QString id = item.value(QStringLiteral("id")).toString();
         if (completed)
-            m_pendingDeltas.remove(id);
+            flushDeltas();
         m_timeline.upsertItem(item, completed,
                               params.value(QStringLiteral("turnId")).toString(m_turnId));
         const QString type = item.value(QStringLiteral("type")).toString();
@@ -814,13 +1172,35 @@ void CodexChatController::handleNotification(const QString &method,
             setStatus(QStringLiteral("Working"), QStringLiteral("Updating project files"));
         else if (type == QStringLiteral("webSearch"))
             setStatus(QStringLiteral("Working"), QStringLiteral("Searching the web"));
+        else if (type == QStringLiteral("contextCompaction"))
+            setStatus(QStringLiteral("Compacting"),
+                      QStringLiteral("Condensing earlier conversation context"));
         return;
     }
     if (method == QStringLiteral("item/agentMessage/delta")) {
-        const QString itemId = params.value(QStringLiteral("itemId")).toString();
-        m_pendingDeltas[itemId].append(params.value(QStringLiteral("delta")).toString());
-        if (!m_deltaTimer.isActive())
-            m_deltaTimer.start();
+        queueItemDelta(QStringLiteral("agent"), params);
+        return;
+    }
+    if (method == QStringLiteral("item/plan/delta")) {
+        queueItemDelta(QStringLiteral("plan"), params);
+        return;
+    }
+    if (method == QStringLiteral("item/reasoning/summaryTextDelta")) {
+        queueItemDelta(QStringLiteral("reasoning"), params);
+        return;
+    }
+    if (method == QStringLiteral("item/reasoning/summaryPartAdded")) {
+        QJsonObject boundary = params;
+        boundary.insert(QStringLiteral("delta"), QStringLiteral("\n\n"));
+        queueItemDelta(QStringLiteral("reasoning"), boundary);
+        return;
+    }
+    if (method == QStringLiteral("item/reasoning/textDelta")) {
+        queueItemDelta(QStringLiteral("reasoning"), params, true);
+        return;
+    }
+    if (method == QStringLiteral("item/commandExecution/outputDelta")) {
+        queueItemDelta(QStringLiteral("command"), params, true);
         return;
     }
     if (method == QStringLiteral("turn/plan/updated")) {
@@ -834,10 +1214,38 @@ void CodexChatController::handleNotification(const QString &method,
         emit diffChanged();
         return;
     }
+    if (method == QStringLiteral("thread/status/changed")) {
+        m_threads.updateStatus(params.value(QStringLiteral("threadId")).toString(),
+                               params.value(QStringLiteral("status")));
+        return;
+    }
+    if (method == QStringLiteral("thread/tokenUsage/updated")) {
+        if (params.value(QStringLiteral("threadId")).toString() != m_threadId)
+            return;
+        const QJsonObject usage = params.value(QStringLiteral("tokenUsage")).toObject();
+        const QJsonObject last = usage.value(QStringLiteral("last")).toObject();
+        m_contextTokens = static_cast<qint64>(
+            last.value(QStringLiteral("totalTokens")).toDouble());
+        m_contextWindow = static_cast<qint64>(
+            usage.value(QStringLiteral("modelContextWindow")).toDouble());
+        emit usageChanged();
+        return;
+    }
     if (method == QStringLiteral("error")) {
         const QJsonObject error = params.value(QStringLiteral("error")).toObject();
         const QString message = error.value(QStringLiteral("message")).toString();
         if (!message.isEmpty()) {
+            if (m_compactionRequested)
+                m_compactionRequested = false;
+            if (m_startingTurn) {
+                const QString clientMessageId = m_activeClientMessageId.isEmpty()
+                    ? m_pendingMessageId : m_activeClientMessageId;
+                m_timeline.failOptimisticTurn(clientMessageId, message);
+                m_activeClientMessageId.clear();
+                m_pendingMessageId.clear();
+                m_pendingPrompt.clear();
+                m_startingTurn = false;
+            }
             m_timeline.appendError(message);
             setError(message);
         }
@@ -954,10 +1362,7 @@ void CodexChatController::startPendingTurn()
     const QString prompt = m_pendingPrompt;
     const QString messageId = m_pendingMessageId;
     const QJsonArray input = buildInput(prompt, messageId);
-
-    // App-server publishes the authoritative userMessage item immediately
-    // after turn/start. An optimistic copy here has a different local ID and
-    // makes a single submitted prompt appear twice in the transcript.
+    m_activeClientMessageId = messageId;
 
     QJsonObject params{{QStringLiteral("threadId"), m_threadId},
                        {QStringLiteral("input"), input},
@@ -999,6 +1404,47 @@ void CodexChatController::startPendingTurn()
     m_pendingMessageId.clear();
     m_attachments.clear();
     setStatus(QStringLiteral("Working"), concise(prompt));
+}
+
+void CodexChatController::requestThreadStart(const QString &context)
+{
+    QJsonObject params{{QStringLiteral("cwd"), m_projectPath},
+                       {QStringLiteral("approvalPolicy"), QStringLiteral("on-request")},
+                       {QStringLiteral("sandbox"), QStringLiteral("workspace-write")},
+                       {QStringLiteral("serviceName"), QStringLiteral("ava_chat")}};
+    if (qEnvironmentVariableIntValue("AVA_CODEX_EPHEMERAL_THREADS") == 1)
+        params.insert(QStringLiteral("ephemeral"), true);
+    if (!m_selectedModel.isEmpty())
+        params.insert(QStringLiteral("model"), m_selectedModel);
+    params.insert(QStringLiteral("serviceTier"),
+                  m_fastMode ? QJsonValue(QStringLiteral("fast"))
+                             : QJsonValue(QJsonValue::Null));
+    const qint64 id = m_client->request(QStringLiteral("thread/start"), params);
+    m_requestContext.insert(id, context);
+}
+
+void CodexChatController::startPendingReview()
+{
+    if (m_threadId.isEmpty()) {
+        m_pendingReviewInstructions.clear();
+        m_pendingReviewThreadId.clear();
+        m_startingTurn = false;
+        setError(QStringLiteral("Codex did not return a conversation for the review"));
+        return;
+    }
+
+    const QJsonObject target = m_pendingReviewInstructions.isEmpty()
+        ? QJsonObject{{QStringLiteral("type"), QStringLiteral("uncommittedChanges")}}
+        : QJsonObject{{QStringLiteral("type"), QStringLiteral("custom")},
+                      {QStringLiteral("instructions"), m_pendingReviewInstructions}};
+    const qint64 id = m_client->request(
+        QStringLiteral("review/start"),
+        QJsonObject{{QStringLiteral("threadId"), m_threadId},
+                    {QStringLiteral("target"), target},
+                    {QStringLiteral("delivery"), QStringLiteral("inline")}});
+    m_requestContext.insert(id, QStringLiteral("review/start"));
+    m_pendingReviewInstructions.clear();
+    m_pendingReviewThreadId.clear();
 }
 
 void CodexChatController::sendApproval(const QString &decision)
@@ -1117,8 +1563,44 @@ void CodexChatController::clearError()
 void CodexChatController::flushDeltas()
 {
     const auto pending = std::exchange(m_pendingDeltas, {});
-    for (auto iterator = pending.cbegin(); iterator != pending.cend(); ++iterator)
-        m_timeline.appendAgentDelta(iterator.key(), iterator.value());
+    for (auto iterator = pending.cbegin(); iterator != pending.cend(); ++iterator) {
+        const PendingItemDelta &delta = iterator.value();
+        if (delta.kind == QStringLiteral("agent"))
+            m_timeline.appendAgentDelta(delta.itemId, delta.body);
+        else
+            m_timeline.appendWorkDelta(delta.itemId, delta.turnId, delta.kind,
+                                       delta.body, delta.detail);
+    }
+}
+
+void CodexChatController::queueItemDelta(const QString &kind,
+                                         const QJsonObject &params,
+                                         bool detail)
+{
+    const QString itemId = params.value(QStringLiteral("itemId")).toString();
+    const QString value = params.value(QStringLiteral("delta")).toString();
+    if (itemId.isEmpty() || value.isEmpty())
+        return;
+    const QString key = kind + QChar(0x1f) + itemId;
+    PendingItemDelta &pending = m_pendingDeltas[key];
+    pending.itemId = itemId;
+    pending.turnId = params.value(QStringLiteral("turnId")).toString(m_turnId);
+    pending.kind = kind;
+    if (detail)
+        pending.detail.append(value);
+    else
+        pending.body.append(value);
+    if (!m_deltaTimer.isActive())
+        m_deltaTimer.start();
+}
+
+void CodexChatController::resetContextUsage()
+{
+    if (m_contextTokens == 0 && m_contextWindow == 0)
+        return;
+    m_contextTokens = 0;
+    m_contextWindow = 0;
+    emit usageChanged();
 }
 
 void CodexChatController::updateElapsed()
@@ -1134,8 +1616,10 @@ void CodexChatController::resumeThread(const QString &threadId,
     clearError();
     m_threadId = threadId;
     m_turnId.clear();
+    resetContextUsage();
     m_diffText.clear();
     m_timeline.clear();
+    m_startingTurn = true;
     if (!cwd.isEmpty()) {
         m_projectPath = cwd;
         emit projectChanged();
