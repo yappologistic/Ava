@@ -226,8 +226,10 @@ if (BUILD_TESTING)
     target_link_libraries(tst_attachmentui PRIVATE
         Qt6::Gui Qt6::Qml Qt6::Quick Qt6::QuickControls2 Qt6::Test)
     add_test(NAME attachment_ui COMMAND tst_attachmentui)
-    set_tests_properties(attachment_ui PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+    set_property(TEST attachment_ui PROPERTY ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen"
+        "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>"
+        "QT_QUICK_BACKEND=software")
 
     qt_add_executable(tst_codexlive tests/tst_codexlive.cpp)
     target_link_libraries(tst_codexlive PRIVATE AvaCodexCore Qt6::Test)
