@@ -57,7 +57,8 @@ CodexChatController::CodexChatController(QObject *parent)
 CodexChatController::CodexChatController(CodexAppServerClient *client,
                                          QObject *parent)
     : QObject(parent),
-      m_client(client)
+      m_client(client),
+      m_promptNavigator(&m_timeline)
 {
     m_deltaTimer.setSingleShot(true);
     m_deltaTimer.setTimerType(Qt::PreciseTimer);

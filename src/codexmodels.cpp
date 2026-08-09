@@ -41,6 +41,14 @@ QString textFromUserContent(const QJsonArray &content)
     return parts.join(QStringLiteral("\n"));
 }
 
+QString compactNavigationPreview(const QString &text, int maximum = 320)
+{
+    QString preview = text.simplified();
+    if (preview.size() <= maximum)
+        return preview;
+    return preview.left(maximum - 1).trimmed() + QStringLiteral("…");
+}
+
 QString reasoningText(const QJsonValue &value)
 {
     QStringList parts;
@@ -865,6 +873,164 @@ QString CodexTimelineModel::workGroupId(const QString &turnId) const
         ? QStringLiteral("current") : turnId;
     return m_activeWorkGroups.value(
         resolvedTurnId, QStringLiteral("work:") + resolvedTurnId);
+}
+
+CodexPromptNavigationModel::CodexPromptNavigationModel(CodexTimelineModel *source,
+                                                       QObject *parent)
+    : QAbstractListModel(parent),
+      m_source(source)
+{
+    Q_ASSERT(m_source);
+    connect(m_source, &QAbstractItemModel::modelReset,
+            this, &CodexPromptNavigationModel::rebuild);
+    connect(m_source, &QAbstractItemModel::rowsInserted, this,
+            [this] { rebuild(); });
+    connect(m_source, &QAbstractItemModel::rowsRemoved, this,
+            [this] { rebuild(); });
+    connect(m_source, &QAbstractItemModel::rowsMoved, this,
+            [this] { rebuild(); });
+    connect(m_source, &QAbstractItemModel::layoutChanged, this,
+            [this] { rebuild(); });
+    connect(m_source, &QAbstractItemModel::dataChanged, this,
+            &CodexPromptNavigationModel::updateChangedRows);
+    rebuild();
+}
+
+int CodexPromptNavigationModel::rowCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : m_entries.size();
+}
+
+QVariant CodexPromptNavigationModel::data(const QModelIndex &index, int role) const
+{
+    if (!index.isValid() || index.row() < 0 || index.row() >= m_entries.size())
+        return {};
+    const Entry &entry = m_entries.at(index.row());
+    switch (role) {
+    case ItemIdRole: return entry.itemId;
+    case SourceRowRole: return entry.sourceRow;
+    case PromptTextRole: return entry.promptText;
+    case ResponseTextRole: return entry.responseText;
+    default: return {};
+    }
+}
+
+QHash<int, QByteArray> CodexPromptNavigationModel::roleNames() const
+{
+    return {{ItemIdRole, "itemId"}, {SourceRowRole, "sourceRow"},
+            {PromptTextRole, "promptText"}, {ResponseTextRole, "responseText"}};
+}
+
+int CodexPromptNavigationModel::promptIndexForSourceRow(int sourceRow) const
+{
+    if (sourceRow < 0 || m_entries.isEmpty())
+        return -1;
+
+    const auto iterator = std::upper_bound(
+        m_entries.cbegin(), m_entries.cend(), sourceRow,
+        [](int row, const Entry &entry) { return row < entry.sourceRow; });
+    if (iterator == m_entries.cbegin())
+        return -1;
+    return static_cast<int>(std::distance(m_entries.cbegin(), iterator)) - 1;
+}
+
+int CodexPromptNavigationModel::sourceRowAt(int promptIndex) const
+{
+    return promptIndex >= 0 && promptIndex < m_entries.size()
+        ? m_entries.at(promptIndex).sourceRow : -1;
+}
+
+void CodexPromptNavigationModel::rebuild()
+{
+    QVector<Entry> next;
+    next.reserve(m_source->rowCount());
+    for (int row = 0; row < m_source->rowCount(); ++row) {
+        const QModelIndex sourceIndex = m_source->index(row);
+        const QString kind = m_source->data(
+            sourceIndex, CodexTimelineModel::KindRole).toString();
+        if (kind == QStringLiteral("user")) {
+            Entry entry;
+            entry.itemId = m_source->data(
+                sourceIndex, CodexTimelineModel::ItemIdRole).toString();
+            entry.promptText = compactNavigationPreview(m_source->data(
+                sourceIndex, CodexTimelineModel::BodyRole).toString());
+            entry.sourceRow = row;
+            next.append(std::move(entry));
+        } else if (kind == QStringLiteral("agent") && !next.isEmpty()) {
+            next.last().responseText = compactNavigationPreview(m_source->data(
+                sourceIndex, CodexTimelineModel::BodyRole).toString());
+        }
+    }
+
+    beginResetModel();
+    m_entries = std::move(next);
+    endResetModel();
+}
+
+void CodexPromptNavigationModel::updateChangedRows(
+    const QModelIndex &topLeft, const QModelIndex &bottomRight,
+    const QList<int> &roles)
+{
+    const bool allRoles = roles.isEmpty();
+    const bool textChanged = allRoles || roles.contains(CodexTimelineModel::BodyRole);
+    const bool kindChanged = allRoles || roles.contains(CodexTimelineModel::KindRole);
+    const bool runningChanged = allRoles || roles.contains(CodexTimelineModel::RunningRole);
+    if (!textChanged && !kindChanged && !runningChanged)
+        return;
+
+    for (int sourceRow = topLeft.row(); sourceRow <= bottomRight.row(); ++sourceRow) {
+        const QModelIndex sourceIndex = m_source->index(sourceRow);
+        const QString kind = m_source->data(
+            sourceIndex, CodexTimelineModel::KindRole).toString();
+        if (kindChanged && kind != QStringLiteral("user")
+            && kind != QStringLiteral("agent")) {
+            continue;
+        }
+
+        const int promptIndex = promptIndexForSourceRow(sourceRow);
+        if (promptIndex < 0)
+            continue;
+
+        Entry &entry = m_entries[promptIndex];
+        if (kind == QStringLiteral("user") && sourceRow == entry.sourceRow) {
+            const QString prompt = compactNavigationPreview(m_source->data(
+                sourceIndex, CodexTimelineModel::BodyRole).toString());
+            if (entry.promptText != prompt) {
+                entry.promptText = prompt;
+                emit dataChanged(index(promptIndex), index(promptIndex), {PromptTextRole});
+            }
+        } else if (kind == QStringLiteral("agent")) {
+            const bool running = m_source->data(
+                sourceIndex, CodexTimelineModel::RunningRole).toBool();
+            if (running)
+                continue;
+            const QString response = finalResponseForPrompt(promptIndex);
+            if (entry.responseText != response) {
+                entry.responseText = response;
+                emit dataChanged(index(promptIndex), index(promptIndex), {ResponseTextRole});
+            }
+        }
+    }
+}
+
+QString CodexPromptNavigationModel::finalResponseForPrompt(int promptIndex) const
+{
+    if (promptIndex < 0 || promptIndex >= m_entries.size())
+        return {};
+
+    const int firstRow = m_entries.at(promptIndex).sourceRow + 1;
+    const int lastRow = promptIndex + 1 < m_entries.size()
+        ? m_entries.at(promptIndex + 1).sourceRow : m_source->rowCount();
+    QString response;
+    for (int row = firstRow; row < lastRow; ++row) {
+        const QModelIndex sourceIndex = m_source->index(row);
+        if (m_source->data(sourceIndex, CodexTimelineModel::KindRole).toString()
+            == QStringLiteral("agent")) {
+            response = m_source->data(
+                sourceIndex, CodexTimelineModel::BodyRole).toString();
+        }
+    }
+    return compactNavigationPreview(response);
 }
 
 void CodexTimelineModel::startHistoricalWorkSegment(const QString &turnId,

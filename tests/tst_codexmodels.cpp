@@ -29,6 +29,7 @@ private slots:
     void protocolReviewPromptDuplicateIsSuppressed();
     void compactionUsesTheWorkReceipt();
     void workDeltasStreamAndStayBounded();
+    void promptNavigationTracksTurnsAndFinalResponses();
     void modelsExposeCapabilities();
     void attachmentsClassifyLocalFiles();
 };
@@ -499,6 +500,67 @@ void CodexModelsTest::workDeltasStreamAndStayBounded()
         model.index(0), CodexTimelineModel::ActivitiesRole).toList();
     QCOMPARE(reconciled.at(0).toMap().value(QStringLiteral("body")).toString(),
              QStringLiteral("Authoritative summary"));
+}
+
+void CodexModelsTest::promptNavigationTracksTurnsAndFinalResponses()
+{
+    CodexTimelineModel timeline;
+    CodexPromptNavigationModel navigator(&timeline);
+
+    timeline.upsertItem(
+        QJsonObject{{"id", "user-1"}, {"type", "userMessage"},
+                    {"content", QJsonArray{QJsonObject{{"type", "text"},
+                                                        {"text", "First\n  prompt"}}}}},
+        true, QStringLiteral("turn-1"));
+    timeline.upsertItem(
+        QJsonObject{{"id", "agent-1"}, {"type", "agentMessage"},
+                    {"text", "First response"}},
+        true, QStringLiteral("turn-1"));
+    timeline.upsertItem(
+        QJsonObject{{"id", "user-2"}, {"type", "userMessage"},
+                    {"content", QJsonArray{QJsonObject{{"type", "text"},
+                                                        {"text", "Second prompt"}}}}},
+        true, QStringLiteral("turn-2"));
+    timeline.upsertItem(
+        QJsonObject{{"id", "agent-2"}, {"type", "agentMessage"},
+                    {"text", "Second response"}},
+        true, QStringLiteral("turn-2"));
+
+    QCOMPARE(navigator.rowCount(), 2);
+    QCOMPARE(navigator.data(navigator.index(0),
+                            CodexPromptNavigationModel::PromptTextRole).toString(),
+             QStringLiteral("First prompt"));
+    QCOMPARE(navigator.data(navigator.index(0),
+                            CodexPromptNavigationModel::ResponseTextRole).toString(),
+             QStringLiteral("First response"));
+    QCOMPARE(navigator.data(navigator.index(1),
+                            CodexPromptNavigationModel::SourceRowRole).toInt(), 2);
+    QCOMPARE(navigator.promptIndexForSourceRow(-1), -1);
+    QCOMPARE(navigator.promptIndexForSourceRow(0), 0);
+    QCOMPARE(navigator.promptIndexForSourceRow(1), 0);
+    QCOMPARE(navigator.promptIndexForSourceRow(2), 1);
+    QCOMPARE(navigator.promptIndexForSourceRow(99), 1);
+
+    timeline.beginOptimisticTurn(QStringLiteral("client-user-3"),
+                                 QStringLiteral("Third prompt"));
+    QCOMPARE(navigator.rowCount(), 3);
+    QCOMPARE(navigator.data(navigator.index(2),
+                            CodexPromptNavigationModel::PromptTextRole).toString(),
+             QStringLiteral("Third prompt"));
+    QCOMPARE(navigator.sourceRowAt(2), 4);
+
+    timeline.appendAgentDelta(QStringLiteral("agent-live"),
+                              QStringLiteral("Streaming response"));
+    QVERIFY(navigator.data(navigator.index(2),
+                           CodexPromptNavigationModel::ResponseTextRole).toString().isEmpty());
+    timeline.upsertItem(
+        QJsonObject{{"id", "agent-live"}, {"type", "agentMessage"},
+                    {"text", "Final response"}, {"status", "completed"}},
+        true, QStringLiteral("turn-3"));
+    QCOMPARE(navigator.data(navigator.index(2),
+                            CodexPromptNavigationModel::ResponseTextRole).toString(),
+             QStringLiteral("Final response"));
+    QCOMPARE(navigator.promptIndexForSourceRow(timeline.rowCount() - 1), 2);
 }
 
 void CodexModelsTest::modelsExposeCapabilities()

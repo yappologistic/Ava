@@ -68,6 +68,7 @@ qt_add_qml_module(AvaChat
         qml/chat/CodexComposer.qml
         qml/chat/CodexDiffInspector.qml
         qml/chat/CodexMessageDelegate.qml
+        qml/chat/CodexPromptNavigator.qml
         qml/chat/CodexRichMessage.qml
         qml/chat/CodexWorkDisclosure.qml
     RESOURCES

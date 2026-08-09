@@ -610,9 +610,38 @@ ApplicationWindow {
                     id: transcript
                     property string scrollMode: "follow-end"
                     property string anchorItemId: ""
+                    property string navigationHighlightId: ""
+                    property int activePromptIndex: -1
 
                     function nearLiveEdge() {
                         return Math.max(0, contentHeight - contentY - height) <= 40
+                    }
+
+                    function updateActivePrompt() {
+                        if (count <= 0) {
+                            activePromptIndex = -1
+                            return
+                        }
+                        let row = indexAt(1, contentY + 12)
+                        for (let offset = 20; row < 0 && offset <= 72; offset += 8)
+                            row = indexAt(1, contentY + offset)
+                        if (row >= 0)
+                            activePromptIndex = chatController.promptNavigator
+                                .promptIndexForSourceRow(row)
+                    }
+
+                    function jumpToPrompt(row, messageId) {
+                        if (row < 0)
+                            return
+                        scrollMode = "free"
+                        anchorItemId = ""
+                        navigationHighlightId = messageId
+                        positionViewAtIndex(row, ListView.Beginning)
+                        Qt.callLater(function() {
+                            contentY = Math.max(0, contentY - 18)
+                            updateActivePrompt()
+                            navigationHighlightTimer.restart()
+                        })
                     }
 
                     function anchorSubmittedMessage(messageId) {
@@ -643,6 +672,7 @@ ApplicationWindow {
 
                     delegate: CodexMessageDelegate {
                         width: transcript.width
+                        navigationHighlighted: itemId === transcript.navigationHighlightId
                         onOpenDiffRequested: function(path) {
                             window.inspectorOpen = true
                         }
@@ -654,7 +684,11 @@ ApplicationWindow {
                     onCountChanged: {
                         if (scrollMode === "follow-end" || count <= 2)
                             Qt.callLater(positionViewAtEnd)
+                        Qt.callLater(updateActivePrompt)
                     }
+
+                    onContentYChanged: updateActivePrompt()
+                    onHeightChanged: Qt.callLater(updateActivePrompt)
 
                     onMovementStarted: {
                         scrollMode = "free"
@@ -683,6 +717,30 @@ ApplicationWindow {
                             scrollMode = "follow-end"
                             Qt.callLater(function() { transcript.positionViewAtEnd() })
                         }
+                    }
+                }
+
+                Timer {
+                    id: navigationHighlightTimer
+                    interval: 900
+                    onTriggered: transcript.navigationHighlightId = ""
+                }
+
+                CodexPromptNavigator {
+                    id: promptNavigator
+                    readonly property real laneWidth: Math.min(
+                        Math.max(0, transcript.width - 48), 920)
+                    readonly property real sideGutter: Math.max(
+                        0, (transcript.width - laneWidth) / 2)
+
+                    x: Math.max(4, sideGutter - 44)
+                    y: transcript.y
+                    height: transcript.height
+                    promptModel: chatController.promptNavigator
+                    activePromptIndex: transcript.activePromptIndex
+                    enabledByLayout: sideGutter >= 48
+                    onJumpRequested: function(sourceRow, itemId) {
+                        transcript.jumpToPrompt(sourceRow, itemId)
                     }
                 }
 

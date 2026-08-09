@@ -22,6 +22,8 @@ Item {
     required property var activities
     required property string elapsed
 
+    property bool navigationHighlighted: false
+
     signal openDiffRequested(string path)
     signal openUrlRequested(string url)
 
@@ -155,7 +157,8 @@ Item {
             visible: !root.thinking
             radius: root.kind === "user" ? 15 : 12
             color: root.kind === "user"
-                   ? (userHover.hovered ? "#19191c" : "#151517")
+                   ? (root.navigationHighlighted ? "#242428"
+                      : (userHover.hovered ? "#19191c" : "#151517"))
                    : "transparent"
             border.width: 0
 

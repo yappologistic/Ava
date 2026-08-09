@@ -16,6 +16,7 @@ class CodexChatController final : public QObject
 
     Q_PROPERTY(QObject *threads READ threads CONSTANT)
     Q_PROPERTY(QObject *timeline READ timeline CONSTANT)
+    Q_PROPERTY(QObject *promptNavigator READ promptNavigator CONSTANT)
     Q_PROPERTY(QObject *models READ models CONSTANT)
     Q_PROPERTY(QObject *attachments READ attachments CONSTANT)
     Q_PROPERTY(QObject *git READ git CONSTANT)
@@ -64,6 +65,7 @@ public:
 
     QObject *threads() { return &m_threads; }
     QObject *timeline() { return &m_timeline; }
+    QObject *promptNavigator() { return &m_promptNavigator; }
     QObject *models() { return &m_models; }
     QObject *attachments() { return &m_attachments; }
     QObject *git() { return &m_git; }
@@ -190,6 +192,7 @@ private:
     bool m_ownsClient = false;
     CodexThreadListModel m_threads;
     CodexTimelineModel m_timeline;
+    CodexPromptNavigationModel m_promptNavigator;
     CodexModelListModel m_models;
     CodexAttachmentModel m_attachments;
     CodexGitManager m_git;

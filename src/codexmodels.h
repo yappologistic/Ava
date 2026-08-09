@@ -150,6 +150,46 @@ private:
     bool m_rebuilding = false;
 };
 
+class CodexPromptNavigationModel final : public QAbstractListModel
+{
+    Q_OBJECT
+
+public:
+    enum Role {
+        ItemIdRole = Qt::UserRole + 1,
+        SourceRowRole,
+        PromptTextRole,
+        ResponseTextRole
+    };
+
+    struct Entry {
+        QString itemId;
+        QString promptText;
+        QString responseText;
+        int sourceRow = -1;
+    };
+
+    explicit CodexPromptNavigationModel(CodexTimelineModel *source,
+                                        QObject *parent = nullptr);
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex &index, int role) const override;
+    QHash<int, QByteArray> roleNames() const override;
+
+    Q_INVOKABLE int promptIndexForSourceRow(int sourceRow) const;
+    Q_INVOKABLE int sourceRowAt(int promptIndex) const;
+
+private:
+    void rebuild();
+    void updateChangedRows(const QModelIndex &topLeft,
+                           const QModelIndex &bottomRight,
+                           const QList<int> &roles);
+    QString finalResponseForPrompt(int promptIndex) const;
+
+    CodexTimelineModel *m_source = nullptr;
+    QVector<Entry> m_entries;
+};
+
 class CodexModelListModel final : public QAbstractListModel
 {
     Q_OBJECT
