@@ -128,6 +128,7 @@ Window {
                                                 + shellHorizontalOverflow
     readonly property real liquidGlassPointerY: islandHover.point.position.y
     readonly property bool liquidGlassPointerActive: islandHover.hovered
+    readonly property bool liquidGlassReducedMotion: controller.reducedMotion
     readonly property bool timerSatelliteVisible: controller.monitorEnabled
                                                    && controller.timerActive
                                                    && !shellExpandedVisual

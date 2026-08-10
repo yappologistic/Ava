@@ -215,6 +215,7 @@ void LiquidGlassBackdrop::updateNativeGeometry()
             m_root->property("liquidGlassPointerX").toReal() * scale,
             m_root->property("liquidGlassPointerY").toReal() * scale);
         optics.pointerActive = m_root->property("liquidGlassPointerActive").toBool();
+        optics.reducedMotion = m_root->property("liquidGlassReducedMotion").toBool();
         optics.pill = pill;
         m_nativeWorker->setGeometry(surfaceCapture,
                                     timerCapture,

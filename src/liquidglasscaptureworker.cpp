@@ -21,6 +21,7 @@
 #include <d3dcompiler.h>
 #include <dwmapi.h>
 #include <dxgi1_6.h>
+#include <shobjidl_core.h>
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
 #include <wrl/client.h>
@@ -123,8 +124,8 @@ cbuffer OpticalData : register(b0)
     float4 windowRect;     // screen origin, texture size
     float4 contentRect;    // output-local origin, glass size
     float4 shapeData;      // radius, side inset, ear depth, lens band
-    float4 materialData;   // thickness, intensity, pill mode, reserved
-    float4 interactionData; // pointer-local position, active, reserved
+    float4 materialData;   // thickness, intensity, pill mode, desktop surface
+    float4 interactionData; // pointer-local position, active, reduced motion
 };
 
 float roundedBoxDistance(float2 samplePoint, float2 halfSize, float radius)
@@ -181,7 +182,30 @@ float3 sampleBackdrop(float2 screenPosition)
         float4 foreground = windowTexture.SampleLevel(linearSampler,
                                                        saturate(windowUv),
                                                        0.0);
-        background = foreground.rgb + background * (1.0 - foreground.a);
+        if (materialData.w > 0.5) {
+            // Explorer desktop hosts can expose either the real compositor
+            // wallpaper (including animated wallpaper apps) or a fully black
+            // WGC surface. Probe the captured surface and fall back to the
+            // actual Windows wallpaper only for the latter case.
+            const float3 centerProbe = windowTexture.SampleLevel(
+                linearSampler, float2(0.5, 0.5), 0.0).rgb;
+            const float3 upperProbe = windowTexture.SampleLevel(
+                linearSampler, float2(0.33, 0.28), 0.0).rgb;
+            const float captureEnergy = max(max(max(foreground.r, foreground.g),
+                                                foreground.b),
+                                            max(max(centerProbe.r, centerProbe.g),
+                                                max(centerProbe.b,
+                                                    max(max(upperProbe.r, upperProbe.g),
+                                                        upperProbe.b))));
+            const float capturedDesktopVisible = smoothstep(0.004, 0.025,
+                                                             captureEnergy)
+                                                 * foreground.a;
+            background = lerp(background,
+                              foreground.rgb,
+                              capturedDesktopVisible);
+        } else {
+            background = foreground.rgb + background * (1.0 - foreground.a);
+        }
     }
     return background;
 }
@@ -194,6 +218,16 @@ float gaussian(float value, float center, float width)
 
 float4 main(float4 position : SV_POSITION) : SV_TARGET
 {
+    // The material is tuned to the restrained optical profile selected during
+    // visual QA. These values are expressed in this screen-space lens model,
+    // rather than copied as opaque UI controls from the reference renderer.
+    const float glassScale = 0.20;
+    const float glassIor = 1.20;
+    const float glassThickness = 12.0;
+    const float glassChromaticAberration = 0.08;
+    const float glassAnisotropy = 0.07;
+    const float glassTransmission = 1.0;
+    const float glassRoughness = 0.0;
     const float2 local = position.xy - contentRect.xy;
     const float distance = glassDistance(local);
     const float alpha = smoothstep(-1.1, 1.1, distance);
@@ -222,50 +256,91 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     // A convex lens samples toward its optical center. The displacement grows
     // steeply through the meniscus, which visibly bends lines and moving UI
     // instead of merely blurring it.
-    // Convex-squircle surface profile. Its derivative is steep at the outer
-    // rim and falls smoothly to zero at the flat center, avoiding the harsh
-    // secondary edge produced by a circular dome stretched into a capsule.
+    // Spherical lens profile from the selected reference. Its curvature stays
+    // optically active farther inside the meniscus than the previous squircle
+    // profile, so background forms bend visibly instead of only at a thin rim.
     const float surfaceX = saturate(bandPosition);
     const float surfaceInv = 1.0 - surfaceX;
-    const float surfaceBase = max(0.0001, 1.0 - pow(surfaceInv, 4.0));
-    const float surfaceSlope = pow(surfaceInv, 3.0)
-                               / pow(surfaceBase, 0.75);
+    const float surfaceSlope = surfaceInv
+                               / sqrt(max(0.001,
+                                          1.0 - surfaceInv * surfaceInv));
     const float sinIncident = surfaceSlope / sqrt(1.0 + surfaceSlope * surfaceSlope);
-    const float sinRefracted = sinIncident / 1.5;
+    const float sinRefracted = sinIncident / glassIor;
     const float refractedSlope = sinRefracted
                                  / sqrt(max(0.001,
                                             1.0 - sinRefracted * sinRefracted));
-    const float edgeBend = refractedSlope * lensBand
-                           * lerp(0.56, 0.70, thickness) * intensity;
+    const float angularDeflection = max(0.0, surfaceSlope - refractedSlope);
+    const float2 axisEdgeDistance = max(
+        float2(0.0, 0.0), min(local, contentRect.zw - local));
+    const float2 axisMeniscus = 1.0 - smoothstep(
+        float2(0.0, 0.0),
+        float2(lensBand * 1.35, lensBand * 1.35),
+        axisEdgeDistance);
+    const float cornerConvergence = sqrt(saturate(axisMeniscus.x
+                                                   * axisMeniscus.y));
+    const float outerMeniscus = pow(edge, 1.9);
+    const float bendGain = 1.0 + outerMeniscus * 0.38
+                           + cornerConvergence * 0.18;
+    const float meniscusKick = lensBand * pow(edge, 4.0)
+                               * (0.055 + cornerConvergence * 0.075);
+    const float maximumBend = lensBand
+                              * lerp(1.04, 1.18, cornerConvergence);
+    const float edgeBend = min(maximumBend,
+                               angularDeflection * lensBand
+                                   * glassThickness * glassScale * bendGain
+                                   + meniscusKick)
+                           * lerp(0.86, 1.0, thickness) * intensity;
     const float2 centerBend = -centered
                                * min(contentRect.z, contentRect.w)
                                * lerp(0.018, 0.016, panel)
                                * intensity;
     const float2 pointerDelta = local - interactionData.xy;
-    const float pointerRadius = max(24.0,
-                                    min(contentRect.z, contentRect.w) * 0.72);
+    const float minimumDimension = min(contentRect.z, contentRect.w);
+    const float pointerRadius = lerp(max(24.0, minimumDimension * 0.72),
+                                     max(42.0, minimumDimension * 0.23),
+                                     panel);
     const float pointerEnergy = interactionData.z
                                 * exp(-dot(pointerDelta, pointerDelta)
                                       / (pointerRadius * pointerRadius));
-    const float2 pointerFlex = normalize(pointerDelta + float2(0.0001, 0.0001))
-                               * pointerEnergy * edge * 1.8;
+    const float2 pointerDirection = pointerDelta / max(pointerRadius, 1.0);
+    const float elasticMotion = 1.0 - saturate(interactionData.w);
+    const float2 pointerFlex = pointerDirection * pointerEnergy * elasticMotion
+                               * lerp(2.0, 4.8, panel)
+                               * (0.22 + edge * 0.78);
+    const float2 anisotropicBend = inward * edgeBend
+                                   * float2(1.0 + glassAnisotropy,
+                                            1.0 - glassAnisotropy);
     const float2 samplePosition = requestRect.xy + position.xy
-                                  + inward * edgeBend + centerBend + pointerFlex;
+                                  + anisotropicBend + centerBend + pointerFlex;
 
-    const float scatter = lerp(0.45, 1.25, thickness);
+    // Larger surfaces behave like a thicker regular material: preserve broad
+    // color and motion from the environment while scattering fine text and
+    // texture that would otherwise compete with foreground controls.
+    const float scatter = lerp(0.45, 3.35, panel) * glassRoughness;
+    const float2 anisotropicScatter = float2(
+        scatter * (1.0 + glassAnisotropy),
+        scatter * (1.0 - glassAnisotropy));
     float3 clearColor = sampleBackdrop(samplePosition);
-    float3 softened = clearColor * 0.52;
-    softened += sampleBackdrop(samplePosition + float2(scatter, 0.0)) * 0.12;
-    softened += sampleBackdrop(samplePosition - float2(scatter, 0.0)) * 0.12;
-    softened += sampleBackdrop(samplePosition + float2(0.0, scatter)) * 0.12;
-    softened += sampleBackdrop(samplePosition - float2(0.0, scatter)) * 0.12;
+    float3 softened = clearColor * 0.36;
+    softened += sampleBackdrop(samplePosition + float2(anisotropicScatter.x, 0.0)) * 0.16;
+    softened += sampleBackdrop(samplePosition - float2(anisotropicScatter.x, 0.0)) * 0.16;
+    softened += sampleBackdrop(samplePosition + float2(0.0, anisotropicScatter.y)) * 0.16;
+    softened += sampleBackdrop(samplePosition - float2(0.0, anisotropicScatter.y)) * 0.16;
     const float detailEnergy = length(clearColor - softened);
-    float3 color = lerp(clearColor, softened, lerp(0.025, 0.11, thickness));
+    const float roughnessMix = lerp(0.025, 0.42, panel) * glassRoughness;
+    float3 color = lerp(clearColor, softened, roughnessMix);
+    color = lerp(float3(0.010, 0.014, 0.022),
+                 color,
+                 glassTransmission);
 
     // Real glass splits wavelengths subtly at the steepest part of the lens.
     const float chromaticBand = pow(edge, 2.35);
-    const float dispersion = lerp(0.42, 1.08, thickness)
-                             * chromaticBand * intensity;
+    const float dispersion = glassChromaticAberration * lensBand
+                             * lerp(0.82, 1.18, thickness)
+                             * chromaticBand
+                             * (1.0 + outerMeniscus * 0.12
+                                + cornerConvergence * 0.30)
+                             * intensity;
     const float3 redSample = sampleBackdrop(samplePosition + inward * dispersion);
     const float3 blueSample = sampleBackdrop(samplePosition - inward * dispersion);
     color.r = lerp(color.r, redSample.r, chromaticBand * 0.22);
@@ -276,10 +351,11 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     const float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
     const float brightBackdrop = smoothstep(0.48, 0.88, luminance);
     const float busyBackdrop = smoothstep(0.035, 0.19, detailEnergy);
-    const float compactVeil = brightBackdrop * 0.24;
-    const float panelVeil = saturate(0.72
-                                     + brightBackdrop * 0.14
-                                     + busyBackdrop * 0.06);
+    const float compactVeil = saturate(brightBackdrop * 0.17
+                                       + busyBackdrop * 0.06);
+    const float panelVeil = saturate(0.40
+                                     + brightBackdrop * 0.20
+                                     + busyBackdrop * 0.08);
     const float legibilityVeil = lerp(compactVeil, panelVeil, panel);
     color = lerp(color, float3(0.010, 0.014, 0.022), legibilityVeil);
 
@@ -289,12 +365,16 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     const float2 outward = -inward;
     const float2 coolDirection = normalize(float2(-0.68, -0.74));
     const float2 warmDirection = normalize(float2(0.58, 0.82));
-    const float3 surfaceNormal = normalize(float3(outward * surfaceSlope, 1.0));
+    const float2 interactionNormal = -pointerDirection * pointerEnergy
+                                     * elasticMotion * lerp(0.04, 0.13, panel);
+    const float3 surfaceNormal = normalize(float3(outward * surfaceSlope
+                                                  + interactionNormal,
+                                                  1.0));
     const float3 keyLight = normalize(float3(-0.52, -0.66, 0.54));
     const float physicalSpecular = pow(saturate(dot(surfaceNormal, keyLight)), 18.0);
     const float physicalFresnel = pow(saturate(1.0 - surfaceNormal.z), 2.4);
     const float directional = 0.20 + 0.80 * max(0.0, dot(outward, coolDirection));
-    const float outerRim = pow(edge, 3.15);
+    const float outerRim = pow(edge, 3.25);
     const float fresnel = pow(edge, 2.55) * directional;
     const float rimSheet = gaussian(bandPosition, 0.055, 0.075)
                            * (0.28 + 0.72 * directional);
@@ -315,17 +395,25 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     const float warmRim = (outerRim * 0.42 + caustic)
                           * max(0.0, dot(outward, warmDirection));
 
+    const float3 environmentSpill = saturate((redSample + blueSample) * 0.5);
+    color += environmentSpill * (rimSheet * 0.018 + caustic * 0.025)
+             * intensity;
     color += float3(0.93, 0.97, 1.0)
-             * (fresnel * 0.18 + physicalFresnel * 0.10
-                + outerRim * 0.06 + rimSheet * 0.07
-                + upperReflection * 0.05
-                + physicalSpecular * 0.12)
+             * (fresnel * 0.17 + physicalFresnel * 0.09
+                + outerRim * 0.018 + rimSheet * 0.055
+                + upperReflection * 0.045
+                + physicalSpecular * 0.14)
              * intensity;
     color += float3(0.58, 0.82, 1.0) * coolRim * 0.035 * intensity;
     color += float3(1.0, 0.76, 0.43) * warmRim * 0.035 * intensity;
-    color += float3(1.0, 0.93, 0.78) * caustic * 0.07 * intensity;
+    color += float3(1.0, 0.93, 0.78) * caustic * 0.08 * intensity;
+    const float pointerRim = pow(edge, 1.65)
+                             * (0.35 + 0.65
+                                * saturate(dot(outward,
+                                               -normalize(pointerDirection
+                                                          + float2(0.0001, 0.0001)))));
     color += float3(0.92, 0.97, 1.0)
-             * pointerEnergy * (0.025 + edge * 0.07);
+             * pointerEnergy * (0.016 + pointerRim * 0.085);
     color = saturate(color);
     return float4(color * alpha, alpha);
 })";
@@ -471,7 +559,8 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
         ID3D11ShaderResourceView *desktopView,
         const QRect &requestedRect,
         const QRect &outputRect,
-        const NativeLiquidGlassOptics &optics)
+        const NativeLiquidGlassOptics &optics,
+        bool desktopSurface)
     {
         int bufferIndex = -1;
         for (int index = 0; index < int(m_buffers.size()); ++index) {
@@ -529,9 +618,11 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
              float(optics.contentRect.y() - requestedRect.y()),
              float(optics.contentRect.width()), float(optics.contentRect.height())},
             {optics.radius, optics.sideInset, optics.earDepth, optics.lensBand},
-            {optics.thickness, optics.intensity, optics.pill ? 1.0f : 0.0f, 0.0f},
+            {optics.thickness, optics.intensity, optics.pill ? 1.0f : 0.0f,
+             desktopSurface ? 1.0f : 0.0f},
             {float(optics.pointer.x()), float(optics.pointer.y()),
-             optics.pointerActive ? 1.0f : 0.0f, 0.0f}
+             optics.pointerActive ? 1.0f : 0.0f,
+             optics.reducedMotion ? 1.0f : 0.0f}
         };
         D3D11_MAPPED_SUBRESOURCE mappedConstants{};
         if (FAILED(context->Map(constantBuffer,
@@ -725,7 +816,91 @@ static bool isCaptureCandidate(HWND window, DWORD ownProcessId)
         && cloaked) {
         return false;
     }
+
+    const LONG_PTR extendedStyle = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    if ((extendedStyle & WS_EX_LAYERED) != 0) {
+        COLORREF colorKey = 0;
+        BYTE opacity = 255;
+        DWORD layeredFlags = 0;
+        if (GetLayeredWindowAttributes(window,
+                                       &colorKey,
+                                       &opacity,
+                                       &layeredFlags)
+            && (layeredFlags & LWA_ALPHA) != 0 && opacity == 0) {
+            // GPU overlays and hidden launchers commonly leave a fullscreen,
+            // alpha-zero host in the z-order. WGC returns their opaque black
+            // backing allocation even though the user sees the desktop.
+            return false;
+        }
+    }
     return !windowBounds(window).isEmpty();
+}
+
+static bool isDesktopSurfaceWindow(HWND window)
+{
+    if (!window) {
+        return false;
+    }
+    if (window == GetShellWindow() || window == GetDesktopWindow()) {
+        return true;
+    }
+
+    wchar_t className[64]{};
+    if (GetClassNameW(window, className, int(std::size(className))) > 0
+        && (lstrcmpW(className, L"WorkerW") == 0
+            || lstrcmpW(className, L"Progman") == 0)) {
+        return true;
+    }
+    return FindWindowExW(window, nullptr, L"SHELLDLL_DefView", nullptr) != nullptr;
+}
+
+static QString wallpaperPathForMonitor(HMONITOR monitor)
+{
+    MONITORINFO targetInfo{};
+    targetInfo.cbSize = sizeof(targetInfo);
+    ComPtr<IDesktopWallpaper> desktopWallpaper;
+    if (monitor && GetMonitorInfoW(monitor, &targetInfo)
+        && SUCCEEDED(CoCreateInstance(CLSID_DesktopWallpaper,
+                                      nullptr,
+                                      CLSCTX_INPROC_SERVER,
+                                      IID_PPV_ARGS(&desktopWallpaper)))) {
+        UINT monitorCount = 0;
+        if (SUCCEEDED(desktopWallpaper->GetMonitorDevicePathCount(&monitorCount))) {
+            for (UINT index = 0; index < monitorCount; ++index) {
+                LPWSTR monitorId = nullptr;
+                if (FAILED(desktopWallpaper->GetMonitorDevicePathAt(index, &monitorId))
+                    || !monitorId) {
+                    continue;
+                }
+                RECT assignedBounds{};
+                const bool matches = SUCCEEDED(desktopWallpaper->GetMonitorRECT(
+                    monitorId, &assignedBounds))
+                    && EqualRect(&assignedBounds, &targetInfo.rcMonitor);
+                LPWSTR wallpaperPath = nullptr;
+                if (matches) {
+                    desktopWallpaper->GetWallpaper(monitorId, &wallpaperPath);
+                }
+                CoTaskMemFree(monitorId);
+                if (wallpaperPath) {
+                    const QString result = QString::fromWCharArray(wallpaperPath);
+                    CoTaskMemFree(wallpaperPath);
+                    if (!result.isEmpty()) {
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+
+    wchar_t wallpaperPath[32768]{};
+    if (SystemParametersInfoW(SPI_GETDESKWALLPAPER,
+                              DWORD(std::size(wallpaperPath)),
+                              wallpaperPath,
+                              0)
+        && wallpaperPath[0] != L'\0') {
+        return QString::fromWCharArray(wallpaperPath);
+    }
+    return {};
 }
 
 static HWND findUnderlyingWindow(HWND foregroundWindow, const QRect &captureRect)
@@ -862,8 +1037,27 @@ public:
                     m_frameCondition.notify_one();
                 });
             m_targetWindow = targetWindow;
+            m_wallpaperOnly = isDesktopSurfaceWindow(targetWindow);
             m_lastSize = QSize(size.Width, size.Height);
             m_session.StartCapture();
+            return true;
+        } catch (const winrt::hresult_error &) {
+            reset();
+            return false;
+        }
+    }
+
+    bool initializeWallpaperOnly(const QPoint &captureCenter)
+    {
+        reset();
+        try {
+            if (!createDevice(captureCenter) || !createWallpaperView(captureCenter)) {
+                reset();
+                return false;
+            }
+            m_targetWindow = GetDesktopWindow();
+            m_wallpaperOnly = true;
+            m_standaloneWallpaper = true;
             return true;
         } catch (const winrt::hresult_error &) {
             reset();
@@ -914,26 +1108,40 @@ public:
         m_timerPoolSize = {};
         m_lastSize = {};
         m_targetWindow = nullptr;
+        m_wallpaperOnly = false;
+        m_standaloneWallpaper = false;
         m_framePending.store(false, std::memory_order_release);
         m_closed.store(false, std::memory_order_release);
     }
 
     bool isValid() const
     {
+        if (m_standaloneWallpaper) {
+            return m_targetWindow && m_device && m_context && m_wallpaperView
+                && !m_closed.load(std::memory_order_acquire);
+        }
         return m_targetWindow && m_session && m_framePool
             && m_device && m_context && !m_closed.load(std::memory_order_acquire);
     }
 
     HWND targetWindow() const { return m_targetWindow; }
+    bool isStandaloneWallpaper() const { return m_standaloneWallpaper; }
 
     bool hasLatestFrame() const
     {
+        if (m_standaloneWallpaper) {
+            return bool(m_wallpaperView);
+        }
         return bool(m_latestFrame) && m_latestCaptureView
-            && !m_latestSourceBounds.isEmpty();
+            && (m_wallpaperOnly || !m_latestSourceBounds.isEmpty());
     }
 
     bool waitForFrame(std::stop_token token)
     {
+        if (m_standaloneWallpaper) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kFrameWaitMs));
+            return false;
+        }
         std::unique_lock lock(m_frameMutex);
         m_frameCondition.wait_for(lock,
                                   std::chrono::milliseconds(kFrameWaitMs),
@@ -1035,7 +1243,8 @@ public:
                                                      m_latestCaptureView.Get(),
                                                      geometry.surface,
                                                      m_latestSourceBounds,
-                                                     geometry.optics);
+                                                     geometry.optics,
+                                                     m_wallpaperOnly);
         output.surfacePadding = geometry.padding;
         output.surfaceContentRect = geometry.optics.contentRect.translated(
             -geometry.surface.topLeft());
@@ -1067,7 +1276,8 @@ public:
                                                           m_latestCaptureView.Get(),
                                                           geometry.timer,
                                                           m_latestSourceBounds,
-                                                          timerOptics);
+                                                          timerOptics,
+                                                          m_wallpaperOnly);
                 output.timerPadding = geometry.padding;
                 output.timerContentRect = timerOptics.contentRect.translated(
                     -geometry.timer.topLeft());
@@ -1122,31 +1332,34 @@ private:
             return false;
         }
 
-        wchar_t wallpaperPath[32768]{};
-        if (!SystemParametersInfoW(SPI_GETDESKWALLPAPER,
-                                   DWORD(std::size(wallpaperPath)),
-                                   wallpaperPath,
-                                   0)
-            || wallpaperPath[0] == L'\0') {
+        const QSize monitorSize(info.rcMonitor.right - info.rcMonitor.left,
+                                info.rcMonitor.bottom - info.rcMonitor.top);
+        if (monitorSize.isEmpty()) {
             return false;
         }
 
-        QImage wallpaper(QString::fromWCharArray(wallpaperPath));
-        const QSize monitorSize(info.rcMonitor.right - info.rcMonitor.left,
-                                info.rcMonitor.bottom - info.rcMonitor.top);
-        if (wallpaper.isNull() || monitorSize.isEmpty()) {
-            return false;
+        QImage wallpaper(wallpaperPathForMonitor(monitor));
+        if (!wallpaper.isNull()) {
+            wallpaper = wallpaper.scaled(monitorSize,
+                                         Qt::KeepAspectRatioByExpanding,
+                                         Qt::SmoothTransformation);
+            const int cropX = qMax(0, (wallpaper.width() - monitorSize.width()) / 2);
+            const int cropY = qMax(0, (wallpaper.height() - monitorSize.height()) / 2);
+            wallpaper = wallpaper.copy(cropX,
+                                       cropY,
+                                       monitorSize.width(),
+                                       monitorSize.height())
+                            .convertToFormat(QImage::Format_ARGB32);
+        } else {
+            // Solid-color desktops and temporarily unavailable wallpaper files
+            // still need a valid optical source; never fall through to QML's
+            // black material fallback merely because Explorer has no bitmap.
+            wallpaper = QImage(monitorSize, QImage::Format_ARGB32);
+            const COLORREF desktopColor = GetSysColor(COLOR_BACKGROUND);
+            wallpaper.fill(qRgb(GetRValue(desktopColor),
+                                GetGValue(desktopColor),
+                                GetBValue(desktopColor)));
         }
-        wallpaper = wallpaper.scaled(monitorSize,
-                                     Qt::KeepAspectRatioByExpanding,
-                                     Qt::SmoothTransformation);
-        const int cropX = qMax(0, (wallpaper.width() - monitorSize.width()) / 2);
-        const int cropY = qMax(0, (wallpaper.height() - monitorSize.height()) / 2);
-        wallpaper = wallpaper.copy(cropX,
-                                   cropY,
-                                   monitorSize.width(),
-                                   monitorSize.height())
-                        .convertToFormat(QImage::Format_ARGB32);
 
         D3D11_TEXTURE2D_DESC description{};
         description.Width = UINT(wallpaper.width());
@@ -1280,6 +1493,8 @@ private:
     QSize m_timerPoolSize;
     QSize m_lastSize;
     HWND m_targetWindow = nullptr;
+    bool m_wallpaperOnly = false;
+    bool m_standaloneWallpaper = false;
 };
 #endif
 
@@ -1403,6 +1618,7 @@ private:
             && qFuzzyCompare(left.optics.intensity, right.optics.intensity)
             && left.optics.pointer == right.optics.pointer
             && left.optics.pointerActive == right.optics.pointerActive
+            && left.optics.reducedMotion == right.optics.reducedMotion
             && left.optics.pill == right.optics.pill;
     }
 
@@ -1473,12 +1689,16 @@ private:
                                                          geometry.surface);
                 lastTargetCheck = now;
                 if (!target) {
-                    session.reset();
-                    captureDirty = false;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    continue;
-                }
-                if (!session.isValid() || target != session.targetWindow()) {
+                    if (!session.isValid() || !session.isStandaloneWallpaper()) {
+                        if (!session.initializeWallpaperOnly(geometry.surface.center())) {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            continue;
+                        }
+                        captureDirty = false;
+                        geometryDirty = true;
+                    }
+                } else if (!session.isValid() || session.isStandaloneWallpaper()
+                           || target != session.targetWindow()) {
                     if (!session.initialize(target, geometry.surface.center())) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                         continue;

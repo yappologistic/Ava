@@ -42,6 +42,7 @@ struct NativeLiquidGlassOptics
     QPointF pointer;
     bool pill = true;
     bool pointerActive = false;
+    bool reducedMotion = false;
 };
 
 class LiquidGlassCaptureWorker final
