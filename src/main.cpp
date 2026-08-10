@@ -206,6 +206,9 @@ int main(int argc, char *argv[])
         QStringLiteral("launcher-query"),
         QStringLiteral("Populate the application launcher search field."),
         QStringLiteral("query"));
+    const QCommandLineOption monitorDetailsOption(
+        QStringLiteral("monitor-details"),
+        QStringLiteral("Open the system monitor drill-down."));
     const QCommandLineOption utilityMenuOption(
         QStringLiteral("utility-menu"),
         QStringLiteral("Render the calendar utility menu for screenshot QA."));
@@ -240,6 +243,7 @@ int main(int argc, char *argv[])
     parser.addOption(wallpapersOption);
     parser.addOption(launcherOption);
     parser.addOption(launcherQueryOption);
+    parser.addOption(monitorDetailsOption);
     parser.addOption(utilityMenuOption);
     parser.addOption(codexOption);
     parser.addOption(codexWorkspaceOption);
@@ -286,10 +290,14 @@ int main(int argc, char *argv[])
                            || parser.isSet(codexOption)
                            || parser.isSet(wallpapersOption)
                            || parser.isSet(launcherOption)
+                           || parser.isSet(monitorDetailsOption)
                            || parser.isSet(utilityMenuOption)
                            || (parser.isSet(codexVisualStateOption)
                                && !compactCodexVisual));
     controller.setPinned(parser.isSet(pinnedOption));
+    if (parser.isSet(monitorDetailsOption)) {
+        controller.openMonitorDetails();
+    }
     if (parser.isSet(timerOption)) {
         controller.openTimer();
     }
@@ -435,7 +443,9 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(screenshotOption)) {
         const QString screenshotPath = QDir::cleanPath(parser.value(screenshotOption));
-        const int screenshotDelay = parser.isSet(launcherOption) ? 2400
+        const int screenshotDelay = parser.isSet(launcherOption)
+                                      || parser.isSet(monitorDetailsOption)
+                                      || controller.monitorEnabled() ? 2400
                                   : (parser.isSet(mediaPeekOption) ? 1600 : 1000);
         QTimer::singleShot(screenshotDelay, &app, [rootWindow, rootObject, screenshotPath, &app]() {
             const QImage fullImage = rootWindow->grabWindow();

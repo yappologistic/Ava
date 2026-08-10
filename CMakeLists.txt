@@ -25,6 +25,8 @@ qt_add_executable(Ava
     src/codexbridge.h
     src/islandcontroller.cpp
     src/islandcontroller.h
+    src/systemmonitor.cpp
+    src/systemmonitor.h
     src/windowtilingmanager.cpp
     src/windowtilingmanager.h
 )
@@ -137,6 +139,7 @@ qt_add_qml_module(Ava
         qml/IslandButton.qml
         qml/MotionTokens.qml
         qml/MonitorCompact.qml
+        qml/MonitorDetailsPanel.qml
         qml/NotchSurface.qml
         qml/RollingDigits.qml
         qml/MorphingLabel.qml
@@ -222,7 +225,7 @@ if (AVA_FORCE_AUTOMATION_MODE)
 endif()
 
 if (WIN32)
-    target_link_libraries(Ava PRIVATE user32 shell32 dwmapi ole32 propsys windowsapp pdh)
+    target_link_libraries(Ava PRIVATE user32 shell32 dwmapi ole32 propsys windowsapp pdh psapi)
     target_link_libraries(AvaChat PRIVATE user32 shell32 dwmapi)
     set_target_properties(Ava PROPERTIES
         WIN32_EXECUTABLE TRUE
@@ -252,6 +255,17 @@ qt_generate_deploy_qml_app_script(
 install(SCRIPT ${ava_chat_deploy_script})
 
 if (BUILD_TESTING)
+    qt_add_executable(tst_systemmonitor
+        tests/tst_systemmonitor.cpp
+        src/systemmonitor.cpp
+        src/systemmonitor.h)
+    target_include_directories(tst_systemmonitor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(tst_systemmonitor PRIVATE Qt6::Core Qt6::Test)
+    if (WIN32)
+        target_link_libraries(tst_systemmonitor PRIVATE psapi)
+    endif()
+    add_test(NAME system_monitor COMMAND tst_systemmonitor)
+
     qt_add_executable(tst_applauncher
         tests/tst_applauncher.cpp
         src/applauncher.cpp

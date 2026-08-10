@@ -1,8 +1,10 @@
 #include "islandcontroller.h"
+#include "systemmonitor.h"
 
 #include <QCryptographicHash>
 #include <QColor>
 #include <QDateTime>
+#include <QDeadlineTimer>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
@@ -14,6 +16,7 @@
 #include <QSettings>
 #include <QStandardPaths>
 #include <QThreadPool>
+#include <QThread>
 #include <QUrl>
 #include <QVector>
 #include <QtGlobal>
@@ -529,53 +532,6 @@ bool toggleDefaultAudioMute()
     return SUCCEEDED(endpoint->SetMute(!muted, nullptr));
 }
 
-quint64 fileTimeTicks(const FILETIME &value)
-{
-    ULARGE_INTEGER ticks{};
-    ticks.LowPart = value.dwLowDateTime;
-    ticks.HighPart = value.dwHighDateTime;
-    return ticks.QuadPart;
-}
-
-int sampleCpuUsage(bool &sampleReady,
-                   quint64 &previousIdle,
-                   quint64 &previousKernel,
-                   quint64 &previousUser)
-{
-    FILETIME idleTime{};
-    FILETIME kernelTime{};
-    FILETIME userTime{};
-    if (!GetSystemTimes(&idleTime, &kernelTime, &userTime)) {
-        return -1;
-    }
-
-    const quint64 idle = fileTimeTicks(idleTime);
-    const quint64 kernel = fileTimeTicks(kernelTime);
-    const quint64 user = fileTimeTicks(userTime);
-    if (!sampleReady) {
-        previousIdle = idle;
-        previousKernel = kernel;
-        previousUser = user;
-        sampleReady = true;
-        return -1;
-    }
-
-    const quint64 idleDelta = idle - previousIdle;
-    const quint64 kernelDelta = kernel - previousKernel;
-    const quint64 userDelta = user - previousUser;
-    previousIdle = idle;
-    previousKernel = kernel;
-    previousUser = user;
-
-    const quint64 totalDelta = kernelDelta + userDelta;
-    if (totalDelta == 0) {
-        return -1;
-    }
-    const double busy = 100.0 * (1.0 - static_cast<double>(idleDelta)
-                                          / static_cast<double>(totalDelta));
-    return qBound(0, qRound(busy), 100);
-}
-
 int sampleGpuUsage(PDH_HQUERY query, PDH_HCOUNTER counter, bool &sampleReady)
 {
     if (!query || !counter || PdhCollectQueryData(query) != ERROR_SUCCESS) {
@@ -672,10 +628,7 @@ struct IslandController::PlatformState
     PDH_HQUERY gpuQuery = nullptr;
     PDH_HCOUNTER gpuCounter = nullptr;
     bool gpuSampleReady = false;
-    bool cpuSampleReady = false;
-    quint64 previousCpuIdle = 0;
-    quint64 previousCpuKernel = 0;
-    quint64 previousCpuUser = 0;
+    SystemMonitorSampler systemMonitorSampler;
     std::mutex performanceMutex;
     std::atomic_bool performanceRefreshInFlight{false};
 #endif
@@ -716,7 +669,16 @@ IslandController::IslandController(QObject *parent)
     }
 }
 
-IslandController::~IslandController() = default;
+IslandController::~IslandController()
+{
+#ifdef Q_OS_WIN
+    m_monitorEnabled = false;
+    QDeadlineTimer deadline(1000);
+    while (m_platform->performanceRefreshInFlight && !deadline.hasExpired()) {
+        QThread::msleep(1);
+    }
+#endif
+}
 
 QString IslandController::lastDroppedFile() const
 {
@@ -732,6 +694,10 @@ void IslandController::setExpanded(bool expanded)
     if (!m_expanded && m_wallpaperPanelOpen) {
         m_wallpaperPanelOpen = false;
         emit wallpaperChanged();
+    }
+    if (!m_expanded && m_monitorDetailsOpen) {
+        m_monitorDetailsOpen = false;
+        emit monitorDetailsChanged();
     }
     emit expandedChanged();
 }
@@ -783,12 +749,46 @@ void IslandController::setMonitorEnabled(bool enabled)
     emit monitorEnabledChanged();
     if (m_monitorEnabled) {
         QTimer::singleShot(0, this, &IslandController::refreshPerformanceState);
+    } else {
+        closeMonitorDetails();
     }
 }
 
 void IslandController::toggleMonitorEnabled()
 {
     setMonitorEnabled(!m_monitorEnabled);
+}
+
+void IslandController::openMonitorDetails()
+{
+    if (!m_monitorEnabled) {
+        setMonitorEnabled(true);
+    }
+    if (m_timerPanelOpen) {
+        m_timerPanelOpen = false;
+        emit timerChanged();
+    }
+    if (m_wallpaperPanelOpen) {
+        m_wallpaperPanelOpen = false;
+        emit wallpaperChanged();
+    }
+    if (!m_monitorDetailsOpen) {
+        m_monitorDetailsOpen = true;
+        m_topProcesses.clear();
+        emit monitorDetailsChanged();
+        emit performanceChanged();
+    }
+    setExpanded(true);
+    QTimer::singleShot(0, this, &IslandController::refreshPerformanceState);
+}
+
+void IslandController::closeMonitorDetails()
+{
+    if (!m_monitorDetailsOpen) {
+        return;
+    }
+    m_monitorDetailsOpen = false;
+    emit monitorDetailsChanged();
 }
 
 void IslandController::openTimer()
@@ -800,6 +800,7 @@ void IslandController::openTimer()
         m_wallpaperPanelOpen = false;
         emit wallpaperChanged();
     }
+    closeMonitorDetails();
     m_timerPanelOpen = true;
     setExpanded(true);
     emit timerChanged();
@@ -831,6 +832,7 @@ void IslandController::startTimer(int durationSeconds)
         m_wallpaperPanelOpen = false;
         emit wallpaperChanged();
     }
+    closeMonitorDetails();
     m_timerPanelOpen = true;
     m_countdownTimer.start();
     emit timerChanged();
@@ -845,6 +847,7 @@ void IslandController::openWallpaperPanel()
         m_timerPanelOpen = false;
         emit timerChanged();
     }
+    closeMonitorDetails();
     m_wallpaperStatus.clear();
     m_wallpaperPanelOpen = true;
     setExpanded(true);
@@ -1145,36 +1148,68 @@ void IslandController::refreshPerformanceState()
     }
 
     const auto platform = m_platform;
+    const bool includeProcesses = m_monitorDetailsOpen;
     QPointer<IslandController> self(this);
-    QThreadPool::globalInstance()->start([platform, self]() {
-        int cpuUsage = -1;
+    QThreadPool::globalInstance()->start([platform, self, includeProcesses]() {
+        SystemMonitorSnapshot snapshot;
         int gpuUsage = -1;
         {
             const std::scoped_lock lock(platform->performanceMutex);
-            cpuUsage = sampleCpuUsage(platform->cpuSampleReady,
-                                      platform->previousCpuIdle,
-                                      platform->previousCpuKernel,
-                                      platform->previousCpuUser);
+            snapshot = platform->systemMonitorSampler.sample(includeProcesses);
             gpuUsage = sampleGpuUsage(platform->gpuQuery,
                                       platform->gpuCounter,
                                       platform->gpuSampleReady);
         }
-        platform->performanceRefreshInFlight = false;
-
         if (!self) {
+            platform->performanceRefreshInFlight = false;
             return;
         }
-        QMetaObject::invokeMethod(self, [self, cpuUsage, gpuUsage]() {
+        QMetaObject::invokeMethod(self, [self, snapshot = std::move(snapshot), gpuUsage]() {
             if (!self || !self->m_monitorEnabled) {
                 return;
             }
-            if (self->m_cpuUsage == cpuUsage && self->m_gpuUsage == gpuUsage) {
+
+            QVariantList topProcesses;
+            if (self->m_monitorDetailsOpen) {
+                topProcesses.reserve(snapshot.topProcesses.size());
+                for (const SystemProcessMetric &process : snapshot.topProcesses) {
+                    QVariantMap item;
+                    item.insert(QStringLiteral("name"), process.name);
+                    item.insert(QStringLiteral("cpu"), process.cpuUsage);
+                    item.insert(QStringLiteral("memory"),
+                                formatSystemMonitorBytes(process.workingSetBytes));
+                    topProcesses.append(item);
+                }
+            }
+            const QString memoryDetail = snapshot.memoryTotalBytes > 0
+                ? QStringLiteral("%1 / %2")
+                      .arg(formatSystemMonitorBytes(snapshot.memoryUsedBytes),
+                           formatSystemMonitorBytes(snapshot.memoryTotalBytes))
+                : QString();
+            const QString diskDetail = snapshot.diskTotalBytes > 0
+                ? QStringLiteral("%1 free")
+                      .arg(formatSystemMonitorBytes(snapshot.diskFreeBytes))
+                : QString();
+
+            if (self->m_cpuUsage == snapshot.cpuUsage
+                && self->m_gpuUsage == gpuUsage
+                && self->m_memoryUsage == snapshot.memoryUsage
+                && self->m_diskUsage == snapshot.diskUsage
+                && self->m_memoryDetailText == memoryDetail
+                && self->m_diskDetailText == diskDetail
+                && self->m_topProcesses == topProcesses) {
                 return;
             }
-            self->m_cpuUsage = cpuUsage;
+            self->m_cpuUsage = snapshot.cpuUsage;
             self->m_gpuUsage = gpuUsage;
+            self->m_memoryUsage = snapshot.memoryUsage;
+            self->m_diskUsage = snapshot.diskUsage;
+            self->m_memoryDetailText = memoryDetail;
+            self->m_diskDetailText = diskDetail;
+            self->m_topProcesses = std::move(topProcesses);
             emit self->performanceChanged();
         }, Qt::QueuedConnection);
+        platform->performanceRefreshInFlight = false;
     });
 #endif
 }

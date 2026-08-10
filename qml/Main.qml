@@ -21,22 +21,26 @@ Window {
     readonly property int expandedWidth: Math.max(520, Math.min(584, Screen.width - 40))
     readonly property int baseExpandedHeight: 128
     readonly property int wallpaperExpandedHeight: 228
+    readonly property int monitorExpandedHeight: 330
     readonly property int launcherExpandedHeight: Math.max(420, Math.min(468, Screen.height - 52))
     readonly property int expandedHeight: appLauncher.open
                                           ? launcherExpandedHeight
+                                          : (controller.monitorDetailsOpen
+                                          ? monitorExpandedHeight
                                           : (controller.wallpaperPanelOpen
                                           ? wallpaperExpandedHeight
-                                          : baseExpandedHeight)
+                                          : baseExpandedHeight))
     readonly property int dragWidth: Math.min(420, expandedWidth)
     readonly property int dragHeight: 116
     readonly property int mediaPeekWidth: 230
     readonly property int codexPeekWidth: 242
-    readonly property int monitorWidth: 278
+    readonly property int monitorWidth: 360
     readonly property int timerSatelliteDiameter: compactHeight
     readonly property int timerSatelliteGap: 8
     readonly property int canvasWidth: expandedWidth + 40
     readonly property int canvasHeight: Math.max(wallpaperExpandedHeight,
-                                                  launcherExpandedHeight)
+                                                  launcherExpandedHeight,
+                                                  monitorExpandedHeight)
                                                 + islandSurfaceTop + 10
     readonly property bool launcherOpen: appLauncher.open
     readonly property bool dragActive: dropTarget.containsDrag
@@ -490,9 +494,15 @@ Window {
             enabled: !window.dragActive
             Accessible.name: controller.expanded ? "Ava" : "Open Ava"
             Accessible.role: Accessible.Button
-            onClicked: {
-                if (!controller.expanded)
+            onClicked: function(mouse) {
+                if (window.compactActivity === "monitor"
+                        && compactMonitor.containsCpuPoint(shellInput,
+                                                           mouse.x,
+                                                           mouse.y)) {
+                    controller.openMonitorDetails()
+                } else if (!controller.expanded) {
                     controller.setExpanded(true)
+                }
             }
         }
 
@@ -573,12 +583,13 @@ Window {
                 id: compactMonitor
                 anchors.centerIn: parent
                 anchors.verticalCenterOffset: -1
-                width: implicitWidth
+                width: parent.width
                 height: 20
                 controller: window.islandController
                 colors: window.colors
                 uiFont: window.uiFont
                 reducedMotion: controller.reducedMotion
+                onCpuDetailsRequested: controller.openMonitorDetails()
                 enabled: window.compactActivity === "monitor"
                 visible: opacity > 0.001
                 opacity: enabled ? 1 : 0
@@ -1283,6 +1294,7 @@ Window {
             uiFont: window.uiFont
             iconFont: window.iconFont
             expanded: controller.expanded && !appLauncher.open
+                      && !controller.monitorDetailsOpen
             dragActive: window.dragActive
             reducedMotion: controller.reducedMotion
             morphProgress: window.morphProgress
@@ -1290,6 +1302,20 @@ Window {
             tilingFeedbackActive: window.tilingFeedbackActive
             codexOpen: codexBridge.panelOpen
             monoFont: window.monoFont
+        }
+
+        MonitorDetailsPanel {
+            id: monitorDetailsPanel
+            z: 10
+            anchors.fill: parent
+            controller: window.islandController
+            colors: window.colors
+            uiFont: window.uiFont
+            monoFont: window.monoFont
+            iconFont: window.iconFont
+            reducedMotion: controller.reducedMotion
+            open: controller.expanded && controller.monitorDetailsOpen
+                  && !window.dragActive && !appLauncher.open
         }
 
         CodexPanel {
@@ -1302,6 +1328,7 @@ Window {
             iconFont: window.iconFont
             reducedMotion: controller.reducedMotion
             open: controller.expanded && codexBridge.panelOpen
+                  && !controller.monitorDetailsOpen
                   && !window.dragActive && !appLauncher.open
         }
 

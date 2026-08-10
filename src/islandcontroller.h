@@ -59,6 +59,12 @@ class IslandController final : public QObject
     Q_PROPERTY(QString powerText READ powerText NOTIFY systemChanged)
     Q_PROPERTY(int cpuUsage READ cpuUsage NOTIFY performanceChanged)
     Q_PROPERTY(int gpuUsage READ gpuUsage NOTIFY performanceChanged)
+    Q_PROPERTY(bool monitorDetailsOpen READ monitorDetailsOpen NOTIFY monitorDetailsChanged)
+    Q_PROPERTY(int memoryUsage READ memoryUsage NOTIFY performanceChanged)
+    Q_PROPERTY(int diskUsage READ diskUsage NOTIFY performanceChanged)
+    Q_PROPERTY(QString memoryDetailText READ memoryDetailText NOTIFY performanceChanged)
+    Q_PROPERTY(QString diskDetailText READ diskDetailText NOTIFY performanceChanged)
+    Q_PROPERTY(QVariantList topProcesses READ topProcesses NOTIFY performanceChanged)
     Q_PROPERTY(int volume READ volume NOTIFY systemChanged)
     Q_PROPERTY(bool muted READ muted NOTIFY systemChanged)
     Q_PROPERTY(bool foregroundFullscreen READ foregroundFullscreen NOTIFY foregroundFullscreenChanged)
@@ -118,6 +124,12 @@ public:
     QString powerText() const { return m_powerText; }
     int cpuUsage() const { return m_cpuUsage; }
     int gpuUsage() const { return m_gpuUsage; }
+    bool monitorDetailsOpen() const { return m_monitorDetailsOpen; }
+    int memoryUsage() const { return m_memoryUsage; }
+    int diskUsage() const { return m_diskUsage; }
+    QString memoryDetailText() const { return m_memoryDetailText; }
+    QString diskDetailText() const { return m_diskDetailText; }
+    QVariantList topProcesses() const { return m_topProcesses; }
     int volume() const { return m_volume; }
     bool muted() const { return m_muted; }
     bool foregroundFullscreen() const { return m_foregroundFullscreen; }
@@ -134,6 +146,8 @@ public slots:
     void togglePillMode();
     void setMonitorEnabled(bool enabled);
     void toggleMonitorEnabled();
+    void openMonitorDetails();
+    void closeMonitorDetails();
 
     void openTimer();
     void closeTimer();
@@ -163,6 +177,7 @@ signals:
     void pinnedChanged();
     void pillModeChanged();
     void monitorEnabledChanged();
+    void monitorDetailsChanged();
     void reducedMotionChanged();
     void clockChanged();
     void timerChanged();
@@ -205,6 +220,7 @@ private:
     bool m_pinned = false;
     bool m_pillMode = false;
     bool m_monitorEnabled = false;
+    bool m_monitorDetailsOpen = false;
     bool m_reducedMotion = false;
 
     QString m_timeText;
@@ -253,6 +269,11 @@ private:
     QString m_powerText;
     int m_cpuUsage = -1;
     int m_gpuUsage = -1;
+    int m_memoryUsage = -1;
+    int m_diskUsage = -1;
+    QString m_memoryDetailText;
+    QString m_diskDetailText;
+    QVariantList m_topProcesses;
     int m_volume = 0;
     bool m_muted = false;
     bool m_foregroundFullscreen = false;
