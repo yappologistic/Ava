@@ -37,6 +37,10 @@ namespace {
 
 constexpr int kFrameWaitMs = 16;
 constexpr int kMinimumDeliveryIntervalMs = 15;
+constexpr int kTargetCheckIntervalMs = 16;
+constexpr int kTargetLossGraceMs = 300;
+constexpr int kFrameRetryWaitMs = 2;
+constexpr int kMaximumEmptyFrameRetries = 4;
 
 #ifdef Q_OS_WIN
 using Microsoft::WRL::ComPtr;
@@ -1136,6 +1140,20 @@ public:
             && (m_wallpaperOnly || !m_latestSourceBounds.isEmpty());
     }
 
+    bool refreshSourceBounds()
+    {
+        if (!isValid() || m_standaloneWallpaper || m_wallpaperOnly
+            || !m_latestFrame || m_lastSize.isEmpty()) {
+            return false;
+        }
+        const QRect sourceBounds = captureBoundsFor(m_targetWindow, m_lastSize);
+        if (sourceBounds.isEmpty() || sourceBounds == m_latestSourceBounds) {
+            return false;
+        }
+        m_latestSourceBounds = sourceBounds;
+        return true;
+    }
+
     bool waitForFrame(std::stop_token token)
     {
         if (m_standaloneWallpaper) {
@@ -1154,9 +1172,12 @@ public:
             && m_framePending.exchange(false, std::memory_order_acq_rel);
     }
 
-    NativeLiquidGlassFrame read(const CaptureGeometry &geometry)
+    NativeLiquidGlassFrame read(const CaptureGeometry &geometry, bool *frameDequeued)
     {
         NativeLiquidGlassFrame output;
+        if (frameDequeued) {
+            *frameDequeued = false;
+        }
         if (!isValid()) {
             return output;
         }
@@ -1165,6 +1186,9 @@ public:
             auto frame = m_framePool.TryGetNextFrame();
             if (!frame) {
                 return output;
+            }
+            if (frameDequeued) {
+                *frameDequeued = true;
             }
             while (auto newer = m_framePool.TryGetNextFrame()) {
                 frame.Close();
@@ -1669,9 +1693,11 @@ private:
         WindowCaptureSession session;
         auto lastDelivery = std::chrono::steady_clock::time_point{};
         auto lastTargetCheck = std::chrono::steady_clock::time_point{};
+        auto targetMissingSince = std::chrono::steady_clock::time_point{};
         CaptureGeometry geometry;
         bool geometryDirty = false;
         bool captureDirty = false;
+        int emptyFrameRetries = 0;
         while (!token.stop_requested()) {
             geometryDirty = takeLatestGeometry(geometry) || geometryDirty;
             const HWND foregroundWindow = reinterpret_cast<HWND>(geometry.foregroundWindow);
@@ -1683,35 +1709,55 @@ private:
             const auto now = std::chrono::steady_clock::now();
             const bool targetCheckDue = !session.isValid()
                 || lastTargetCheck.time_since_epoch().count() == 0
-                || now - lastTargetCheck >= std::chrono::milliseconds(50);
+                || now - lastTargetCheck
+                    >= std::chrono::milliseconds(kTargetCheckIntervalMs);
             if (targetCheckDue) {
                 const HWND target = findUnderlyingWindow(foregroundWindow,
                                                          geometry.surface);
                 lastTargetCheck = now;
                 if (!target) {
-                    if (!session.isValid() || !session.isStandaloneWallpaper()) {
+                    if (targetMissingSince.time_since_epoch().count() == 0) {
+                        targetMissingSince = now;
+                    }
+                    const bool targetLossExpired = now - targetMissingSince
+                        >= std::chrono::milliseconds(kTargetLossGraceMs);
+                    if (!session.isValid()
+                        || (targetLossExpired && !session.isStandaloneWallpaper())) {
                         if (!session.initializeWallpaperOnly(geometry.surface.center())) {
                             std::this_thread::sleep_for(std::chrono::milliseconds(100));
                             continue;
                         }
                         captureDirty = false;
+                        emptyFrameRetries = 0;
                         geometryDirty = true;
                     }
-                } else if (!session.isValid() || session.isStandaloneWallpaper()
-                           || target != session.targetWindow()) {
-                    if (!session.initialize(target, geometry.surface.center())) {
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                        continue;
+                } else {
+                    targetMissingSince = {};
+                    if (!session.isValid() || session.isStandaloneWallpaper()
+                        || target != session.targetWindow()) {
+                        if (!session.initialize(target, geometry.surface.center())) {
+                            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            continue;
+                        }
+                        captureDirty = false;
+                        emptyFrameRetries = 0;
+                        geometryDirty = true;
                     }
-                    captureDirty = false;
-                    geometryDirty = true;
                 }
+                // A window move does not necessarily produce a new WGC frame
+                // when its pixels are unchanged. Track its compositor bounds
+                // independently so the existing texture still follows the
+                // window at display cadence instead of appearing frozen.
+                geometryDirty = session.refreshSourceBounds() || geometryDirty;
             }
 
-            captureDirty = session.waitForFrame(token) || captureDirty;
+            if (!captureDirty && (!geometryDirty || !session.hasLatestFrame())) {
+                captureDirty = session.waitForFrame(token);
+            }
             if (!session.isValid()) {
                 session.reset();
                 captureDirty = false;
+                emptyFrameRetries = 0;
                 continue;
             }
             geometryDirty = takeLatestGeometry(geometry) || geometryDirty;
@@ -1722,14 +1768,33 @@ private:
             if (lastDelivery.time_since_epoch().count() != 0
                 && deliveryTime - lastDelivery
                     < std::chrono::milliseconds(kMinimumDeliveryIntervalMs)) {
+                const auto remaining = std::chrono::milliseconds(
+                    kMinimumDeliveryIntervalMs)
+                    - (deliveryTime - lastDelivery);
+                std::this_thread::sleep_for(remaining);
                 continue;
             }
 
             const bool consumeCapture = captureDirty;
+            bool frameDequeued = false;
             NativeLiquidGlassFrame frame = consumeCapture
-                ? session.read(geometry) : session.renderLatest(geometry);
-            if (consumeCapture) {
+                ? session.read(geometry, &frameDequeued)
+                : session.renderLatest(geometry);
+            if (consumeCapture && frameDequeued) {
                 captureDirty = false;
+                emptyFrameRetries = 0;
+            } else if (consumeCapture) {
+                // FrameArrived can race TryGetNextFrame. Retain the pending
+                // work briefly instead of dropping the only wakeup. Bound the
+                // retries so a stale notification cannot create a hot loop.
+                if (++emptyFrameRetries < kMaximumEmptyFrameRetries) {
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(kFrameRetryWaitMs));
+                } else {
+                    captureDirty = false;
+                    emptyFrameRetries = 0;
+                    frame = session.renderLatest(geometry);
+                }
             }
             if (frame.surfaceTexture) {
                 lastDelivery = deliveryTime;
