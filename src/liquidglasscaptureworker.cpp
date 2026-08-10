@@ -350,16 +350,17 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     color.r = lerp(color.r, redSample.r, chromaticBand * 0.22);
     color.b = lerp(color.b, blueSample.b, chromaticBand * 0.22);
 
-    // Keep the compact island transparent. Larger information surfaces get a
-    // restrained adaptive neutral density so white labels remain legible.
+    // Keep the compact island transparent. Larger information surfaces retain
+    // only a faint adaptive veil; text contrast is handled independently so
+    // the refracted environment remains crystal clear.
     const float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
     const float brightBackdrop = smoothstep(0.48, 0.88, luminance);
     const float busyBackdrop = smoothstep(0.035, 0.19, detailEnergy);
     const float compactVeil = saturate(brightBackdrop * 0.17
                                        + busyBackdrop * 0.06);
-    const float panelVeil = saturate(0.32
-                                     + brightBackdrop * 0.16
-                                     + busyBackdrop * 0.06);
+    const float panelVeil = saturate(0.08
+                                     + brightBackdrop * 0.08
+                                     + busyBackdrop * 0.03);
     const float legibilityVeil = lerp(compactVeil, panelVeil, panel);
     color = lerp(color, float3(0.010, 0.014, 0.022), legibilityVeil);
 
