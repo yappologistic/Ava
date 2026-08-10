@@ -134,7 +134,7 @@ Item {
 
     function utilityMenuName(index) {
         const names = ["Codex", "Timer", "Dwindle", "Sound", "Pin", "Wallpaper",
-                       controller.pillMode ? "Pill Mode" : "Notch Mode"]
+                       controller.pillMode ? "Pill Mode" : "Notch Mode", "Monitor"]
         return names[Math.max(0, Math.min(names.length - 1, index))]
     }
 
@@ -151,6 +151,8 @@ Item {
             return controller.wallpaperPanelOpen
         if (index === 6)
             return controller.pillMode
+        if (index === 7)
+            return controller.monitorEnabled
         return false
     }
 
@@ -169,6 +171,8 @@ Item {
             controller.openWallpaperPanel()
         else if (index === 6)
             controller.togglePillMode()
+        else if (index === 7)
+            controller.toggleMonitorEnabled()
     }
 
     function stepUtility(direction) {
@@ -1256,6 +1260,7 @@ Item {
                 ListElement { utilityIndex: 4; iconPath: "../assets/icons/pin-light.svg"; invertedPath: "../assets/icons/pin-off-dark.svg"; usesDwindle: false; usesShellMode: false }
                 ListElement { utilityIndex: 5; iconPath: "../assets/icons/wallpaper-light.svg"; invertedPath: "../assets/icons/wallpaper-dark.svg"; usesDwindle: false; usesShellMode: false }
                 ListElement { utilityIndex: 6; iconPath: ""; invertedPath: ""; usesDwindle: false; usesShellMode: true }
+                ListElement { utilityIndex: 7; iconPath: "../assets/icons/monitor-light.svg"; invertedPath: "../assets/icons/monitor-dark.svg"; usesDwindle: false; usesShellMode: false }
             }
 
             Item {

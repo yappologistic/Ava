@@ -7,6 +7,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QImage>
 #include <QPointer>
 #include <QSaveFile>
@@ -19,9 +20,12 @@
 
 #include <atomic>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <iterator>
+#include <limits>
 #include <mutex>
+#include <utility>
 
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
@@ -30,6 +34,8 @@
 #include <audioclient.h>
 #include <endpointvolume.h>
 #include <mmdeviceapi.h>
+#include <pdh.h>
+#include <pdhmsg.h>
 #include <shellapi.h>
 #include <shobjidl.h>
 #include <tlhelp32.h>
@@ -522,6 +528,113 @@ bool toggleDefaultAudioMute()
     }
     return SUCCEEDED(endpoint->SetMute(!muted, nullptr));
 }
+
+quint64 fileTimeTicks(const FILETIME &value)
+{
+    ULARGE_INTEGER ticks{};
+    ticks.LowPart = value.dwLowDateTime;
+    ticks.HighPart = value.dwHighDateTime;
+    return ticks.QuadPart;
+}
+
+int sampleCpuUsage(bool &sampleReady,
+                   quint64 &previousIdle,
+                   quint64 &previousKernel,
+                   quint64 &previousUser)
+{
+    FILETIME idleTime{};
+    FILETIME kernelTime{};
+    FILETIME userTime{};
+    if (!GetSystemTimes(&idleTime, &kernelTime, &userTime)) {
+        return -1;
+    }
+
+    const quint64 idle = fileTimeTicks(idleTime);
+    const quint64 kernel = fileTimeTicks(kernelTime);
+    const quint64 user = fileTimeTicks(userTime);
+    if (!sampleReady) {
+        previousIdle = idle;
+        previousKernel = kernel;
+        previousUser = user;
+        sampleReady = true;
+        return -1;
+    }
+
+    const quint64 idleDelta = idle - previousIdle;
+    const quint64 kernelDelta = kernel - previousKernel;
+    const quint64 userDelta = user - previousUser;
+    previousIdle = idle;
+    previousKernel = kernel;
+    previousUser = user;
+
+    const quint64 totalDelta = kernelDelta + userDelta;
+    if (totalDelta == 0) {
+        return -1;
+    }
+    const double busy = 100.0 * (1.0 - static_cast<double>(idleDelta)
+                                          / static_cast<double>(totalDelta));
+    return qBound(0, qRound(busy), 100);
+}
+
+int sampleGpuUsage(PDH_HQUERY query, PDH_HCOUNTER counter, bool &sampleReady)
+{
+    if (!query || !counter || PdhCollectQueryData(query) != ERROR_SUCCESS) {
+        return -1;
+    }
+    if (!sampleReady) {
+        sampleReady = true;
+        return -1;
+    }
+
+    DWORD bufferSize = 0;
+    DWORD itemCount = 0;
+    PDH_STATUS status = PdhGetFormattedCounterArrayW(counter,
+                                                      PDH_FMT_DOUBLE | PDH_FMT_NOCAP100,
+                                                      &bufferSize,
+                                                      &itemCount,
+                                                      nullptr);
+    if (status != PDH_MORE_DATA || bufferSize == 0
+        || bufferSize > static_cast<DWORD>(std::numeric_limits<int>::max())) {
+        return -1;
+    }
+
+    QByteArray buffer(static_cast<int>(bufferSize), Qt::Uninitialized);
+    auto *items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W *>(buffer.data());
+    status = PdhGetFormattedCounterArrayW(counter,
+                                          PDH_FMT_DOUBLE | PDH_FMT_NOCAP100,
+                                          &bufferSize,
+                                          &itemCount,
+                                          items);
+    if (status != ERROR_SUCCESS) {
+        return -1;
+    }
+
+    QHash<QString, double> engineTotals;
+    for (DWORD index = 0; index < itemCount; ++index) {
+        const auto &item = items[index];
+        if (!item.szName
+            || (item.FmtValue.CStatus != ERROR_SUCCESS
+                && item.FmtValue.CStatus != PDH_CSTATUS_NEW_DATA)
+            || !std::isfinite(item.FmtValue.doubleValue)
+            || item.FmtValue.doubleValue < 0.0) {
+            continue;
+        }
+
+        const QString instance = QString::fromWCharArray(item.szName);
+        const qsizetype luidStart = instance.indexOf(QStringLiteral("_luid_"));
+        const qsizetype engineTypeStart = instance.indexOf(QStringLiteral("_engtype_"));
+        const QString engineKey = luidStart >= 0 && engineTypeStart > luidStart
+            ? instance.mid(luidStart + 1, engineTypeStart - luidStart - 1)
+            : instance;
+        engineTotals[engineKey] += item.FmtValue.doubleValue;
+    }
+
+    double busiestEngine = -1.0;
+    for (const double usage : std::as_const(engineTotals)) {
+        busiestEngine = qMax(busiestEngine, usage);
+    }
+    return busiestEngine < 0.0 ? -1 : qBound(0, qRound(busiestEngine), 100);
+}
 #endif
 
 } // namespace
@@ -529,11 +642,42 @@ bool toggleDefaultAudioMute()
 struct IslandController::PlatformState
 {
 #ifdef Q_OS_WIN
+    PlatformState()
+    {
+        if (PdhOpenQueryW(nullptr, 0, &gpuQuery) != ERROR_SUCCESS
+            || PdhAddEnglishCounterW(gpuQuery,
+                                     L"\\GPU Engine(*)\\Utilization Percentage",
+                                     0,
+                                     &gpuCounter) != ERROR_SUCCESS) {
+            if (gpuQuery) {
+                PdhCloseQuery(gpuQuery);
+                gpuQuery = nullptr;
+            }
+            gpuCounter = nullptr;
+        }
+    }
+
+    ~PlatformState()
+    {
+        if (gpuQuery) {
+            PdhCloseQuery(gpuQuery);
+        }
+    }
+
     MediaControl::GlobalSystemMediaTransportControlsSessionManager mediaManager{nullptr};
     MediaControl::GlobalSystemMediaTransportControlsSession mediaSession{nullptr};
     ComPtr<IAudioMeterInformation> audioMeter;
     std::mutex mediaMutex;
     std::atomic_bool mediaRefreshInFlight{false};
+    PDH_HQUERY gpuQuery = nullptr;
+    PDH_HCOUNTER gpuCounter = nullptr;
+    bool gpuSampleReady = false;
+    bool cpuSampleReady = false;
+    quint64 previousCpuIdle = 0;
+    quint64 previousCpuKernel = 0;
+    quint64 previousCpuUser = 0;
+    std::mutex performanceMutex;
+    std::atomic_bool performanceRefreshInFlight{false};
 #endif
 };
 
@@ -541,6 +685,7 @@ IslandController::IslandController(QObject *parent)
     : QObject(parent), m_platform(std::make_shared<PlatformState>())
 {
     m_pillMode = QSettings().value(QStringLiteral("appearance/pillMode"), false).toBool();
+    m_monitorEnabled = QSettings().value(QStringLiteral("appearance/monitorEnabled"), false).toBool();
     m_wallpaperIndex = qBound(0,
                               QSettings().value(QStringLiteral("wallpaper/index"), 0).toInt(),
                               static_cast<int>(wallpaperDefinitions.size()) - 1);
@@ -566,6 +711,9 @@ IslandController::IslandController(QObject *parent)
     QTimer::singleShot(0, this, &IslandController::refreshMedia);
     m_timer.start(1000);
     m_audioMeterTimer.start();
+    if (m_monitorEnabled) {
+        QTimer::singleShot(0, this, &IslandController::refreshPerformanceState);
+    }
 }
 
 IslandController::~IslandController() = default;
@@ -623,6 +771,24 @@ void IslandController::setPillMode(bool pillMode)
 void IslandController::togglePillMode()
 {
     setPillMode(!m_pillMode);
+}
+
+void IslandController::setMonitorEnabled(bool enabled)
+{
+    if (m_monitorEnabled == enabled) {
+        return;
+    }
+    m_monitorEnabled = enabled;
+    QSettings().setValue(QStringLiteral("appearance/monitorEnabled"), m_monitorEnabled);
+    emit monitorEnabledChanged();
+    if (m_monitorEnabled) {
+        QTimer::singleShot(0, this, &IslandController::refreshPerformanceState);
+    }
+}
+
+void IslandController::toggleMonitorEnabled()
+{
+    setMonitorEnabled(!m_monitorEnabled);
 }
 
 void IslandController::openTimer()
@@ -964,10 +1130,53 @@ void IslandController::tick()
     updateClock();
     refreshForegroundFullscreen();
     refreshMedia();
+    refreshPerformanceState();
     if (++m_slowRefreshCounter >= 3) {
         m_slowRefreshCounter = 0;
         refreshSystemState();
     }
+}
+
+void IslandController::refreshPerformanceState()
+{
+#ifdef Q_OS_WIN
+    if (!m_monitorEnabled || m_platform->performanceRefreshInFlight.exchange(true)) {
+        return;
+    }
+
+    const auto platform = m_platform;
+    QPointer<IslandController> self(this);
+    QThreadPool::globalInstance()->start([platform, self]() {
+        int cpuUsage = -1;
+        int gpuUsage = -1;
+        {
+            const std::scoped_lock lock(platform->performanceMutex);
+            cpuUsage = sampleCpuUsage(platform->cpuSampleReady,
+                                      platform->previousCpuIdle,
+                                      platform->previousCpuKernel,
+                                      platform->previousCpuUser);
+            gpuUsage = sampleGpuUsage(platform->gpuQuery,
+                                      platform->gpuCounter,
+                                      platform->gpuSampleReady);
+        }
+        platform->performanceRefreshInFlight = false;
+
+        if (!self) {
+            return;
+        }
+        QMetaObject::invokeMethod(self, [self, cpuUsage, gpuUsage]() {
+            if (!self || !self->m_monitorEnabled) {
+                return;
+            }
+            if (self->m_cpuUsage == cpuUsage && self->m_gpuUsage == gpuUsage) {
+                return;
+            }
+            self->m_cpuUsage = cpuUsage;
+            self->m_gpuUsage = gpuUsage;
+            emit self->performanceChanged();
+        }, Qt::QueuedConnection);
+    });
+#endif
 }
 
 void IslandController::refreshForegroundFullscreen()
@@ -1405,10 +1614,12 @@ void IslandController::refreshSystemState()
 
     SYSTEM_POWER_STATUS powerStatus{};
     bool batteryAvailable = false;
+    bool batteryCharging = false;
     int batteryPercent = 0;
     QString powerText = QStringLiteral("Power status unavailable");
     if (GetSystemPowerStatus(&powerStatus)) {
         batteryAvailable = powerStatus.BatteryFlag != 128 && powerStatus.BatteryLifePercent != 255;
+        batteryCharging = batteryAvailable && powerStatus.ACLineStatus == 1;
         batteryPercent = batteryAvailable ? powerStatus.BatteryLifePercent : 0;
         if (!batteryAvailable) {
             powerText = powerStatus.ACLineStatus == 1 ? QStringLiteral("Plugged in")
@@ -1426,11 +1637,13 @@ void IslandController::refreshSystemState()
 
     const bool changed = m_networkName != networkName || m_networkStatus != networkStatus
                          || m_batteryAvailable != batteryAvailable
+                         || m_batteryCharging != batteryCharging
                          || m_batteryPercent != batteryPercent || m_powerText != powerText
                          || m_volume != volume || m_muted != muted;
     m_networkName = networkName;
     m_networkStatus = networkStatus;
     m_batteryAvailable = batteryAvailable;
+    m_batteryCharging = batteryCharging;
     m_batteryPercent = batteryPercent;
     m_powerText = powerText;
     m_volume = volume;

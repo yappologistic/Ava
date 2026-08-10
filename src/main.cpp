@@ -42,6 +42,9 @@ static QPainterPath islandSurfacePath(QQuickWindow *window, QObject *root)
     const qreal earDepth = root->property("dynamicEarDepth").toReal();
     const qreal top = root->property("islandSurfaceTop").toReal();
     const bool pillMode = root->property("pillMode").toBool();
+    const bool timerSatelliteVisible = root->property("timerSatelliteVisible").toBool();
+    const qreal timerSatelliteDiameter = root->property("timerSatelliteDiameter").toReal();
+    const qreal timerSatelliteGap = root->property("timerSatelliteGap").toReal();
 
     constexpr qreal earKappa = 0.54;
     constexpr qreal roundKappa = 0.5522847498;
@@ -51,6 +54,17 @@ static QPainterPath islandSurfacePath(QQuickWindow *window, QObject *root)
     const qreal bodyRight = right - earWidth;
 
     QPainterPath path;
+    const auto addTimerSatellite = [&]() {
+        if (!timerSatelliteVisible || timerSatelliteDiameter <= 0.0) {
+            return;
+        }
+        const qreal surfaceRight = (window->width() + bodyWidth) / 2.0
+                                   + (pillMode ? 0.0 : earWidth);
+        path.addEllipse(QRectF(surfaceRight + timerSatelliteGap,
+                               top,
+                               timerSatelliteDiameter,
+                               timerSatelliteDiameter));
+    };
     if (pillMode) {
         const qreal boundedRadius = qBound<qreal>(0.0,
                                                   pillRadius,
@@ -58,6 +72,7 @@ static QPainterPath islandSurfacePath(QQuickWindow *window, QObject *root)
         path.addRoundedRect(QRectF(left, top, bodyWidth, height),
                             boundedRadius,
                             boundedRadius);
+        addTimerSatellite();
         return path;
     }
     path.moveTo(left, 0.0);
@@ -90,6 +105,7 @@ static QPainterPath islandSurfacePath(QQuickWindow *window, QObject *root)
                  left,
                  0.0);
     path.closeSubpath();
+    addTimerSatellite();
     return path;
 }
 
@@ -204,6 +220,9 @@ int main(int argc, char *argv[])
         QStringLiteral("codex-visual-state"),
         QStringLiteral("Render a Codex state for screenshot QA."),
         QStringLiteral("state"));
+    const QCommandLineOption mediaPeekOption(
+        QStringLiteral("media-peek"),
+        QStringLiteral("Render the compact media state for screenshot QA."));
     const QCommandLineOption startTimerOption(
         QStringLiteral("start-timer"),
         QStringLiteral("Start a timer for the given number of seconds."),
@@ -225,6 +244,7 @@ int main(int argc, char *argv[])
     parser.addOption(codexOption);
     parser.addOption(codexWorkspaceOption);
     parser.addOption(codexVisualStateOption);
+    parser.addOption(mediaPeekOption);
     parser.addOption(startTimerOption);
     parser.addOption(tilingProcessOption);
     parser.process(app);
@@ -307,6 +327,9 @@ int main(int argc, char *argv[])
     auto *rootWindow = qobject_cast<QQuickWindow *>(rootObject);
     if (!rootWindow) {
         return -2;
+    }
+    if (parser.isSet(mediaPeekOption) && parser.isSet(screenshotOption)) {
+        rootObject->setProperty("mediaPeekActive", true);
     }
     rootWindow->setPersistentGraphics(true);
     rootWindow->setPersistentSceneGraph(true);
@@ -412,13 +435,17 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(screenshotOption)) {
         const QString screenshotPath = QDir::cleanPath(parser.value(screenshotOption));
-        const int screenshotDelay = parser.isSet(launcherOption) ? 2400 : 1000;
+        const int screenshotDelay = parser.isSet(launcherOption) ? 2400
+                                  : (parser.isSet(mediaPeekOption) ? 1600 : 1000);
         QTimer::singleShot(screenshotDelay, &app, [rootWindow, rootObject, screenshotPath, &app]() {
             const QImage fullImage = rootWindow->grabWindow();
             const qreal scale = qMax<qreal>(1.0, fullImage.devicePixelRatio());
             const int cropWidth = qRound(rootObject->property("islandCaptureWidth").toReal() * scale);
             const int cropHeight = qRound(rootObject->property("islandCaptureHeight").toReal() * scale);
-            const int cropX = qMax(0, (fullImage.width() - cropWidth) / 2);
+            const int cropX = qBound(0,
+                                     qRound(rootObject->property("islandCaptureLeft").toReal()
+                                            * scale),
+                                     qMax(0, fullImage.width() - 1));
             const QImage image = fullImage.copy(cropX,
                                                 0,
                                                 qMin(cropWidth, fullImage.width() - cropX),

@@ -19,6 +19,7 @@ Item {
 
     readonly property real digitWidth: Math.ceil(digitMetrics.advanceWidth)
     readonly property real colonWidth: Math.ceil(colonMetrics.advanceWidth)
+    readonly property real percentWidth: Math.ceil(percentMetrics.advanceWidth)
     // Keep both glyphs within one optical line during multi-digit boundaries
     // (for example 15:00 -> 14:59) so the value reads as a morph, not two rows.
     readonly property real rollDistance: Math.max(3, Math.round(implicitHeight * 0.12))
@@ -28,7 +29,11 @@ Item {
     }
 
     function characterWidth(character) {
-        return character === ":" ? colonWidth : digitWidth
+        if (character === ":")
+            return colonWidth
+        if (character === "%")
+            return percentWidth
+        return digitWidth
     }
 
     function measuredWidth(value) {
@@ -68,6 +73,14 @@ Item {
     TextMetrics {
         id: colonMetrics
         text: ":"
+        font.family: root.fontFamily
+        font.pixelSize: root.fontPixelSize
+        font.weight: root.fontWeight
+    }
+
+    TextMetrics {
+        id: percentMetrics
+        text: "%"
         font.family: root.fontFamily
         font.pixelSize: root.fontPixelSize
         font.weight: root.fontWeight

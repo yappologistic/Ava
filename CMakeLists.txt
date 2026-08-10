@@ -136,6 +136,7 @@ qt_add_qml_module(Ava
         qml/TimerPanel.qml
         qml/IslandButton.qml
         qml/MotionTokens.qml
+        qml/MonitorCompact.qml
         qml/NotchSurface.qml
         qml/RollingDigits.qml
         qml/MorphingLabel.qml
@@ -144,6 +145,7 @@ qt_add_qml_module(Ava
         qml/DwindleMorphIcon.qml
         qml/CodexPanel.qml
         qml/OpenTuiSpinner.qml
+        qml/TimerSatellite.qml
         qml/WallpaperPanel.qml
     RESOURCES
         assets/icons/play-dark.svg
@@ -172,6 +174,18 @@ qt_add_qml_module(Ava
         assets/icons/shell-notch-dark.svg
         assets/icons/shell-pill-light.svg
         assets/icons/shell-pill-dark.svg
+        assets/icons/monitor-light.svg
+        assets/icons/monitor-dark.svg
+        assets/icons/monitor-gpu-neutral.svg
+        assets/icons/monitor-gpu-warning.svg
+        assets/icons/monitor-gpu-danger.svg
+        assets/icons/monitor-cpu-neutral.svg
+        assets/icons/monitor-cpu-warning.svg
+        assets/icons/monitor-cpu-danger.svg
+        assets/icons/monitor-battery-neutral.svg
+        assets/icons/monitor-battery-warning.svg
+        assets/icons/monitor-battery-danger.svg
+        assets/icons/monitor-battery-charging.svg
         assets/wallpapers/runtime/01-alpine-first-light.jpg
         assets/wallpapers/runtime/02-volcanic-coast-after-rain.jpg
         assets/wallpapers/runtime/03-redwood-creek-mist.jpg
@@ -205,7 +219,7 @@ if (AVA_FORCE_AUTOMATION_MODE)
 endif()
 
 if (WIN32)
-    target_link_libraries(Ava PRIVATE user32 shell32 dwmapi ole32 propsys windowsapp)
+    target_link_libraries(Ava PRIVATE user32 shell32 dwmapi ole32 propsys windowsapp pdh)
     target_link_libraries(AvaChat PRIVATE user32 shell32 dwmapi)
     set_target_properties(Ava PROPERTIES
         WIN32_EXECUTABLE TRUE

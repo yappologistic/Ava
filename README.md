@@ -13,6 +13,8 @@ There is no demo or placeholder state. Ava reads and controls real Windows servi
 - Compact always-on-top clock using the bundled Inter typeface.
 - Switchable Notch and Pill shell modes; Pill Mode keeps every interaction while
   floating below the screen edge with consistent rounding on all four corners.
+- Optional Monitor compact mode with live time, GPU and CPU utilization, battery
+  level and charging state, plus a separate quick-action timer satellite.
 - Apple-inspired timer with a snapping minute ruler, compact countdown, progress ring, pause/resume, cancel, add-one-minute, and a real Windows completion alert.
 - Live media title, artist, artwork, source-app icon, playback state, seekable timeline, transport controls, directional track handoffs, and a five-bar real Windows output-level indicator colored from the current artwork.
 - Windows Core Audio volume and mute controls.
@@ -28,6 +30,8 @@ There is no demo or placeholder state. Ava reads and controls real Windows servi
 - Move away for 560 ms to collapse, unless it is pinned.
 - Open the utility carousel and choose the shell-mode item to switch between
   Notch Mode and Pill Mode. Ava remembers the selection across restarts.
+- Choose **Monitor** in the same carousel to replace the idle clock with the live
+  system readouts. Media and Codex alerts still take priority when they need attention.
 - Open the timer from the right-side utility controls, select a duration on the ruler, and choose **Start Timer**.
 - Enable or disable Dwindle tiling from the utility controls or press `Win+Alt+T`.
 - Resize a tiled window along an internal edge to adjust its split.
@@ -95,17 +99,18 @@ cmake --build build --config Release
 
 Generated screenshots, videos, reports, logs, build products, and IDE files are excluded by `.gitignore`.
 
-For local visual-regression capture, `--codex-visual-state ready|running|approval|completed|error|compact` is accepted only together with `--screenshot`. These states exercise the shipping QML layout without replacing the real runtime integration.
+For local visual-regression capture, `--codex-visual-state ready|running|approval|completed|error|compact` and `--media-peek` are accepted only together with `--screenshot`. These states exercise the shipping QML layout without replacing the real runtime integration.
 
 ## Project layout
 
-- `src/islandcontroller.h/.cpp`: timer and real Windows media, audio, network, power, clock, and file-drop integration.
+- `src/islandcontroller.h/.cpp`: timer and real Windows media, audio, network, power, CPU/GPU, clock, and file-drop integration.
 - `src/windowtilingmanager.h/.cpp`: native Dwindle layout, global shortcut, resizing, swapping, filtering, animation, and restoration.
 - `src/codexbridge.h/.cpp`: Codex app-server process management, JSON-RPC, real thread/turn activity, approvals, interruption, recovery, and desktop handoff.
 - `src/main.cpp`: application startup, command-line options, topmost behavior, font registration, and native silhouette hit-testing.
 - `qml/Main.qml`: compact state, spring morphing, input, file drop, and window geometry.
 - `qml/ExpandedPanel.qml`: expanded media, calendar, status, and utility layout.
 - `qml/TimerPanel.qml`: timer setup, running, paused, and completed states.
+- `qml/MonitorCompact.qml` and `qml/TimerSatellite.qml`: compact system telemetry and the active-timer quick action.
 - `qml/CodexPanel.qml`: focused ready, running, approval, completion, and recovery layouts.
 - `qml/OpenTuiSpinner.qml`: reduced-motion-aware active-work spinner using an OpenTUI-style frame cadence.
 - `qml/NotchSurface.qml`: reverse-curve top junctions and continuous lower corners.

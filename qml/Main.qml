@@ -14,6 +14,7 @@ Window {
     readonly property string uiFont: "Inter"
     readonly property string monoFont: "Geist Mono"
     readonly property string iconFont: "Segoe Fluent Icons"
+    readonly property var islandController: controller
     readonly property int compactWidth: 150
     readonly property int compactHeight: 39
     // Measured from all 48,446 source frames: the stable open shell is about 4.5:1.
@@ -30,6 +31,9 @@ Window {
     readonly property int dragHeight: 116
     readonly property int mediaPeekWidth: 230
     readonly property int codexPeekWidth: 242
+    readonly property int monitorWidth: 278
+    readonly property int timerSatelliteDiameter: compactHeight
+    readonly property int timerSatelliteGap: 8
     readonly property int canvasWidth: expandedWidth + 40
     readonly property int canvasHeight: Math.max(wallpaperExpandedHeight,
                                                   launcherExpandedHeight)
@@ -42,12 +46,10 @@ Window {
     readonly property int islandTargetWidth: dragActive ? dragWidth
         : (shellExpandedVisual ? expandedWidth + Math.round(ringingPulse * 8)
                                 + Math.round(pinPulse * 4)
-                               : (codexBridge.compactVisible
-                                  ? codexPeekWidth
-                                  : (mediaPeekActive && controller.mediaAvailable
-                                  && !controller.timerActive && !controller.timerRinging
-                                  ? mediaPeekWidth
-                                  : compactWidth + Math.round(hoverTension * 4))))
+                               : (compactActivity === "codex" ? codexPeekWidth
+                                  : (compactActivity === "media" ? mediaPeekWidth
+                                     : (compactActivity === "monitor" ? monitorWidth
+                                        : compactWidth + Math.round(hoverTension * 4)))))
     readonly property int islandTargetHeight: dragActive ? dragHeight
         : (shellExpandedVisual ? expandedHeight + Math.round(ringingPulse * 3)
                                : compactHeight + Math.round(hoverTension))
@@ -67,10 +69,16 @@ Window {
     property real dropTraceProgress: 0
     readonly property string compactActivity: codexBridge.compactVisible
                                               ? "codex"
-                                              : (controller.timerActive || controller.timerRinging
-                                              ? "timer"
                                               : (window.mediaPeekActive && controller.mediaAvailable
-                                                 ? "media" : "clock"))
+                                                 && (controller.monitorEnabled
+                                                     || (!controller.timerActive
+                                                         && !controller.timerRinging))
+                                                 ? "media"
+                                                 : (controller.monitorEnabled
+                                                    ? "monitor"
+                                                    : (controller.timerActive
+                                                       || controller.timerRinging
+                                                       ? "timer" : "clock")))
 
     // A lightly underdamped, axis-staggered response measured against the reference.
     // Height leads while opening; width leads while closing. Angular frequency keeps
@@ -96,8 +104,18 @@ Window {
                                              + hoverTension * 2
     readonly property real dynamicEarDepth: 9 + 9 * Math.sqrt(morphProgress)
     readonly property real shellHorizontalOverflow: pillMode ? 0 : dynamicEarWidth
-    readonly property real islandCaptureWidth: islandVisualWidth
-                                               + shellHorizontalOverflow * 2
+    readonly property bool timerSatelliteVisible: controller.monitorEnabled
+                                                   && controller.timerActive
+                                                   && !shellExpandedVisual
+                                                   && !dragActive
+    readonly property real islandCaptureLeft: (canvasWidth - islandVisualWidth) / 2
+                                               - shellHorizontalOverflow
+    readonly property real islandCaptureRight: (canvasWidth + islandVisualWidth) / 2
+                                                + shellHorizontalOverflow
+                                                + (timerSatelliteVisible
+                                                   ? timerSatelliteGap
+                                                     + timerSatelliteDiameter : 0)
+    readonly property real islandCaptureWidth: islandCaptureRight - islandCaptureLeft
     readonly property real islandCaptureHeight: islandSurfaceTop
                                                 + islandVisualHeight + 8
     readonly property bool nativeInputMaskEnabled: !qaMode && !automationMode
@@ -134,6 +152,8 @@ Window {
         readonly property color calendarAccent: "#9ad9cc"
         readonly property color calendarSelection: "#17382f"
         readonly property color timer: "#ff9f0a"
+        readonly property color warning: "#ffb340"
+        readonly property color danger: "#ff5f57"
     }
 
     function snapMorphToTarget() {
@@ -228,7 +248,9 @@ Window {
             const mediaKey = controller.mediaTitle + "\n" + controller.mediaArtist
             if (controller.mediaAvailable && controller.mediaPlaying
                     && mediaKey.length > 1 && mediaKey !== window.lastMediaKey
-                    && !controller.timerActive && !controller.timerRinging && !qaMode) {
+                    && (controller.monitorEnabled
+                        || (!controller.timerActive && !controller.timerRinging))
+                    && !qaMode) {
                 window.mediaPeekActive = true
                 mediaPeekTimer.restart()
             }
@@ -402,7 +424,7 @@ Window {
         interval: 280
         repeat: false
         running: islandHover.hovered && !controller.expanded && !window.dragActive
-                 && !controller.foregroundFullscreen
+                 && !controller.foregroundFullscreen && !qaMode
         onTriggered: controller.setExpanded(true)
     }
 
@@ -547,6 +569,40 @@ Window {
                 }
             }
 
+            MonitorCompact {
+                id: compactMonitor
+                anchors.centerIn: parent
+                anchors.verticalCenterOffset: -1
+                width: implicitWidth
+                height: 20
+                controller: window.islandController
+                colors: window.colors
+                uiFont: window.uiFont
+                reducedMotion: controller.reducedMotion
+                enabled: window.compactActivity === "monitor"
+                visible: opacity > 0.001
+                opacity: enabled ? 1 : 0
+                scale: enabled ? 1 : 0.94
+                transform: Translate {
+                    x: compactMonitor.enabled ? 0 : -5
+                    Behavior on x {
+                        NumberAnimation {
+                            duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff
+                            easing.type: MotionTokens.easeOut
+                        }
+                    }
+                }
+                Behavior on opacity {
+                    NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state }
+                }
+                Behavior on scale {
+                    NumberAnimation {
+                        duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff
+                        easing.type: MotionTokens.settle
+                    }
+                }
+            }
+
             Row {
                 id: compactMediaPeek
                 anchors.centerIn: parent
@@ -571,9 +627,16 @@ Window {
                     anchors.verticalCenter: parent.verticalCenter
                     width: 27
                     height: 27
-                    radius: 7
+                    radius: window.pillMode ? height / 2 : 7
                     color: colors.raised
                     clip: true
+
+                    Behavior on radius {
+                        NumberAnimation {
+                            duration: controller.reducedMotion ? 0 : MotionTokens.content
+                            easing.type: MotionTokens.easeOut
+                        }
+                    }
 
                     Image {
                         anchors.fill: parent
@@ -772,6 +835,20 @@ Window {
                     font.features: { "tnum": 1 }
                 }
             }
+        }
+
+        TimerSatellite {
+            id: timerSatellite
+            z: 7
+            x: parent.width + window.shellHorizontalOverflow
+               + window.timerSatelliteGap
+            y: 0
+            width: window.timerSatelliteDiameter
+            height: width
+            controller: window.islandController
+            colors: window.colors
+            reducedMotion: controller.reducedMotion
+            active: window.timerSatelliteVisible
         }
 
         Item {

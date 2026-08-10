@@ -14,6 +14,7 @@ class IslandController final : public QObject
     Q_PROPERTY(bool expanded READ expanded WRITE setExpanded NOTIFY expandedChanged)
     Q_PROPERTY(bool pinned READ pinned WRITE setPinned NOTIFY pinnedChanged)
     Q_PROPERTY(bool pillMode READ pillMode WRITE setPillMode NOTIFY pillModeChanged)
+    Q_PROPERTY(bool monitorEnabled READ monitorEnabled WRITE setMonitorEnabled NOTIFY monitorEnabledChanged)
     Q_PROPERTY(bool reducedMotion READ reducedMotion NOTIFY reducedMotionChanged)
 
     Q_PROPERTY(QString timeText READ timeText NOTIFY clockChanged)
@@ -54,7 +55,10 @@ class IslandController final : public QObject
     Q_PROPERTY(QString networkStatus READ networkStatus NOTIFY systemChanged)
     Q_PROPERTY(bool batteryAvailable READ batteryAvailable NOTIFY systemChanged)
     Q_PROPERTY(int batteryPercent READ batteryPercent NOTIFY systemChanged)
+    Q_PROPERTY(bool batteryCharging READ batteryCharging NOTIFY systemChanged)
     Q_PROPERTY(QString powerText READ powerText NOTIFY systemChanged)
+    Q_PROPERTY(int cpuUsage READ cpuUsage NOTIFY performanceChanged)
+    Q_PROPERTY(int gpuUsage READ gpuUsage NOTIFY performanceChanged)
     Q_PROPERTY(int volume READ volume NOTIFY systemChanged)
     Q_PROPERTY(bool muted READ muted NOTIFY systemChanged)
     Q_PROPERTY(bool foregroundFullscreen READ foregroundFullscreen NOTIFY foregroundFullscreenChanged)
@@ -69,6 +73,7 @@ public:
     bool expanded() const { return m_expanded; }
     bool pinned() const { return m_pinned; }
     bool pillMode() const { return m_pillMode; }
+    bool monitorEnabled() const { return m_monitorEnabled; }
     bool reducedMotion() const { return m_reducedMotion; }
 
     QString timeText() const { return m_timeText; }
@@ -109,7 +114,10 @@ public:
     QString networkStatus() const { return m_networkStatus; }
     bool batteryAvailable() const { return m_batteryAvailable; }
     int batteryPercent() const { return m_batteryPercent; }
+    bool batteryCharging() const { return m_batteryCharging; }
     QString powerText() const { return m_powerText; }
+    int cpuUsage() const { return m_cpuUsage; }
+    int gpuUsage() const { return m_gpuUsage; }
     int volume() const { return m_volume; }
     bool muted() const { return m_muted; }
     bool foregroundFullscreen() const { return m_foregroundFullscreen; }
@@ -124,6 +132,8 @@ public slots:
     void togglePinned();
     void setPillMode(bool pillMode);
     void togglePillMode();
+    void setMonitorEnabled(bool enabled);
+    void toggleMonitorEnabled();
 
     void openTimer();
     void closeTimer();
@@ -152,6 +162,7 @@ signals:
     void expandedChanged();
     void pinnedChanged();
     void pillModeChanged();
+    void monitorEnabledChanged();
     void reducedMotionChanged();
     void clockChanged();
     void timerChanged();
@@ -161,6 +172,7 @@ signals:
     void mediaCommandRejected(const QString &command);
     void audioPeakChanged();
     void systemChanged();
+    void performanceChanged();
     void droppedFilesChanged();
     void foregroundFullscreenChanged();
 
@@ -176,6 +188,7 @@ private:
     void updateClock();
     void refreshMedia();
     void refreshSystemState();
+    void refreshPerformanceState();
     void refreshForegroundFullscreen();
     QString formatDuration(qint64 totalMilliseconds) const;
     QString formatTimerDuration(qint64 totalMilliseconds) const;
@@ -191,6 +204,7 @@ private:
     bool m_expanded = false;
     bool m_pinned = false;
     bool m_pillMode = false;
+    bool m_monitorEnabled = false;
     bool m_reducedMotion = false;
 
     QString m_timeText;
@@ -235,7 +249,10 @@ private:
     QString m_networkStatus = QStringLiteral("Offline");
     bool m_batteryAvailable = false;
     int m_batteryPercent = 0;
+    bool m_batteryCharging = false;
     QString m_powerText;
+    int m_cpuUsage = -1;
+    int m_gpuUsage = -1;
     int m_volume = 0;
     bool m_muted = false;
     bool m_foregroundFullscreen = false;
