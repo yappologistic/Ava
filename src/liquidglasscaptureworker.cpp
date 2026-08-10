@@ -357,9 +357,9 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     const float busyBackdrop = smoothstep(0.035, 0.19, detailEnergy);
     const float compactVeil = saturate(brightBackdrop * 0.17
                                        + busyBackdrop * 0.06);
-    const float panelVeil = saturate(0.40
-                                     + brightBackdrop * 0.20
-                                     + busyBackdrop * 0.08);
+    const float panelVeil = saturate(0.32
+                                     + brightBackdrop * 0.16
+                                     + busyBackdrop * 0.06);
     const float legibilityVeil = lerp(compactVeil, panelVeil, panel);
     color = lerp(color, float3(0.010, 0.014, 0.022), legibilityVeil);
 
