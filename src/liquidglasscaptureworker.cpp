@@ -907,6 +907,19 @@ static QString wallpaperPathForMonitor(HMONITOR monitor)
     return {};
 }
 
+static HWND activeMoveSizeWindow()
+{
+    GUITHREADINFO threadInfo{};
+    threadInfo.cbSize = sizeof(threadInfo);
+    if (!GetGUIThreadInfo(0, &threadInfo)
+        || (threadInfo.flags & GUI_INMOVESIZE) == 0
+        || !threadInfo.hwndMoveSize) {
+        return nullptr;
+    }
+    const HWND root = GetAncestor(threadInfo.hwndMoveSize, GA_ROOT);
+    return root ? root : threadInfo.hwndMoveSize;
+}
+
 static HWND findUnderlyingWindow(HWND foregroundWindow, const QRect &captureRect)
 {
     if (!foregroundWindow || captureRect.isEmpty()) {
@@ -914,6 +927,14 @@ static HWND findUnderlyingWindow(HWND foregroundWindow, const QRect &captureRect
     }
     DWORD ownProcessId = 0;
     GetWindowThreadProcessId(foregroundWindow, &ownProcessId);
+    const HWND movingWindow = activeMoveSizeWindow();
+    if (movingWindow && isCaptureCandidate(movingWindow, ownProcessId)
+        && windowBounds(movingWindow).intersects(captureRect)) {
+        // DWM can insert snap and drag-host windows above the real window
+        // during a sustained move. hwndMoveSize remains the authoritative
+        // window whose pixels should be behind the glass.
+        return movingWindow;
+    }
     HWND firstIntersecting = nullptr;
     const QPoint center = captureRect.center();
     for (HWND candidate = GetWindow(foregroundWindow, GW_HWNDNEXT);
@@ -1130,6 +1151,13 @@ public:
 
     HWND targetWindow() const { return m_targetWindow; }
     bool isStandaloneWallpaper() const { return m_standaloneWallpaper; }
+
+    bool targetStillIntersects(const QRect &captureRect) const
+    {
+        return isValid() && !m_standaloneWallpaper && !m_wallpaperOnly
+            && IsWindowVisible(m_targetWindow) && !IsIconic(m_targetWindow)
+            && windowBounds(m_targetWindow).intersects(captureRect);
+    }
 
     bool hasLatestFrame() const
     {
@@ -1712,8 +1740,15 @@ private:
                 || now - lastTargetCheck
                     >= std::chrono::milliseconds(kTargetCheckIntervalMs);
             if (targetCheckDue) {
-                const HWND target = findUnderlyingWindow(foregroundWindow,
-                                                         geometry.surface);
+                HWND target = findUnderlyingWindow(foregroundWindow,
+                                                   geometry.surface);
+                if ((!target || isDesktopSurfaceWindow(target))
+                    && session.targetStillIntersects(geometry.surface)) {
+                    // A sustained move can briefly hide the real target from
+                    // z-order enumeration. Keep the live session while its
+                    // window still physically occupies the sampled region.
+                    target = session.targetWindow();
+                }
                 lastTargetCheck = now;
                 if (!target) {
                     if (targetMissingSince.time_since_epoch().count() == 0) {
