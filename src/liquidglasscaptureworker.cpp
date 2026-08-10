@@ -221,11 +221,11 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     // The material is tuned to the restrained optical profile selected during
     // visual QA. These values are expressed in this screen-space lens model,
     // rather than copied as opaque UI controls from the reference renderer.
-    const float glassScale = 0.20;
-    const float glassIor = 1.20;
-    const float glassThickness = 12.0;
-    const float glassChromaticAberration = 0.08;
-    const float glassAnisotropy = 0.07;
+    const float glassScale = 0.22;
+    const float glassIor = 1.22;
+    const float glassThickness = 13.0;
+    const float glassChromaticAberration = 0.09;
+    const float glassAnisotropy = 0.08;
     const float glassTransmission = 1.0;
     const float glassRoughness = 0.0;
     const float2 local = position.xy - contentRect.xy;
@@ -284,7 +284,7 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     const float meniscusKick = lensBand * pow(edge, 4.0)
                                * (0.055 + cornerConvergence * 0.075);
     const float maximumBend = lensBand
-                              * lerp(1.04, 1.18, cornerConvergence);
+                              * lerp(1.10, 1.27, cornerConvergence);
     const float edgeBend = min(maximumBend,
                                angularDeflection * lensBand
                                    * glassThickness * glassScale * bendGain
