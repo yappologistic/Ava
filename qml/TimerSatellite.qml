@@ -1,4 +1,5 @@
 import QtQuick 6.5
+import Ava 1.0
 
 Item {
     id: root
@@ -6,6 +7,8 @@ Item {
     required property var controller
     required property var colors
     property bool reducedMotion: false
+    property bool glassEnabled: false
+    property var glassBackdrop: null
     property bool active: false
     readonly property bool hovered: pointer.hovered
 
@@ -65,6 +68,17 @@ Item {
         Behavior on border.color {
             ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
         }
+    }
+
+    LiquidGlassTexture {
+        id: timerTextureSource
+        anchors.fill: parent
+        backdrop: root.glassBackdrop
+        timer: true
+        enabled: true
+        opacity: 1
+        visible: root.active && root.glassBackdrop
+                 && root.glassBackdrop.timerFrameAvailable
     }
 
     Image {

@@ -13,7 +13,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS
-    Concurrent Core Gui Network Qml Quick QuickControls2 QuickDialogs2 QuickLayouts Test)
+    Concurrent Core Gui Network Qml Quick QuickControls2 QuickDialogs2 QuickLayouts ShaderTools Test)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -25,6 +25,12 @@ qt_add_executable(Ava
     src/codexbridge.h
     src/islandcontroller.cpp
     src/islandcontroller.h
+    src/liquidglasscaptureworker.cpp
+    src/liquidglasscaptureworker.h
+    src/liquidglassbackdrop.cpp
+    src/liquidglassbackdrop.h
+    src/liquidglasstextureitem.cpp
+    src/liquidglasstextureitem.h
     src/systemmonitor.cpp
     src/systemmonitor.h
     src/windowtilingmanager.cpp
@@ -128,6 +134,9 @@ target_link_libraries(AvaChat
         Qt6::QuickLayouts
 )
 
+set_source_files_properties(qml/MotionTokens.qml PROPERTIES
+    QT_QML_SINGLETON_TYPE TRUE)
+
 qt_add_qml_module(Ava
     URI Ava
     VERSION 1.0
@@ -144,6 +153,7 @@ qt_add_qml_module(Ava
         qml/RollingDigits.qml
         qml/MorphingLabel.qml
         qml/MorphingIcon.qml
+        qml/MorphingArtwork.qml
         qml/PlaybackMorphIcon.qml
         qml/DwindleMorphIcon.qml
         qml/CodexPanel.qml
@@ -189,6 +199,8 @@ qt_add_qml_module(Ava
         assets/icons/monitor-battery-warning.svg
         assets/icons/monitor-battery-danger.svg
         assets/icons/monitor-battery-charging.svg
+        assets/icons/liquid-glass-light.svg
+        assets/icons/liquid-glass-dark.svg
         assets/icons/launcher-link.svg
         assets/icons/launcher-folder.svg
         assets/icons/launcher-file.svg
@@ -210,8 +222,11 @@ qt_add_qml_module(Ava
         assets/fonts/OFL-Geist.txt
 )
 
+target_include_directories(Ava PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
 target_link_libraries(Ava
     PRIVATE
+        Qt6::Concurrent
         Qt6::Core
         Qt6::Gui
         Qt6::Network
@@ -225,7 +240,7 @@ if (AVA_FORCE_AUTOMATION_MODE)
 endif()
 
 if (WIN32)
-    target_link_libraries(Ava PRIVATE user32 shell32 dwmapi ole32 propsys windowsapp pdh psapi)
+    target_link_libraries(Ava PRIVATE user32 gdi32 d3d11 d3dcompiler dxgi shell32 dwmapi ole32 propsys windowsapp pdh psapi)
     target_link_libraries(AvaChat PRIVATE user32 shell32 dwmapi)
     set_target_properties(Ava PROPERTIES
         WIN32_EXECUTABLE TRUE

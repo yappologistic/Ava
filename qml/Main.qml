@@ -1,6 +1,7 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Window 6.5
+import Ava 1.0
 
 Window {
     id: window
@@ -34,7 +35,8 @@ Window {
     readonly property int dragHeight: 116
     readonly property int mediaPeekWidth: 230
     readonly property int codexPeekWidth: 242
-    readonly property int monitorWidth: 360
+    // Sized for the widest three-digit readouts without letting live values resize the pill.
+    readonly property int monitorWidth: 288
     readonly property int timerSatelliteDiameter: compactHeight
     readonly property int timerSatelliteGap: 8
     readonly property int canvasWidth: expandedWidth + 40
@@ -42,9 +44,14 @@ Window {
                                                   launcherExpandedHeight,
                                                   monitorExpandedHeight)
                                                 + islandSurfaceTop + 10
+    readonly property int liquidGlassCaptureWidth: canvasWidth
+    readonly property int liquidGlassCaptureHeight: Math.max(wallpaperExpandedHeight,
+                                                               launcherExpandedHeight,
+                                                               monitorExpandedHeight) + 4
     readonly property bool launcherOpen: appLauncher.open
     readonly property bool dragActive: dropTarget.containsDrag
     property bool shellExpandedVisual: controller.expanded || appLauncher.open
+    property int retainedExpandedHeight: baseExpandedHeight
     property real hoverTension: islandHover.hovered && !controller.expanded
                                 && !dragActive ? 1 : 0
     readonly property int islandTargetWidth: dragActive ? dragWidth
@@ -54,8 +61,10 @@ Window {
                                   : (compactActivity === "media" ? mediaPeekWidth
                                      : (compactActivity === "monitor" ? monitorWidth
                                         : compactWidth + Math.round(hoverTension * 4)))))
+    readonly property int visualExpandedHeight: controller.expanded || appLauncher.open
+                                                ? expandedHeight : retainedExpandedHeight
     readonly property int islandTargetHeight: dragActive ? dragHeight
-        : (shellExpandedVisual ? expandedHeight + Math.round(ringingPulse * 3)
+        : (shellExpandedVisual ? visualExpandedHeight + Math.round(ringingPulse * 3)
                                : compactHeight + Math.round(hoverTension))
 
     property real islandVisualWidth: compactWidth
@@ -83,7 +92,10 @@ Window {
                                                     : (controller.timerActive
                                                        || controller.timerRinging
                                                        ? "timer" : "clock")))
-
+    readonly property bool codexSurfaceOpaque: codexBridge.panelOpen
+                                                || compactActivity === "codex"
+    readonly property bool liquidGlassVisualActive: controller.liquidGlassEnabled
+                                                     && !codexSurfaceOpaque
     // A lightly underdamped, axis-staggered response measured against the reference.
     // Height leads while opening; width leads while closing. Angular frequency keeps
     // the response time-based while FrameAnimation samples it at the display cadence.
@@ -101,6 +113,10 @@ Window {
     readonly property real islandSurfaceTop: pillMode ? 8 : 0
     readonly property real morphProgress: Math.max(0, Math.min(1,
         (surfaceHeight - compactHeight) / (baseExpandedHeight - compactHeight)))
+    readonly property real compactRevealProgress: controller.reducedMotion
+        ? (shellExpandedVisual ? 0 : 1)
+        : Math.max(0, Math.min(1,
+            (compactHeight + 32 - surfaceHeight) / 32))
     readonly property real dynamicCornerRadius: 17 + 11 * Math.sqrt(morphProgress)
     readonly property real pillCornerRadius: Math.min(surfaceHeight / 2,
         19.5 + 8.5 * Math.sqrt(morphProgress))
@@ -108,6 +124,10 @@ Window {
                                              + hoverTension * 2
     readonly property real dynamicEarDepth: 9 + 9 * Math.sqrt(morphProgress)
     readonly property real shellHorizontalOverflow: pillMode ? 0 : dynamicEarWidth
+    readonly property real liquidGlassPointerX: islandHover.point.position.x
+                                                + shellHorizontalOverflow
+    readonly property real liquidGlassPointerY: islandHover.point.position.y
+    readonly property bool liquidGlassPointerActive: islandHover.hovered
     readonly property bool timerSatelliteVisible: controller.monitorEnabled
                                                    && controller.timerActive
                                                    && !shellExpandedVisual
@@ -143,14 +163,44 @@ Window {
     x: Screen.virtualX + Math.round((Screen.width - width) / 2)
     y: Screen.virtualY
 
+    Binding {
+        target: liquidGlassBackdrop
+        property: "active"
+        value: window.liquidGlassVisualActive
+               && (!qaMode || liveGlassQa)
+               && (!automationMode || liveGlassQa)
+    }
+
+    function requestGlassRefresh() {
+        if (window.liquidGlassVisualActive
+                && (!qaMode || liveGlassQa)
+                && (!automationMode || liveGlassQa))
+            liquidGlassBackdrop.requestImmediateFrame()
+    }
+
+    onIslandVisualWidthChanged: requestGlassRefresh()
+    onIslandVisualHeightChanged: requestGlassRefresh()
+    onIslandSurfaceTopChanged: requestGlassRefresh()
+    onPillModeChanged: requestGlassRefresh()
+    onTimerSatelliteVisibleChanged: requestGlassRefresh()
+    onLiquidGlassPointerXChanged: requestGlassRefresh()
+    onLiquidGlassPointerYChanged: requestGlassRefresh()
+    onLiquidGlassPointerActiveChanged: requestGlassRefresh()
+
     property QtObject colors: QtObject {
-        readonly property color black: "#000000"
-        readonly property color raised: "#151515"
-        readonly property color hover: "#232323"
-        readonly property color divider: "#242424"
+        readonly property color black: window.liquidGlassVisualActive
+                                       ? "#34080c12" : "#000000"
+        readonly property color raised: window.liquidGlassVisualActive
+                                        ? "#24ffffff" : "#151515"
+        readonly property color hover: window.liquidGlassVisualActive
+                                       ? "#38ffffff" : "#232323"
+        readonly property color divider: window.liquidGlassVisualActive
+                                         ? "#28ffffff" : "#242424"
         readonly property color text: "#f5f5f7"
-        readonly property color secondary: "#a1a1a6"
-        readonly property color tertiary: "#6e6e73"
+        readonly property color secondary: window.liquidGlassVisualActive
+                                            ? "#cdd1d8" : "#a1a1a6"
+        readonly property color tertiary: window.liquidGlassVisualActive
+                                           ? "#a4abb6" : "#6e6e73"
         readonly property color accent: "#5ac8fa"
         readonly property color green: "#63e6a5"
         readonly property color calendarAccent: "#9ad9cc"
@@ -158,6 +208,11 @@ Window {
         readonly property color timer: "#ff9f0a"
         readonly property color warning: "#ffb340"
         readonly property color danger: "#ff5f57"
+        readonly property color glassRim: "#52ffffff"
+        readonly property color glassHighlight: "#28ffffff"
+        readonly property color glassShadow: "#52000000"
+        readonly property color glassCool: "#365ac8fa"
+        readonly property color glassWarm: "#24ff7ac8"
     }
 
     function snapMorphToTarget() {
@@ -224,8 +279,15 @@ Window {
     }
 
     Component.onCompleted: {
+        if (controller.expanded || appLauncher.open)
+            retainedExpandedHeight = expandedHeight
         snapMorphToTarget()
         motionReady = true
+    }
+
+    onExpandedHeightChanged: {
+        if (controller.expanded || appLauncher.open)
+            retainedExpandedHeight = expandedHeight
     }
 
     Connections {
@@ -237,6 +299,7 @@ Window {
         function onExpandedChanged() {
             if (controller.expanded) {
                 delayedShellClose.stop()
+                window.retainedExpandedHeight = window.expandedHeight
                 window.shellExpandedVisual = true
             } else if (controller.reducedMotion) {
                 window.shellExpandedVisual = false
@@ -465,6 +528,19 @@ Window {
             width: parent.width + window.shellHorizontalOverflow * 2
             height: window.surfaceHeight
             surfaceColor: colors.black
+            glassEnabled: window.liquidGlassVisualActive
+            glassBackdrop: liquidGlassBackdrop
+            reducedMotion: controller.reducedMotion
+            pointerPosition: Qt.point(islandHover.point.position.x
+                                      + window.shellHorizontalOverflow,
+                                      islandHover.point.position.y)
+            pointerActive: islandHover.hovered
+            morphProgress: window.morphProgress
+            rimColor: colors.glassRim
+            highlightColor: colors.glassHighlight
+            shadowColor: colors.glassShadow
+            coolEdgeColor: colors.glassCool
+            warmEdgeColor: colors.glassWarm
             pillMode: window.pillMode
             pillRadius: window.pillCornerRadius
             bottomRadius: window.dynamicCornerRadius
@@ -511,16 +587,10 @@ Window {
             z: 4
             anchors.fill: parent
             enabled: !controller.expanded && !window.dragActive
-            opacity: enabled ? 1 : 0
-            scale: enabled ? 1 : 0.96
-            transformOrigin: Item.Top
-
-            Behavior on opacity {
-                NumberAnimation { duration: controller.reducedMotion ? 0 : 100; easing.type: Easing.OutQuad }
-            }
-            Behavior on scale {
-                NumberAnimation { duration: controller.reducedMotion ? 0 : 150; easing.type: Easing.OutCubic }
-            }
+            visible: opacity > 0.001
+            opacity: enabled ? window.compactRevealProgress : 0
+            scale: 0.97 + 0.03 * opacity
+            transformOrigin: Item.Center
 
             Column {
                 visible: false
@@ -575,7 +645,6 @@ Window {
                     fontWeight: Font.DemiBold
                     letterSpacing: -0.2
                     reducedMotion: controller.reducedMotion
-                    rollDirection: 1
                 }
             }
 
@@ -609,7 +678,7 @@ Window {
                 Behavior on scale {
                     NumberAnimation {
                         duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff
-                        easing.type: MotionTokens.settle
+                        easing.type: MotionTokens.easeOut
                     }
                 }
             }
@@ -649,36 +718,47 @@ Window {
                         }
                     }
 
-                    Image {
+                    MorphingArtwork {
+                        id: compactArtwork
                         anchors.fill: parent
                         source: controller.mediaArtworkUrl
-                        visible: controller.mediaArtworkUrl.length > 0
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        cache: false
-                        smooth: true
-                        mipmap: true
+                        reducedMotion: controller.reducedMotion
                     }
                     Text {
                         anchors.centerIn: parent
-                        visible: controller.mediaArtworkUrl.length === 0
+                        visible: opacity > 0.001
+                        opacity: compactArtwork.hasArtwork ? 0 : 1
+                        scale: compactArtwork.hasArtwork ? 0.9 : 1
                         text: "\uE8D6"
                         color: colors.secondary
                         font.family: window.iconFont
                         font.pixelSize: 12
+
+                        Behavior on opacity {
+                            NumberAnimation {
+                                duration: controller.reducedMotion ? 0 : MotionTokens.state
+                            }
+                        }
+                        Behavior on scale {
+                            NumberAnimation {
+                                duration: controller.reducedMotion ? 0 : MotionTokens.state
+                                easing.type: MotionTokens.easeOut
+                            }
+                        }
                     }
                 }
 
-                Text {
+                MorphingLabel {
                     anchors.verticalCenter: parent.verticalCenter
                     width: 145
                     text: controller.mediaTitle
                     color: colors.text
                     elide: Text.ElideRight
-                    maximumLineCount: 1
-                    font.family: window.uiFont
-                    font.pixelSize: 10
-                    font.weight: Font.DemiBold
+                    fontFamily: window.uiFont
+                    fontPixelSize: 10
+                    fontWeight: Font.DemiBold
+                    motionOffset: 2
+                    reducedMotion: controller.reducedMotion
                 }
 
                 Row {
@@ -760,7 +840,6 @@ Window {
                     fontWeight: Font.DemiBold
                     letterSpacing: -0.2
                     reducedMotion: controller.reducedMotion
-                    rollDirection: -1
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
@@ -779,7 +858,11 @@ Window {
                     color: colors.timer
                     opacity: controller.timerPaused ? 0.38 : 1
 
-                    Behavior on opacity { NumberAnimation { duration: MotionTokens.state } }
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: controller.reducedMotion ? 0 : MotionTokens.state
+                        }
+                    }
                 }
             }
 
@@ -859,6 +942,8 @@ Window {
             controller: window.islandController
             colors: window.colors
             reducedMotion: controller.reducedMotion
+            glassEnabled: window.liquidGlassVisualActive
+            glassBackdrop: liquidGlassBackdrop
             active: window.timerSatelliteVisible
         }
 

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick 6.5
+import Ava 1.0
 
 Item {
     id: root
@@ -12,6 +13,7 @@ Item {
     property string iconFont: "Segoe Fluent Icons"
     property bool reducedMotion: false
     property bool open: false
+    readonly property int closeDuration: 55
 
     function metricColor(value) {
         if (value >= 90)
@@ -55,6 +57,8 @@ Item {
                 letterSpacing: -0.7
                 staggerMs: 10
                 reducedMotion: root.reducedMotion
+                widthReference: "100"
+                horizontalAlignment: Text.AlignRight
             }
 
             Text {
@@ -106,6 +110,7 @@ Item {
         }
     }
 
+    clip: true
     enabled: open
     visible: opacity > 0.001
     opacity: open ? 1 : 0
@@ -116,7 +121,9 @@ Item {
         SequentialAnimation {
             PauseAnimation { duration: root.open && !root.reducedMotion ? 45 : 0 }
             NumberAnimation {
-                duration: root.reducedMotion ? 0 : MotionTokens.state
+                duration: root.reducedMotion ? 0
+                                             : (root.open ? MotionTokens.state
+                                                          : root.closeDuration)
                 easing.type: MotionTokens.easeOut
             }
         }
@@ -124,7 +131,9 @@ Item {
 
     Behavior on scale {
         NumberAnimation {
-            duration: root.reducedMotion ? 0 : MotionTokens.content
+            duration: root.reducedMotion ? 0
+                                         : (root.open ? MotionTokens.content
+                                                      : root.closeDuration)
             easing.type: MotionTokens.easeOut
         }
     }

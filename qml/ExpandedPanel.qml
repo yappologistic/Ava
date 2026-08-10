@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick 6.5
 import QtQuick.Controls 6.5
+import Ava 1.0
 
 Item {
     id: root
@@ -134,7 +135,8 @@ Item {
 
     function utilityMenuName(index) {
         const names = ["Codex", "Timer", "Dwindle", "Sound", "Pin", "Wallpaper",
-                       controller.pillMode ? "Pill Mode" : "Notch Mode", "Monitor"]
+                       controller.pillMode ? "Pill Mode" : "Notch Mode", "Monitor",
+                       "Liquid Glass"]
         return names[Math.max(0, Math.min(names.length - 1, index))]
     }
 
@@ -153,6 +155,8 @@ Item {
             return controller.pillMode
         if (index === 7)
             return controller.monitorEnabled
+        if (index === 8)
+            return controller.liquidGlassEnabled
         return false
     }
 
@@ -173,6 +177,8 @@ Item {
             controller.togglePillMode()
         else if (index === 7)
             controller.toggleMonitorEnabled()
+        else if (index === 8)
+            controller.toggleLiquidGlassEnabled()
     }
 
     function stepUtility(direction) {
@@ -868,7 +874,6 @@ Item {
             fontWeight: Font.Medium
             letterSpacing: -0.5
             reducedMotion: root.reducedMotion
-            rollDirection: 1
             scale: 0.72 + root.revealProgress * 0.28
             transform: Translate { y: -7 * (1 - root.revealProgress) }
         }
@@ -1261,6 +1266,7 @@ Item {
                 ListElement { utilityIndex: 5; iconPath: "../assets/icons/wallpaper-light.svg"; invertedPath: "../assets/icons/wallpaper-dark.svg"; usesDwindle: false; usesShellMode: false }
                 ListElement { utilityIndex: 6; iconPath: ""; invertedPath: ""; usesDwindle: false; usesShellMode: true }
                 ListElement { utilityIndex: 7; iconPath: "../assets/icons/monitor-light.svg"; invertedPath: "../assets/icons/monitor-dark.svg"; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 8; iconPath: "../assets/icons/liquid-glass-light.svg"; invertedPath: "../assets/icons/liquid-glass-dark.svg"; usesDwindle: false; usesShellMode: false }
             }
 
             Item {
@@ -1448,7 +1454,6 @@ Item {
                 fontPixelSize: 9
                 fontWeight: Font.DemiBold
                 reducedMotion: root.reducedMotion
-                rollDirection: controller.droppedFileCount < root.displayedFileCount ? -1 : 1
             }
         }
 

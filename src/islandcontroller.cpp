@@ -638,6 +638,8 @@ IslandController::IslandController(QObject *parent)
     : QObject(parent), m_platform(std::make_shared<PlatformState>())
 {
     m_pillMode = QSettings().value(QStringLiteral("appearance/pillMode"), false).toBool();
+    m_liquidGlassEnabled = QSettings().value(
+        QStringLiteral("appearance/liquidGlassEnabled"), false).toBool();
     m_monitorEnabled = QSettings().value(QStringLiteral("appearance/monitorEnabled"), false).toBool();
     m_wallpaperIndex = qBound(0,
                               QSettings().value(QStringLiteral("wallpaper/index"), 0).toInt(),
@@ -737,6 +739,22 @@ void IslandController::setPillMode(bool pillMode)
 void IslandController::togglePillMode()
 {
     setPillMode(!m_pillMode);
+}
+
+void IslandController::setLiquidGlassEnabled(bool enabled)
+{
+    if (m_liquidGlassEnabled == enabled) {
+        return;
+    }
+    m_liquidGlassEnabled = enabled;
+    QSettings().setValue(QStringLiteral("appearance/liquidGlassEnabled"),
+                         m_liquidGlassEnabled);
+    emit liquidGlassEnabledChanged();
+}
+
+void IslandController::toggleLiquidGlassEnabled()
+{
+    setLiquidGlassEnabled(!m_liquidGlassEnabled);
 }
 
 void IslandController::setMonitorEnabled(bool enabled)

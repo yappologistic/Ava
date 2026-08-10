@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick 6.5
+import Ava 1.0
 
 Item {
     id: root
@@ -14,18 +15,31 @@ Item {
     property bool reducedMotion: false
     property int staggerMs: 18
     property bool staggerFromRight: true
-    // Positive values roll forward; negative values roll backward for countdowns.
-    property int rollDirection: 1
+    property string widthReference: ""
+    property string slotReference: widthReference
+    property int horizontalAlignment: Text.AlignLeft
 
     readonly property real digitWidth: Math.ceil(digitMetrics.advanceWidth)
     readonly property real colonWidth: Math.ceil(colonMetrics.advanceWidth)
     readonly property real percentWidth: Math.ceil(percentMetrics.advanceWidth)
-    // Keep both glyphs within one optical line during multi-digit boundaries
-    // (for example 15:00 -> 14:59) so the value reads as a morph, not two rows.
-    readonly property real rollDistance: Math.max(3, Math.round(implicitHeight * 0.12))
+    readonly property int cellCount: Math.max(text.length,
+                                               widthReference.length,
+                                               slotReference.length)
 
     function isDigit(character) {
         return character >= "0" && character <= "9"
+    }
+
+    function canDissolve(character) {
+        return character === " " || isDigit(character)
+    }
+
+    function characterAtCell(index) {
+        const offset = horizontalAlignment === Text.AlignRight
+                       ? cellCount - text.length : 0
+        if (index < offset || index >= offset + text.length)
+            return " "
+        return text.charAt(index - offset)
     }
 
     function characterWidth(character) {
@@ -45,7 +59,7 @@ Item {
         return Math.max(0, result)
     }
 
-    implicitWidth: measuredWidth(text)
+    implicitWidth: Math.max(measuredWidth(text), measuredWidth(widthReference))
     implicitHeight: Math.ceil(typeMetrics.height)
     width: implicitWidth
     height: implicitHeight
@@ -87,22 +101,30 @@ Item {
     }
 
     Row {
-        anchors.fill: parent
+        id: glyphRow
+
+        x: root.horizontalAlignment === Text.AlignRight
+           ? root.width - width
+           : (root.horizontalAlignment === Text.AlignHCenter
+              ? (root.width - width) / 2 : 0)
+        anchors.verticalCenter: parent.verticalCenter
+        width: implicitWidth
+        height: parent.height
         spacing: root.letterSpacing
 
         Repeater {
-            model: root.text.length
+            model: root.cellCount
 
             Item {
                 id: digitCell
                 required property int index
-                property string observedCharacter: root.text.charAt(index)
+                property string observedCharacter: root.characterAtCell(index)
                 property string settledCharacter: ""
                 property string incomingCharacter: ""
                 property bool ready: false
                 readonly property int transitionDelay: root.staggerMs <= 0 ? 0
                     : (root.staggerFromRight
-                       ? (root.text.length - 1 - index) * root.staggerMs
+                       ? (root.cellCount - 1 - index) * root.staggerMs
                        : index * root.staggerMs)
 
                 width: root.characterWidth(observedCharacter)
@@ -116,12 +138,11 @@ Item {
 
                 onObservedCharacterChanged: {
                     if (!ready || root.reducedMotion
-                            || !root.isDigit(settledCharacter)
-                            || !root.isDigit(observedCharacter)) {
-                        roll.stop()
+                            || !root.canDissolve(settledCharacter)
+                            || !root.canDissolve(observedCharacter)) {
+                        dissolve.stop()
                         settledCharacter = observedCharacter
                         incomingCharacter = ""
-                        outgoing.y = 0
                         outgoing.opacity = 1
                         outgoing.scale = 1
                         incoming.opacity = 0
@@ -131,15 +152,16 @@ Item {
                     if (settledCharacter === observedCharacter)
                         return
 
-                    roll.stop()
+                    if (dissolve.running && incoming.opacity >= outgoing.opacity
+                            && incomingCharacter.length > 0)
+                        settledCharacter = incomingCharacter
+                    dissolve.stop()
                     incomingCharacter = observedCharacter
-                    incoming.y = root.rollDirection * root.rollDistance
                     incoming.opacity = 0
-                    incoming.scale = 1.025
-                    outgoing.y = 0
+                    incoming.scale = 0.975
                     outgoing.opacity = 1
                     outgoing.scale = 1
-                    roll.start()
+                    dissolve.start()
                 }
 
                 Text {
@@ -153,12 +175,17 @@ Item {
                     font.weight: root.fontWeight
                     font.features: { "tnum": 1 }
                     renderType: Text.QtRendering
+
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: root.reducedMotion ? 0 : MotionTokens.hover
+                        }
+                    }
                 }
 
                 Text {
                     id: incoming
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: root.rollDirection * root.rollDistance
                     text: digitCell.incomingCharacter
                     color: root.color
                     opacity: 0
@@ -167,21 +194,17 @@ Item {
                     font.weight: root.fontWeight
                     font.features: { "tnum": 1 }
                     renderType: Text.QtRendering
+
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: root.reducedMotion ? 0 : MotionTokens.hover
+                        }
+                    }
                 }
 
                 ParallelAnimation {
-                    id: roll
+                    id: dissolve
 
-                    SequentialAnimation {
-                        PauseAnimation { duration: digitCell.transitionDelay }
-                        NumberAnimation {
-                            target: outgoing
-                            property: "y"
-                            to: -root.rollDirection * root.rollDistance
-                            duration: MotionTokens.state
-                            easing.type: Easing.InCubic
-                        }
-                    }
                     SequentialAnimation {
                         PauseAnimation { duration: digitCell.transitionDelay }
                         NumberAnimation {
@@ -189,17 +212,7 @@ Item {
                             property: "opacity"
                             to: 0
                             duration: MotionTokens.state
-                            easing.type: Easing.InCubic
-                        }
-                    }
-                    SequentialAnimation {
-                        PauseAnimation { duration: digitCell.transitionDelay }
-                        NumberAnimation {
-                            target: incoming
-                            property: "y"
-                            to: 0
-                            duration: MotionTokens.state
-                            easing.type: MotionTokens.easeOut
+                            easing.type: Easing.InOutQuad
                         }
                     }
                     SequentialAnimation {
@@ -218,9 +231,9 @@ Item {
                             target: outgoing
                             property: "scale"
                             from: 1
-                            to: 0.97
+                            to: 0.985
                             duration: MotionTokens.state
-                            easing.type: Easing.InCubic
+                            easing.type: Easing.InOutQuad
                         }
                     }
                     SequentialAnimation {
@@ -228,7 +241,7 @@ Item {
                         NumberAnimation {
                             target: incoming
                             property: "scale"
-                            from: 1.025
+                            from: 0.975
                             to: 1
                             duration: MotionTokens.state
                             easing.type: MotionTokens.easeOut
@@ -238,7 +251,6 @@ Item {
                     onFinished: {
                         digitCell.settledCharacter = digitCell.incomingCharacter
                         digitCell.incomingCharacter = ""
-                        outgoing.y = 0
                         outgoing.opacity = 1
                         outgoing.scale = 1
                         incoming.opacity = 0

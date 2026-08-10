@@ -14,6 +14,7 @@ class IslandController final : public QObject
     Q_PROPERTY(bool expanded READ expanded WRITE setExpanded NOTIFY expandedChanged)
     Q_PROPERTY(bool pinned READ pinned WRITE setPinned NOTIFY pinnedChanged)
     Q_PROPERTY(bool pillMode READ pillMode WRITE setPillMode NOTIFY pillModeChanged)
+    Q_PROPERTY(bool liquidGlassEnabled READ liquidGlassEnabled WRITE setLiquidGlassEnabled NOTIFY liquidGlassEnabledChanged)
     Q_PROPERTY(bool monitorEnabled READ monitorEnabled WRITE setMonitorEnabled NOTIFY monitorEnabledChanged)
     Q_PROPERTY(bool reducedMotion READ reducedMotion NOTIFY reducedMotionChanged)
 
@@ -79,6 +80,7 @@ public:
     bool expanded() const { return m_expanded; }
     bool pinned() const { return m_pinned; }
     bool pillMode() const { return m_pillMode; }
+    bool liquidGlassEnabled() const { return m_liquidGlassEnabled; }
     bool monitorEnabled() const { return m_monitorEnabled; }
     bool reducedMotion() const { return m_reducedMotion; }
 
@@ -144,6 +146,8 @@ public slots:
     void togglePinned();
     void setPillMode(bool pillMode);
     void togglePillMode();
+    void setLiquidGlassEnabled(bool enabled);
+    void toggleLiquidGlassEnabled();
     void setMonitorEnabled(bool enabled);
     void toggleMonitorEnabled();
     void openMonitorDetails();
@@ -176,6 +180,7 @@ signals:
     void expandedChanged();
     void pinnedChanged();
     void pillModeChanged();
+    void liquidGlassEnabledChanged();
     void monitorEnabledChanged();
     void monitorDetailsChanged();
     void reducedMotionChanged();
@@ -219,6 +224,7 @@ private:
     bool m_expanded = false;
     bool m_pinned = false;
     bool m_pillMode = false;
+    bool m_liquidGlassEnabled = false;
     bool m_monitorEnabled = false;
     bool m_monitorDetailsOpen = false;
     bool m_reducedMotion = false;

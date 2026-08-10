@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick 6.5
+import Ava 1.0
 
 Item {
     id: root

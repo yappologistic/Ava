@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick 6.5
+import Ava 1.0
 
 Item {
     id: root
@@ -49,14 +50,52 @@ Item {
         property bool charging: false
         property bool interactive: false
         readonly property bool hovered: pointer.containsMouse
+        readonly property bool pressed: pointer.pressed
         signal activated()
 
-        width: iconHost.width + 4 + valueRow.width
+        width: iconHost.width + 4 + valueHost.width
         height: 18
+        scale: interactive
+               ? (pressed ? 0.965 : ((hovered || activeFocus) ? 1.025 : 1))
+               : 1
+        transformOrigin: Item.Center
         Accessible.name: accessibleName + " " + value + suffix
         Accessible.description: interactive ? "Open system monitor details" : ""
         Accessible.role: interactive ? Accessible.Button : Accessible.StaticText
         activeFocusOnTab: interactive
+
+        Behavior on scale {
+            NumberAnimation {
+                duration: root.reducedMotion ? 0
+                                            : (readout.pressed
+                                               ? MotionTokens.press
+                                               : MotionTokens.hover)
+                easing.type: MotionTokens.easeOut
+            }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.margins: -4
+            radius: 7
+            color: root.colors.accent
+            opacity: readout.interactive && (readout.hovered || readout.activeFocus)
+                     ? (readout.pressed ? 0.13 : 0.08) : 0
+            scale: readout.hovered || readout.activeFocus ? 1 : 0.92
+
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.hover
+                    easing.type: MotionTokens.easeOut
+                }
+            }
+            Behavior on scale {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.hover
+                    easing.type: MotionTokens.easeOut
+                }
+            }
+        }
 
         Keys.onPressed: function(event) {
             if (interactive
@@ -144,16 +183,24 @@ Item {
             }
         }
 
-        Row {
-            id: valueRow
+        Item {
+            id: valueHost
             x: iconHost.width + 4
             anchors.verticalCenter: parent.verticalCenter
-            width: digits.width
-                   + (suffixText.visible ? spacing + suffixText.implicitWidth : 0)
-            spacing: 1.5
+            width: digits.measuredWidth(readout.value)
+                   + (suffixText.visible ? 1.5 + suffixText.implicitWidth : 0)
+            height: parent.height
+
+            Behavior on width {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.state
+                    easing.type: MotionTokens.easeOut
+                }
+            }
 
             RollingDigits {
                 id: digits
+                anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 text: readout.value
                 color: readout.interactive && (readout.hovered || readout.activeFocus)
@@ -164,11 +211,13 @@ Item {
                 letterSpacing: -0.3
                 staggerMs: 12
                 reducedMotion: root.reducedMotion
-                rollDirection: 1
+                slotReference: "100"
+                horizontalAlignment: Text.AlignLeft
             }
 
             Text {
                 id: suffixText
+                x: digits.measuredWidth(readout.value) + 1.5
                 anchors.verticalCenter: parent.verticalCenter
                 visible: text.length > 0
                 text: readout.suffix
@@ -178,6 +227,18 @@ Item {
                 font.pixelSize: 12
                 font.weight: Font.DemiBold
                 font.letterSpacing: -0.1
+
+                Behavior on color {
+                    ColorAnimation {
+                        duration: root.reducedMotion ? 0 : MotionTokens.hover
+                    }
+                }
+                Behavior on x {
+                    NumberAnimation {
+                        duration: root.reducedMotion ? 0 : MotionTokens.state
+                        easing.type: MotionTokens.easeOut
+                    }
+                }
             }
         }
     }
@@ -191,6 +252,13 @@ Item {
         width: implicitWidth
         spacing: 10
 
+        Behavior on width {
+            NumberAnimation {
+                duration: root.reducedMotion ? 0 : MotionTokens.state
+                easing.type: MotionTokens.easeOut
+            }
+        }
+
         RollingDigits {
             anchors.verticalCenter: parent.verticalCenter
             text: root.controller.timeText
@@ -200,7 +268,6 @@ Item {
             fontWeight: Font.DemiBold
             letterSpacing: -0.35
             reducedMotion: root.reducedMotion
-            rollDirection: 1
         }
 
         Divider { anchors.verticalCenter: parent.verticalCenter }

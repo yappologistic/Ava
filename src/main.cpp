@@ -9,6 +9,8 @@
 #include <QPainterPath>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
+#include <QScreen>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QPointer>
@@ -21,8 +23,10 @@
 #include <cmath>
 
 #include "applauncher.h"
-#include "islandcontroller.h"
 #include "codexbridge.h"
+#include "islandcontroller.h"
+#include "liquidglassbackdrop.h"
+#include "liquidglasstextureitem.h"
 #include "windowtilingmanager.h"
 
 #ifdef Q_OS_WIN
@@ -173,6 +177,12 @@ int main(int argc, char *argv[])
     QFontDatabase::addApplicationFont(
         QStringLiteral(":/qt/qml/Ava/assets/fonts/GeistMono[wght].ttf"));
     QQuickStyle::setStyle(QStringLiteral("Basic"));
+#ifdef Q_OS_WIN
+    // The live glass backdrop is shared directly from Windows Graphics Capture into
+    // the Qt scene graph. Pinning the backend to D3D11 keeps that path zero-copy.
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
+    LiquidGlassTextureItem::prewarmShaders();
+#endif
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral("Ava, a live-activity island for Windows 11"));
@@ -260,10 +270,12 @@ int main(int argc, char *argv[])
 #else
     const bool automationMode = qEnvironmentVariableIntValue("AVA_AUTOMATION_MODE") == 1;
 #endif
+    const bool liveGlassQa = qEnvironmentVariableIntValue("AVA_LIQUID_GLASS_QA") == 1;
 
     IslandController controller;
     AppLauncher appLauncher;
     CodexBridge codexBridge;
+    LiquidGlassBackdrop liquidGlassBackdrop;
     WindowTilingManager tilingManager;
     if (parser.isSet(codexWorkspaceOption)) {
         codexBridge.setWorkspacePath(parser.value(codexWorkspaceOption));
@@ -313,16 +325,21 @@ int main(int argc, char *argv[])
     }
 
     QQmlApplicationEngine engine;
+    qmlRegisterType<LiquidGlassTextureItem>("Ava", 1, 0, "LiquidGlassTexture");
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
     engine.rootContext()->setContextProperty(QStringLiteral("appLauncher"), &appLauncher);
     engine.rootContext()->setContextProperty(QStringLiteral("codexBridge"), &codexBridge);
+    engine.rootContext()->setContextProperty(QStringLiteral("liquidGlassBackdrop"),
+                                             &liquidGlassBackdrop);
     engine.rootContext()->setContextProperty(QStringLiteral("tilingManager"), &tilingManager);
     engine.rootContext()->setContextProperty(QStringLiteral("qaBackdrop"),
-                                             parser.isSet(screenshotOption) || automationMode);
+                                             (parser.isSet(screenshotOption) || automationMode)
+                                                 && !liveGlassQa);
     engine.rootContext()->setContextProperty(
         QStringLiteral("qaMode"),
         parser.isSet(screenshotOption) || parser.isSet(motionReportOption));
     engine.rootContext()->setContextProperty(QStringLiteral("automationMode"), automationMode);
+    engine.rootContext()->setContextProperty(QStringLiteral("liveGlassQa"), liveGlassQa);
     engine.rootContext()->setContextProperty(QStringLiteral("qaUtilityMenu"),
                                              parser.isSet(utilityMenuOption));
     engine.loadFromModule(QStringLiteral("Ava"), QStringLiteral("Main"));
@@ -336,6 +353,7 @@ int main(int argc, char *argv[])
     if (!rootWindow) {
         return -2;
     }
+    liquidGlassBackdrop.attachWindow(rootWindow, rootObject);
     if (parser.isSet(mediaPeekOption) && parser.isSet(screenshotOption)) {
         rootObject->setProperty("mediaPeekActive", true);
     }
@@ -448,7 +466,19 @@ int main(int argc, char *argv[])
                                       || controller.monitorEnabled() ? 2400
                                   : (parser.isSet(mediaPeekOption) ? 1600 : 1000);
         QTimer::singleShot(screenshotDelay, &app, [rootWindow, rootObject, screenshotPath, &app]() {
-            const QImage fullImage = rootWindow->grabWindow();
+            QImage fullImage;
+            if (qEnvironmentVariableIntValue("AVA_COMPOSITE_SCREENSHOT_QA") == 1
+                && rootWindow->screen()) {
+                fullImage = rootWindow->screen()
+                                ->grabWindow(0,
+                                             rootWindow->x(),
+                                             rootWindow->y(),
+                                              rootWindow->width(),
+                                              rootWindow->height())
+                                .toImage();
+            } else {
+                fullImage = rootWindow->grabWindow();
+            }
             const qreal scale = qMax<qreal>(1.0, fullImage.devicePixelRatio());
             const int cropWidth = qRound(rootObject->property("islandCaptureWidth").toReal() * scale);
             const int cropHeight = qRound(rootObject->property("islandCaptureHeight").toReal() * scale);

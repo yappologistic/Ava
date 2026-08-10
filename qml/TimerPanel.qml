@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick 6.5
 import QtQuick.Controls 6.5
+import Ava 1.0
 
 Item {
     id: root
@@ -267,7 +268,6 @@ Item {
             fontWeight: Font.Light
             letterSpacing: -1.5
             reducedMotion: root.reducedMotion
-            rollDirection: 1
             opacity: 1 - Math.max(0, root.timerLaunchProgress - 0.58) / 0.42
             scale: 1 - root.timerLaunchProgress * 0.38
             transformOrigin: Item.Center
@@ -421,7 +421,6 @@ Item {
                     fontWeight: Font.Light
                     letterSpacing: -1.5
                     reducedMotion: root.reducedMotion
-                    rollDirection: -1
                 }
             }
         }
