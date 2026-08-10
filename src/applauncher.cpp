@@ -11,10 +11,12 @@
 #include <QMetaObject>
 #include <QPointer>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
 #include <QThreadPool>
 #include <QTimer>
+#include <QUrl>
 
 #include <algorithm>
 #include <cstring>
@@ -39,6 +41,72 @@ struct ScanResult
     QVector<AppLauncher::AppEntry> entries;
     QString error;
 };
+
+constexpr int kDirectEntryIndex = -1;
+
+QString unquoteQuery(QString query)
+{
+    query = query.trimmed();
+    if (query.size() >= 2 && query.front() == QLatin1Char('"')
+        && query.back() == QLatin1Char('"')) {
+        query = query.sliced(1, query.size() - 2).trimmed();
+    }
+    return query;
+}
+
+QString expandPathVariables(QString path)
+{
+    if (path.startsWith(QStringLiteral("~\\"))
+        || path.startsWith(QStringLiteral("~/"))) {
+        path.replace(0, 1, QDir::homePath());
+    }
+#ifdef Q_OS_WIN
+    const DWORD required = ExpandEnvironmentStringsW(
+        reinterpret_cast<LPCWSTR>(path.utf16()), nullptr, 0);
+    if (required == 0) {
+        return path;
+    }
+    QString expanded(static_cast<qsizetype>(required), Qt::Uninitialized);
+    const DWORD written = ExpandEnvironmentStringsW(
+        reinterpret_cast<LPCWSTR>(path.utf16()),
+        reinterpret_cast<LPWSTR>(expanded.data()),
+        required);
+    if (written == 0 || written > required) {
+        return path;
+    }
+    expanded.resize(static_cast<qsizetype>(written - 1));
+    return expanded;
+#else
+    return path;
+#endif
+}
+
+std::optional<QUrl> webUrlForQuery(const QString &query)
+{
+    const QUrl explicitUrl(query, QUrl::StrictMode);
+    const QString scheme = explicitUrl.scheme().toCaseFolded();
+    if (explicitUrl.isValid()
+        && (((scheme == QStringLiteral("http")
+              || scheme == QStringLiteral("https")
+              || scheme == QStringLiteral("ftp"))
+             && !explicitUrl.host().isEmpty())
+            || (scheme == QStringLiteral("mailto")
+                && !explicitUrl.path().isEmpty()))) {
+        return explicitUrl;
+    }
+
+    static const QRegularExpression bareAddress(QStringLiteral(
+        R"(^((?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}|localhost|(?:\d{1,3}\.){3}\d{1,3})(?::\d{1,5})?(?:[/?#][^\s]*)?$)"));
+    if (!bareAddress.match(query).hasMatch()) {
+        return std::nullopt;
+    }
+
+    const QUrl inferred(QStringLiteral("https://") + query, QUrl::StrictMode);
+    if (!inferred.isValid() || inferred.host().isEmpty()) {
+        return std::nullopt;
+    }
+    return inferred;
+}
 
 #ifdef Q_OS_WIN
 using Microsoft::WRL::ComPtr;
@@ -483,6 +551,64 @@ QString usageKey(const QString &id)
 
 } // namespace
 
+std::optional<AppLauncher::AppEntry> AppLauncher::directEntryForQuery(
+    const QString &query)
+{
+    const QString candidate = unquoteQuery(query);
+    if (candidate.isEmpty()) {
+        return std::nullopt;
+    }
+
+    if (const std::optional<QUrl> url = webUrlForQuery(candidate)) {
+        AppEntry entry;
+        entry.id = QStringLiteral("ava:direct-url");
+        const QString destination = url->host().isEmpty()
+            ? url->path() : url->host();
+        entry.name = QStringLiteral("Open %1").arg(destination);
+        entry.launchTarget = url->toString(QUrl::FullyEncoded);
+        entry.subtitle = url->toDisplayString(QUrl::RemovePassword);
+        entry.iconSource = QStringLiteral(
+            "qrc:/qt/qml/Ava/assets/icons/launcher-link.svg");
+        entry.searchText = (entry.name + QLatin1Char(' ') + entry.subtitle)
+                               .toCaseFolded();
+        return entry;
+    }
+
+    QString pathCandidate = candidate;
+    const QUrl localUrl(candidate, QUrl::StrictMode);
+    if (localUrl.isValid() && localUrl.isLocalFile()) {
+        pathCandidate = localUrl.toLocalFile();
+    }
+    pathCandidate = expandPathVariables(pathCandidate);
+    if (!QDir::isAbsolutePath(pathCandidate)) {
+        return std::nullopt;
+    }
+
+    const QFileInfo fileInfo(QDir::cleanPath(pathCandidate));
+    if (!fileInfo.exists()) {
+        return std::nullopt;
+    }
+
+    const QString absolutePath = QDir::toNativeSeparators(
+        fileInfo.absoluteFilePath());
+    QString displayName = fileInfo.fileName();
+    if (displayName.isEmpty()) {
+        displayName = absolutePath;
+    }
+
+    AppEntry entry;
+    entry.id = QStringLiteral("ava:direct-path");
+    entry.name = QStringLiteral("Open %1").arg(displayName);
+    entry.subtitle = absolutePath;
+    entry.launchTarget = absolutePath;
+    entry.iconSource = fileInfo.isDir()
+        ? QStringLiteral("qrc:/qt/qml/Ava/assets/icons/launcher-folder.svg")
+        : QStringLiteral("qrc:/qt/qml/Ava/assets/icons/launcher-file.svg");
+    entry.searchText = (entry.name + QLatin1Char(' ') + entry.subtitle)
+                           .toCaseFolded();
+    return entry;
+}
+
 AppLauncher::AppLauncher(QObject *parent)
     : QAbstractListModel(parent)
 {
@@ -505,16 +631,23 @@ QVariant AppLauncher::data(const QModelIndex &index, int role) const
         || index.row() >= m_filteredIndices.size()) {
         return {};
     }
-    const AppEntry &entry = m_entries.at(m_filteredIndices.at(index.row()));
+    const int entryIndex = m_filteredIndices.at(index.row());
+    const AppEntry *entry = entryIndex == kDirectEntryIndex
+        ? (m_directEntry ? &*m_directEntry : nullptr)
+        : (entryIndex >= 0 && entryIndex < m_entries.size()
+               ? &m_entries.at(entryIndex) : nullptr);
+    if (!entry) {
+        return {};
+    }
     switch (role) {
     case AppIdRole:
-        return entry.id;
+        return entry->id;
     case AppNameRole:
-        return entry.name;
+        return entry->name;
     case SubtitleRole:
-        return entry.subtitle;
+        return entry->subtitle;
     case IconSourceRole:
-        return entry.iconSource;
+        return entry->iconSource;
     default:
         return {};
     }
@@ -724,24 +857,35 @@ bool AppLauncher::launch(int row)
     if (row < 0 || row >= m_filteredIndices.size()) {
         return false;
     }
-    AppEntry &entry = m_entries[m_filteredIndices.at(row)];
+    const int entryIndex = m_filteredIndices.at(row);
+    const bool directEntry = entryIndex == kDirectEntryIndex;
+    AppEntry *entry = directEntry
+        ? (m_directEntry ? &*m_directEntry : nullptr)
+        : (entryIndex >= 0 && entryIndex < m_entries.size()
+               ? &m_entries[entryIndex] : nullptr);
+    if (!entry) {
+        return false;
+    }
 #ifdef Q_OS_WIN
-    const bool launched = entry.id == QStringLiteral("ava:ai-chat")
-        ? QProcess::startDetached(entry.launchTarget, {})
-        : launchShellTarget(entry.id, entry.launchTarget);
+    const bool launched = entry->id == QStringLiteral("ava:ai-chat")
+        ? QProcess::startDetached(entry->launchTarget, {})
+        : launchShellTarget(directEntry ? QString() : entry->id,
+                            entry->launchTarget);
 #else
     const bool launched = false;
 #endif
     if (!launched) {
         const QString reason = QStringLiteral("Couldn’t open %1. Try again.")
-                                   .arg(entry.name);
+                                   .arg(entry->name);
         setErrorMessage(reason);
-        emit launchFailed(entry.name, reason);
+        emit launchFailed(entry->name, reason);
         return false;
     }
 
-    recordUsage(entry);
-    const QString launchedName = entry.name;
+    if (!directEntry) {
+        recordUsage(*entry);
+    }
+    const QString launchedName = entry->name;
     closeInternal(false);
     emit applicationLaunched(launchedName);
     return true;
@@ -777,6 +921,7 @@ void AppLauncher::applyEntries(QVector<AppEntry> entries)
 void AppLauncher::rebuildResults()
 {
     const QString normalizedQuery = m_query.simplified().toCaseFolded();
+    const std::optional<AppEntry> directEntry = directEntryForQuery(m_query);
     QVector<QPair<int, int>> scored;
     scored.reserve(m_entries.size());
     for (int index = 0; index < m_entries.size(); ++index) {
@@ -806,8 +951,12 @@ void AppLauncher::rebuildResults()
     });
 
     beginResetModel();
+    m_directEntry = directEntry;
     m_filteredIndices.clear();
-    m_filteredIndices.reserve(scored.size());
+    m_filteredIndices.reserve(scored.size() + (m_directEntry ? 1 : 0));
+    if (m_directEntry) {
+        m_filteredIndices.append(kDirectEntryIndex);
+    }
     for (const auto &match : std::as_const(scored)) {
         m_filteredIndices.append(match.second);
     }

@@ -186,6 +186,9 @@ qt_add_qml_module(Ava
         assets/icons/monitor-battery-warning.svg
         assets/icons/monitor-battery-danger.svg
         assets/icons/monitor-battery-charging.svg
+        assets/icons/launcher-link.svg
+        assets/icons/launcher-folder.svg
+        assets/icons/launcher-file.svg
         assets/wallpapers/runtime/01-alpine-first-light.jpg
         assets/wallpapers/runtime/02-volcanic-coast-after-rain.jpg
         assets/wallpapers/runtime/03-redwood-creek-mist.jpg
@@ -249,6 +252,17 @@ qt_generate_deploy_qml_app_script(
 install(SCRIPT ${ava_chat_deploy_script})
 
 if (BUILD_TESTING)
+    qt_add_executable(tst_applauncher
+        tests/tst_applauncher.cpp
+        src/applauncher.cpp
+        src/applauncher.h)
+    target_include_directories(tst_applauncher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(tst_applauncher PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+    if (WIN32)
+        target_link_libraries(tst_applauncher PRIVATE user32 shell32 ole32 propsys)
+    endif()
+    add_test(NAME app_launcher COMMAND tst_applauncher)
+
     qt_add_executable(tst_codexmodels tests/tst_codexmodels.cpp)
     target_link_libraries(tst_codexmodels PRIVATE AvaCodexCore Qt6::Test)
     add_test(NAME codex_models COMMAND tst_codexmodels)

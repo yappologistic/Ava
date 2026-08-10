@@ -7,6 +7,8 @@
 #include <QString>
 #include <QVector>
 
+#include <optional>
+
 class AppLauncher final : public QAbstractListModel,
                           public QAbstractNativeEventFilter
 {
@@ -43,6 +45,8 @@ public:
 
     explicit AppLauncher(QObject *parent = nullptr);
     ~AppLauncher() override;
+
+    static std::optional<AppEntry> directEntryForQuery(const QString &query);
 
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role) const override;
@@ -96,6 +100,7 @@ private:
 
     QVector<AppEntry> m_entries;
     QVector<int> m_filteredIndices;
+    std::optional<AppEntry> m_directEntry;
     QString m_query;
     QString m_errorMessage;
     bool m_open = false;
