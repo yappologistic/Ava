@@ -5,6 +5,15 @@
     width="100%">
 </p>
 
+<p align="center">
+  <a href="https://buymeacoffee.com/e_gurl">
+    <img
+      src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+      alt="Buy me a coffee"
+      width="217">
+  </a>
+</p>
+
 # Ava
 
 Ava is a native Windows 11 productivity project built with Qt 6, QML, C++, and
@@ -239,11 +248,6 @@ exercise the shipping QML layout without replacing the real runtime integration.
 - `tests/`: focused native tests plus the opt-in authenticated Codex E2E.
 - `assets/fonts/` and `assets/icons/`: bundled fonts, licenses, Fluent icons,
   and Ava-specific artwork.
-
-## Support Ava
-
-If Ava is useful to you, you can support its continued development on
-[Buy Me a Coffee](https://buymeacoffee.com/e_gurl).
 
 ## License
 
