@@ -12,6 +12,11 @@ Window {
            | (automationMode ? Qt.Window : Qt.Tool)
     title: appLauncher.open ? "Ava Launcher" : "Ava"
 
+    EnhancedAltTabWindow {
+        manager: enhancedTabsManager
+        reducedMotion: controller.reducedMotion
+    }
+
     readonly property string uiFont: "Inter"
     readonly property string monoFont: "Geist Mono"
     readonly property string iconFont: "Segoe Fluent Icons"

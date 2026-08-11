@@ -23,6 +23,14 @@ qt_add_executable(Ava
     src/applauncher.h
     src/emojipickermodel.cpp
     src/emojipickermodel.h
+    src/enhancedtabcaptureworker.cpp
+    src/enhancedtabcaptureworker.h
+    src/enhancedtabslogic.h
+    src/enhancedtabsmanager.cpp
+    src/enhancedtabsmanager.h
+    src/enhancedtabtexture.h
+    src/enhancedtabtextureitem.cpp
+    src/enhancedtabtextureitem.h
     src/codexbridge.cpp
     src/codexbridge.h
     src/islandcontroller.cpp
@@ -146,6 +154,7 @@ qt_add_qml_module(Ava
         qml/Main.qml
         qml/AppLauncherPanel.qml
         qml/EmojiPickerPanel.qml
+        qml/EnhancedAltTabWindow.qml
         qml/ExpandedPanel.qml
         qml/TimerPanel.qml
         qml/IslandButton.qml
@@ -204,6 +213,8 @@ qt_add_qml_module(Ava
         assets/icons/monitor-battery-charging.svg
         assets/icons/liquid-glass-light.svg
         assets/icons/liquid-glass-dark.svg
+        assets/icons/enhanced-tabs-light.svg
+        assets/icons/enhanced-tabs-dark.svg
         assets/icons/launcher-link.svg
         assets/icons/launcher-folder.svg
         assets/icons/launcher-file.svg
@@ -300,6 +311,11 @@ if (BUILD_TESTING)
         target_link_libraries(tst_applauncher PRIVATE user32 shell32 ole32 propsys)
     endif()
     add_test(NAME app_launcher COMMAND tst_applauncher)
+
+    qt_add_executable(tst_enhancedtabslogic tests/tst_enhancedtabslogic.cpp)
+    target_include_directories(tst_enhancedtabslogic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(tst_enhancedtabslogic PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME enhanced_tabs COMMAND tst_enhancedtabslogic)
 
     qt_add_executable(tst_emojipickermodel
         tests/tst_emojipickermodel.cpp

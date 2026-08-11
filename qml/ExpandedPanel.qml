@@ -137,7 +137,7 @@ Item {
     function utilityMenuName(index) {
         const names = ["Codex", "Timer", "Dwindle", "Sound", "Pin", "Wallpaper",
                        controller.pillMode ? "Pill Mode" : "Notch Mode", "Monitor",
-                       "Liquid Glass"]
+                       "Liquid Glass", "Enhanced Alt-Tab"]
         return names[Math.max(0, Math.min(names.length - 1, index))]
     }
 
@@ -158,6 +158,8 @@ Item {
             return controller.monitorEnabled
         if (index === 8)
             return controller.liquidGlassEnabled
+        if (index === 9)
+            return enhancedTabsManager.enabled
         return false
     }
 
@@ -180,6 +182,8 @@ Item {
             controller.toggleMonitorEnabled()
         else if (index === 8)
             controller.toggleLiquidGlassEnabled()
+        else if (index === 9)
+            enhancedTabsManager.toggleEnabled()
     }
 
     function stepUtility(direction) {
@@ -1288,6 +1292,7 @@ Item {
                 ListElement { utilityIndex: 6; iconPath: ""; invertedPath: ""; usesDwindle: false; usesShellMode: true }
                 ListElement { utilityIndex: 7; iconPath: "../assets/icons/monitor-light.svg"; invertedPath: "../assets/icons/monitor-dark.svg"; usesDwindle: false; usesShellMode: false }
                 ListElement { utilityIndex: 8; iconPath: "../assets/icons/liquid-glass-light.svg"; invertedPath: "../assets/icons/liquid-glass-dark.svg"; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 9; iconPath: "../assets/icons/enhanced-tabs-light.svg"; invertedPath: "../assets/icons/enhanced-tabs-dark.svg"; usesDwindle: false; usesShellMode: false }
             }
 
             Item {

@@ -25,6 +25,8 @@
 #include "applauncher.h"
 #include "codexbridge.h"
 #include "emojipickermodel.h"
+#include "enhancedtabsmanager.h"
+#include "enhancedtabtextureitem.h"
 #include "islandcontroller.h"
 #include "liquidglassbackdrop.h"
 #include "liquidglasstextureitem.h"
@@ -183,6 +185,7 @@ int main(int argc, char *argv[])
     // the Qt scene graph. Pinning the backend to D3D11 keeps that path zero-copy.
     QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
     LiquidGlassTextureItem::prewarmShaders();
+    EnhancedTabTextureItem::prewarmShaders();
 #endif
 
     QCommandLineParser parser;
@@ -230,6 +233,9 @@ int main(int argc, char *argv[])
     const QCommandLineOption utilityMenuOption(
         QStringLiteral("utility-menu"),
         QStringLiteral("Render the calendar utility menu for screenshot QA."));
+    const QCommandLineOption enhancedTabsPreviewOption(
+        QStringLiteral("enhanced-tabs-preview"),
+        QStringLiteral("Render Enhanced Alt-Tab using current windows for screenshot QA."));
     const QCommandLineOption codexOption(
         QStringLiteral("codex"),
         QStringLiteral("Open the Codex activity panel."));
@@ -265,6 +271,7 @@ int main(int argc, char *argv[])
     parser.addOption(emojiQueryOption);
     parser.addOption(monitorDetailsOption);
     parser.addOption(utilityMenuOption);
+    parser.addOption(enhancedTabsPreviewOption);
     parser.addOption(codexOption);
     parser.addOption(codexWorkspaceOption);
     parser.addOption(codexVisualStateOption);
@@ -288,6 +295,7 @@ int main(int argc, char *argv[])
     CodexBridge codexBridge;
     LiquidGlassBackdrop liquidGlassBackdrop;
     WindowTilingManager tilingManager;
+    EnhancedTabsManager enhancedTabsManager;
     if (parser.isSet(codexWorkspaceOption)) {
         codexBridge.setWorkspacePath(parser.value(codexWorkspaceOption));
     }
@@ -338,6 +346,7 @@ int main(int argc, char *argv[])
 
     QQmlApplicationEngine engine;
     qmlRegisterType<LiquidGlassTextureItem>("Ava", 1, 0, "LiquidGlassTexture");
+    qmlRegisterType<EnhancedTabTextureItem>("Ava", 1, 0, "EnhancedTabTexture");
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
     engine.rootContext()->setContextProperty(QStringLiteral("appLauncher"), &appLauncher);
     engine.rootContext()->setContextProperty(QStringLiteral("emojiPicker"), &emojiPicker);
@@ -345,6 +354,8 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("liquidGlassBackdrop"),
                                              &liquidGlassBackdrop);
     engine.rootContext()->setContextProperty(QStringLiteral("tilingManager"), &tilingManager);
+    engine.rootContext()->setContextProperty(QStringLiteral("enhancedTabsManager"),
+                                             &enhancedTabsManager);
     engine.rootContext()->setContextProperty(QStringLiteral("qaBackdrop"),
                                              (parser.isSet(screenshotOption) || automationMode)
                                                  && !liveGlassQa);
@@ -394,6 +405,14 @@ int main(int argc, char *argv[])
             emojiPicker.closePicker();
     });
     tilingManager.setIslandWindow(rootWindow->winId());
+    enhancedTabsManager.attachIslandWindow(rootWindow);
+    app.installNativeEventFilter(&enhancedTabsManager);
+    auto *enhancedTabsWindow = rootObject->findChild<QQuickWindow *>(
+        QStringLiteral("enhancedAltTabWindow"));
+    if (enhancedTabsWindow) {
+        enhancedTabsWindow->setPersistentGraphics(true);
+        enhancedTabsWindow->setPersistentSceneGraph(true);
+    }
     if (parser.isSet(launcherOption) || parser.isSet(emojiOption)) {
         QTimer::singleShot(80,
                            &appLauncher,
@@ -418,6 +437,11 @@ int main(int argc, char *argv[])
     if (parser.isSet(tilingOption)) {
         QTimer::singleShot(300, &tilingManager, [&tilingManager]() {
             tilingManager.setEnabled(true);
+        });
+    }
+    if (parser.isSet(enhancedTabsPreviewOption)) {
+        QTimer::singleShot(250, &enhancedTabsManager, [&enhancedTabsManager]() {
+            enhancedTabsManager.beginPreview();
         });
     }
 
@@ -504,14 +528,25 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(screenshotOption)) {
         const QString screenshotPath = QDir::cleanPath(parser.value(screenshotOption));
-        const int screenshotDelay = parser.isSet(launcherOption)
+        const int screenshotDelay = parser.isSet(enhancedTabsPreviewOption) ? 2600
+                                  : parser.isSet(launcherOption)
                                       || parser.isSet(emojiOption)
                                       || parser.isSet(monitorDetailsOption)
                                       || controller.monitorEnabled() ? 2400
                                   : (parser.isSet(mediaPeekOption) ? 1600 : 1000);
-        QTimer::singleShot(screenshotDelay, &app, [rootWindow, rootObject, screenshotPath, &app]() {
+        QTimer::singleShot(screenshotDelay,
+                           &app,
+                           [rootWindow,
+                            rootObject,
+                            enhancedTabsWindow,
+                            &enhancedTabsManager,
+                            enhancedTabsPreview = parser.isSet(enhancedTabsPreviewOption),
+                            screenshotPath,
+                            &app]() {
             QImage fullImage;
-            if (qEnvironmentVariableIntValue("AVA_COMPOSITE_SCREENSHOT_QA") == 1
+            if (enhancedTabsPreview && enhancedTabsWindow) {
+                fullImage = enhancedTabsWindow->grabWindow();
+            } else if (qEnvironmentVariableIntValue("AVA_COMPOSITE_SCREENSHOT_QA") == 1
                 && rootWindow->screen()) {
                 fullImage = rootWindow->screen()
                                 ->grabWindow(0,
@@ -522,6 +557,15 @@ int main(int argc, char *argv[])
                                 .toImage();
             } else {
                 fullImage = rootWindow->grabWindow();
+            }
+            if (enhancedTabsPreview) {
+                if (fullImage.isNull() || !fullImage.save(screenshotPath)) {
+                    app.exit(2);
+                    return;
+                }
+                enhancedTabsManager.cancel();
+                QTimer::singleShot(350, &app, &QCoreApplication::quit);
+                return;
             }
             const qreal scale = qMax<qreal>(1.0, fullImage.devicePixelRatio());
             const int cropWidth = qRound(rootObject->property("islandCaptureWidth").toReal() * scale);
