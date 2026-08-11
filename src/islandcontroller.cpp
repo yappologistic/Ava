@@ -625,6 +625,8 @@ struct IslandController::PlatformState
     ComPtr<IAudioMeterInformation> audioMeter;
     std::mutex mediaMutex;
     std::atomic_bool mediaRefreshInFlight{false};
+    std::atomic_bool systemRefreshInFlight{false};
+    std::atomic_bool systemRefreshPending{false};
     PDH_HQUERY gpuQuery = nullptr;
     PDH_HCOUNTER gpuCounter = nullptr;
     bool gpuSampleReady = false;
@@ -665,7 +667,6 @@ IslandController::IslandController(QObject *parent)
     refreshSystemState();
     QTimer::singleShot(0, this, &IslandController::refreshMedia);
     m_timer.start(1000);
-    m_audioMeterTimer.start();
     if (m_monitorEnabled) {
         QTimer::singleShot(0, this, &IslandController::refreshPerformanceState);
     }
@@ -1435,6 +1436,26 @@ void IslandController::updateAudioPeak()
 #endif
 }
 
+void IslandController::syncAudioMeterTimer()
+{
+#ifdef Q_OS_WIN
+    const bool shouldRun = m_mediaAvailable && m_mediaPlaying && !m_muted;
+    if (shouldRun) {
+        if (!m_audioMeterTimer.isActive()) {
+            m_audioMeterTimer.start();
+        }
+        return;
+    }
+
+    m_audioMeterTimer.stop();
+    const QVariantList silentLevels{0.0, 0.0, 0.0, 0.0, 0.0};
+    if (m_audioPeakLevels != silentLevels) {
+        m_audioPeakLevels = silentLevels;
+        emit audioPeakChanged();
+    }
+#endif
+}
+
 void IslandController::refreshMedia()
 {
 #ifdef Q_OS_WIN
@@ -1632,6 +1653,7 @@ void IslandController::refreshMedia()
             self->m_mediaDurationMilliseconds = snapshot.durationMilliseconds;
             self->m_mediaPositionText = snapshot.positionText;
             self->m_mediaDurationText = snapshot.durationText;
+            self->syncAudioMeterTimer();
             if (changed) {
                 emit self->mediaChanged();
             }
@@ -1643,67 +1665,125 @@ void IslandController::refreshMedia()
 void IslandController::refreshSystemState()
 {
 #ifdef Q_OS_WIN
-    QString networkName;
-    QString networkStatus = QStringLiteral("Offline");
-    try {
-        if (const auto profile = Connectivity::NetworkInformation::GetInternetConnectionProfile()) {
-            networkName = toQString(profile.ProfileName()).trimmed();
-            switch (profile.GetNetworkConnectivityLevel()) {
-            case Connectivity::NetworkConnectivityLevel::InternetAccess:
-                networkStatus = QStringLiteral("Internet access");
-                break;
-            case Connectivity::NetworkConnectivityLevel::ConstrainedInternetAccess:
-                networkStatus = QStringLiteral("Limited access");
-                break;
-            case Connectivity::NetworkConnectivityLevel::LocalAccess:
-                networkStatus = QStringLiteral("Local network");
-                break;
-            default:
-                break;
+    if (m_platform->systemRefreshInFlight.exchange(true)) {
+        m_platform->systemRefreshPending = true;
+        return;
+    }
+
+    struct SystemSnapshot {
+        QString networkName;
+        QString networkStatus = QStringLiteral("Offline");
+        bool batteryAvailable = false;
+        bool batteryCharging = false;
+        int batteryPercent = 0;
+        QString powerText = QStringLiteral("Power status unavailable");
+        int volume = 0;
+        bool muted = false;
+    };
+
+    const auto platform = m_platform;
+    const int previousVolume = m_volume;
+    const bool previousMuted = m_muted;
+    QPointer<IslandController> self(this);
+    QThreadPool::globalInstance()->start([platform, previousVolume, previousMuted, self]() {
+        SystemSnapshot snapshot;
+        snapshot.volume = previousVolume;
+        snapshot.muted = previousMuted;
+
+        bool apartmentInitialized = false;
+        try {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            apartmentInitialized = true;
+        } catch (...) {
+        }
+        if (apartmentInitialized) {
+            try {
+                if (const auto profile =
+                        Connectivity::NetworkInformation::GetInternetConnectionProfile()) {
+                    snapshot.networkName = toQString(profile.ProfileName()).trimmed();
+                    switch (profile.GetNetworkConnectivityLevel()) {
+                    case Connectivity::NetworkConnectivityLevel::InternetAccess:
+                        snapshot.networkStatus = QStringLiteral("Internet access");
+                        break;
+                    case Connectivity::NetworkConnectivityLevel::ConstrainedInternetAccess:
+                        snapshot.networkStatus = QStringLiteral("Limited access");
+                        break;
+                    case Connectivity::NetworkConnectivityLevel::LocalAccess:
+                        snapshot.networkStatus = QStringLiteral("Local network");
+                        break;
+                    default:
+                        break;
+                    }
+                }
+            } catch (...) {
+            }
+            readDefaultAudioEndpoint(&snapshot.volume, &snapshot.muted);
+        }
+
+        SYSTEM_POWER_STATUS powerStatus{};
+        if (GetSystemPowerStatus(&powerStatus)) {
+            snapshot.batteryAvailable = powerStatus.BatteryFlag != 128
+                && powerStatus.BatteryLifePercent != 255;
+            snapshot.batteryCharging = snapshot.batteryAvailable
+                && powerStatus.ACLineStatus == 1;
+            snapshot.batteryPercent = snapshot.batteryAvailable
+                ? powerStatus.BatteryLifePercent : 0;
+            if (!snapshot.batteryAvailable) {
+                snapshot.powerText = powerStatus.ACLineStatus == 1
+                    ? QStringLiteral("Plugged in") : QStringLiteral("Desktop power");
+            } else if (powerStatus.ACLineStatus == 1) {
+                snapshot.powerText = QStringLiteral("%1% · charging")
+                                         .arg(snapshot.batteryPercent);
+            } else {
+                snapshot.powerText = QStringLiteral("%1% remaining")
+                                         .arg(snapshot.batteryPercent);
             }
         }
-    } catch (...) {
-    }
 
-    SYSTEM_POWER_STATUS powerStatus{};
-    bool batteryAvailable = false;
-    bool batteryCharging = false;
-    int batteryPercent = 0;
-    QString powerText = QStringLiteral("Power status unavailable");
-    if (GetSystemPowerStatus(&powerStatus)) {
-        batteryAvailable = powerStatus.BatteryFlag != 128 && powerStatus.BatteryLifePercent != 255;
-        batteryCharging = batteryAvailable && powerStatus.ACLineStatus == 1;
-        batteryPercent = batteryAvailable ? powerStatus.BatteryLifePercent : 0;
-        if (!batteryAvailable) {
-            powerText = powerStatus.ACLineStatus == 1 ? QStringLiteral("Plugged in")
-                                                      : QStringLiteral("Desktop power");
-        } else if (powerStatus.ACLineStatus == 1) {
-            powerText = QStringLiteral("%1% · charging").arg(batteryPercent);
-        } else {
-            powerText = QStringLiteral("%1% remaining").arg(batteryPercent);
+        if (apartmentInitialized) {
+            winrt::uninit_apartment();
         }
-    }
+        if (!self) {
+            platform->systemRefreshPending = false;
+            platform->systemRefreshInFlight = false;
+            return;
+        }
 
-    int volume = m_volume;
-    bool muted = m_muted;
-    readDefaultAudioEndpoint(&volume, &muted);
+        QMetaObject::invokeMethod(self, [platform, self, snapshot]() {
+            if (!self) {
+                platform->systemRefreshPending = false;
+                platform->systemRefreshInFlight = false;
+                return;
+            }
 
-    const bool changed = m_networkName != networkName || m_networkStatus != networkStatus
-                         || m_batteryAvailable != batteryAvailable
-                         || m_batteryCharging != batteryCharging
-                         || m_batteryPercent != batteryPercent || m_powerText != powerText
-                         || m_volume != volume || m_muted != muted;
-    m_networkName = networkName;
-    m_networkStatus = networkStatus;
-    m_batteryAvailable = batteryAvailable;
-    m_batteryCharging = batteryCharging;
-    m_batteryPercent = batteryPercent;
-    m_powerText = powerText;
-    m_volume = volume;
-    m_muted = muted;
-    if (changed) {
-        emit systemChanged();
-    }
+            const bool changed = self->m_networkName != snapshot.networkName
+                || self->m_networkStatus != snapshot.networkStatus
+                || self->m_batteryAvailable != snapshot.batteryAvailable
+                || self->m_batteryCharging != snapshot.batteryCharging
+                || self->m_batteryPercent != snapshot.batteryPercent
+                || self->m_powerText != snapshot.powerText
+                || self->m_volume != snapshot.volume
+                || self->m_muted != snapshot.muted;
+            self->m_networkName = snapshot.networkName;
+            self->m_networkStatus = snapshot.networkStatus;
+            self->m_batteryAvailable = snapshot.batteryAvailable;
+            self->m_batteryCharging = snapshot.batteryCharging;
+            self->m_batteryPercent = snapshot.batteryPercent;
+            self->m_powerText = snapshot.powerText;
+            self->m_volume = snapshot.volume;
+            self->m_muted = snapshot.muted;
+            self->syncAudioMeterTimer();
+            if (changed) {
+                emit self->systemChanged();
+            }
+
+            platform->systemRefreshInFlight = false;
+            const bool refreshAgain = platform->systemRefreshPending.exchange(false);
+            if (refreshAgain) {
+                QTimer::singleShot(0, self, &IslandController::refreshSystemState);
+            }
+        }, Qt::QueuedConnection);
+    });
 #endif
 }
 

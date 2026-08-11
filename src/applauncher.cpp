@@ -1117,17 +1117,24 @@ void AppLauncher::activateLauncherWindow()
         return;
     }
     const HWND window = reinterpret_cast<HWND>(m_windowHandle);
-    LONG_PTR style = GetWindowLongPtrW(window, GWL_EXSTYLE);
-    style &= ~WS_EX_NOACTIVATE;
-    style |= WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
-    SetWindowLongPtrW(window, GWL_EXSTYLE, style);
+    const LONG_PTR style = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    const LONG_PTR desiredStyle = (style & ~WS_EX_NOACTIVATE)
+        | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
+    const bool styleChanged = desiredStyle != style;
+    if (styleChanged) {
+        SetWindowLongPtrW(window, GWL_EXSTYLE, desiredStyle);
+    }
+    UINT positionFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW;
+    if (styleChanged) {
+        positionFlags |= SWP_FRAMECHANGED;
+    }
     SetWindowPos(window,
                  HWND_TOPMOST,
                  0,
                  0,
                  0,
                  0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+                 positionFlags);
     ShowWindow(window, SW_SHOWNORMAL);
 
     const HWND foreground = GetForegroundWindow();
@@ -1157,16 +1164,24 @@ void AppLauncher::deactivateLauncherWindow(bool restorePreviousWindow)
         return;
     }
     const HWND window = reinterpret_cast<HWND>(m_windowHandle);
-    LONG_PTR style = GetWindowLongPtrW(window, GWL_EXSTYLE);
-    style |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
-    SetWindowLongPtrW(window, GWL_EXSTYLE, style);
+    const LONG_PTR style = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    const LONG_PTR desiredStyle = style
+        | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
+    const bool styleChanged = desiredStyle != style;
+    if (styleChanged) {
+        SetWindowLongPtrW(window, GWL_EXSTYLE, desiredStyle);
+    }
+    UINT positionFlags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+    if (styleChanged) {
+        positionFlags |= SWP_FRAMECHANGED;
+    }
     SetWindowPos(window,
                  HWND_TOPMOST,
                  0,
                  0,
                  0,
                  0,
-                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                 positionFlags);
     const HWND previous = reinterpret_cast<HWND>(m_previousForegroundWindow);
     m_previousForegroundWindow = 0;
     if (restorePreviousWindow && previous && IsWindow(previous)) {

@@ -39,23 +39,60 @@
 #include <windowsx.h>
 #include <winrt/base.h>
 
-static QPainterPath islandSurfacePath(QQuickWindow *window, QObject *root)
+struct IslandSurfaceGeometry
 {
-    const qreal bodyWidth = root->property("islandVisualWidth").toReal();
-    const qreal height = root->property("surfaceHeight").toReal();
-    const qreal radius = root->property("dynamicCornerRadius").toReal();
-    const qreal pillRadius = root->property("pillCornerRadius").toReal();
-    const qreal earWidth = root->property("dynamicEarWidth").toReal();
-    const qreal earDepth = root->property("dynamicEarDepth").toReal();
-    const qreal top = root->property("islandSurfaceTop").toReal();
-    const bool pillMode = root->property("pillMode").toBool();
-    const bool timerSatelliteVisible = root->property("timerSatelliteVisible").toBool();
-    const qreal timerSatelliteDiameter = root->property("timerSatelliteDiameter").toReal();
-    const qreal timerSatelliteGap = root->property("timerSatelliteGap").toReal();
+    qreal windowWidth = 0.0;
+    qreal bodyWidth = 0.0;
+    qreal height = 0.0;
+    qreal radius = 0.0;
+    qreal pillRadius = 0.0;
+    qreal earWidth = 0.0;
+    qreal earDepth = 0.0;
+    qreal top = 0.0;
+    bool pillMode = false;
+    bool timerSatelliteVisible = false;
+    qreal timerSatelliteDiameter = 0.0;
+    qreal timerSatelliteGap = 0.0;
+
+    bool operator==(const IslandSurfaceGeometry &) const = default;
+};
+
+static IslandSurfaceGeometry readIslandSurfaceGeometry(QQuickWindow *window, QObject *root)
+{
+    return {
+        static_cast<qreal>(window->width()),
+        root->property("islandVisualWidth").toReal(),
+        root->property("surfaceHeight").toReal(),
+        root->property("dynamicCornerRadius").toReal(),
+        root->property("pillCornerRadius").toReal(),
+        root->property("dynamicEarWidth").toReal(),
+        root->property("dynamicEarDepth").toReal(),
+        root->property("islandSurfaceTop").toReal(),
+        root->property("pillMode").toBool(),
+        root->property("timerSatelliteVisible").toBool(),
+        root->property("timerSatelliteDiameter").toReal(),
+        root->property("timerSatelliteGap").toReal()
+    };
+}
+
+static QPainterPath islandSurfacePath(const IslandSurfaceGeometry &geometry)
+{
+    const qreal bodyWidth = geometry.bodyWidth;
+    const qreal height = geometry.height;
+    const qreal radius = geometry.radius;
+    const qreal pillRadius = geometry.pillRadius;
+    const qreal earWidth = geometry.earWidth;
+    const qreal earDepth = geometry.earDepth;
+    const qreal top = geometry.top;
+    const bool pillMode = geometry.pillMode;
+    const bool timerSatelliteVisible = geometry.timerSatelliteVisible;
+    const qreal timerSatelliteDiameter = geometry.timerSatelliteDiameter;
+    const qreal timerSatelliteGap = geometry.timerSatelliteGap;
 
     constexpr qreal earKappa = 0.54;
     constexpr qreal roundKappa = 0.5522847498;
-    const qreal left = (window->width() - bodyWidth) / 2.0 - (pillMode ? 0.0 : earWidth);
+    const qreal left = (geometry.windowWidth - bodyWidth) / 2.0
+        - (pillMode ? 0.0 : earWidth);
     const qreal right = left + bodyWidth + earWidth * 2.0;
     const qreal bodyLeft = left + earWidth;
     const qreal bodyRight = right - earWidth;
@@ -65,7 +102,7 @@ static QPainterPath islandSurfacePath(QQuickWindow *window, QObject *root)
         if (!timerSatelliteVisible || timerSatelliteDiameter <= 0.0) {
             return;
         }
-        const qreal surfaceRight = (window->width() + bodyWidth) / 2.0
+        const qreal surfaceRight = (geometry.windowWidth + bodyWidth) / 2.0
                                    + (pillMode ? 0.0 : earWidth);
         path.addEllipse(QRectF(surfaceRight + timerSatelliteGap,
                                top,
@@ -116,6 +153,18 @@ static QPainterPath islandSurfacePath(QQuickWindow *window, QObject *root)
     return path;
 }
 
+struct PointerPassThroughState
+{
+    bool passThrough = false;
+    bool hasCursorSample = false;
+    bool hasSurfaceGeometry = false;
+    POINT cursorScreen{};
+    QPoint windowPosition;
+    qreal scale = 1.0;
+    IslandSurfaceGeometry surfaceGeometry;
+    QPainterPath surfacePath;
+};
+
 class IslandHitTestFilter final : public QAbstractNativeEventFilter
 {
 public:
@@ -135,9 +184,10 @@ public:
             && nativeMessage->hwnd == reinterpret_cast<HWND>(m_window->winId())) {
             if (m_root->property("keyboardCaptureArmed").toBool()) {
                 const HWND hwnd = reinterpret_cast<HWND>(m_window->winId());
-                LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-                style &= ~WS_EX_NOACTIVATE;
-                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
+                const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                if ((style & WS_EX_NOACTIVATE) != 0) {
+                    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style & ~WS_EX_NOACTIVATE);
+                }
                 *result = MA_ACTIVATE;
             } else {
                 *result = MA_NOACTIVATE;
@@ -459,42 +509,72 @@ int main(int argc, char *argv[])
     IslandHitTestFilter hitTestFilter(rootWindow, rootObject);
     app.installNativeEventFilter(&hitTestFilter);
 
-    auto pointerPassThrough = std::make_shared<bool>(false);
-    const auto updatePointerPassThrough = [rootWindow, rootObject, pointerPassThrough]() {
+    auto pointerState = std::make_shared<PointerPassThroughState>();
+    const auto updatePointerPassThrough = [rootWindow, rootObject, pointerState]() {
         const HWND hwnd = reinterpret_cast<HWND>(rootWindow->winId());
         bool shouldPassThrough = false;
-        if (rootObject->property("nativeInputMaskEnabled").toBool()) {
+        const bool inputMaskEnabled = rootObject->property("nativeInputMaskEnabled").toBool();
+        if (inputMaskEnabled) {
             POINT nativePoint{};
             if (GetCursorPos(&nativePoint)) {
-                ScreenToClient(hwnd, &nativePoint);
                 const qreal scale = qMax<qreal>(1.0, rootWindow->devicePixelRatio());
-                const QPointF localPoint(nativePoint.x / scale,
-                                         nativePoint.y / scale);
-                shouldPassThrough = !islandSurfacePath(rootWindow, rootObject)
-                                         .contains(localPoint);
+                const QPoint windowPosition = rootWindow->position();
+                const IslandSurfaceGeometry geometry =
+                    readIslandSurfaceGeometry(rootWindow, rootObject);
+                const bool cursorUnchanged = pointerState->hasCursorSample
+                    && pointerState->cursorScreen.x == nativePoint.x
+                    && pointerState->cursorScreen.y == nativePoint.y;
+                const bool geometryUnchanged = pointerState->hasSurfaceGeometry
+                    && pointerState->surfaceGeometry == geometry;
+                if (cursorUnchanged && geometryUnchanged
+                    && pointerState->windowPosition == windowPosition
+                    && pointerState->scale == scale) {
+                    return;
+                }
+
+                if (!geometryUnchanged) {
+                    pointerState->surfaceGeometry = geometry;
+                    pointerState->surfacePath = islandSurfacePath(geometry);
+                    pointerState->hasSurfaceGeometry = true;
+                }
+                pointerState->cursorScreen = nativePoint;
+                pointerState->hasCursorSample = true;
+                pointerState->windowPosition = windowPosition;
+                pointerState->scale = scale;
+
+                ScreenToClient(hwnd, &nativePoint);
+                const QPointF localPoint(nativePoint.x / scale, nativePoint.y / scale);
+                shouldPassThrough = !pointerState->surfacePath.contains(localPoint);
+            } else {
+                pointerState->hasCursorSample = false;
             }
+        } else {
+            pointerState->hasCursorSample = false;
         }
 
-        if (shouldPassThrough == *pointerPassThrough) {
+        if (shouldPassThrough == pointerState->passThrough) {
             return;
         }
 
-        LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        LONG_PTR desiredStyle = style;
         if (shouldPassThrough) {
-            style |= WS_EX_TRANSPARENT;
+            desiredStyle |= WS_EX_TRANSPARENT;
         } else {
-            style &= ~WS_EX_TRANSPARENT;
+            desiredStyle &= ~WS_EX_TRANSPARENT;
         }
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
-        SetWindowPos(hwnd,
-                     nullptr,
-                     0,
-                     0,
-                     0,
-                     0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
-                         | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        *pointerPassThrough = shouldPassThrough;
+        if (desiredStyle != style) {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, desiredStyle);
+            SetWindowPos(hwnd,
+                         nullptr,
+                         0,
+                         0,
+                         0,
+                         0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+                             | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
+        pointerState->passThrough = shouldPassThrough;
     };
 
     QTimer pointerHitTimer;
@@ -509,25 +589,35 @@ int main(int argc, char *argv[])
 
     const auto keepTopmost = [rootWindow, rootObject, automationMode]() {
         const HWND hwnd = reinterpret_cast<HWND>(rootWindow->winId());
-        LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        style |= WS_EX_TOPMOST;
+        const LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        LONG_PTR desiredStyle = style;
         if (automationMode) {
-            style &= ~(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+            desiredStyle &= ~(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
         } else {
-            style |= WS_EX_TOOLWINDOW;
+            desiredStyle |= WS_EX_TOOLWINDOW;
             if (rootObject->property("keyboardCaptureArmed").toBool())
-                style &= ~WS_EX_NOACTIVATE;
+                desiredStyle &= ~WS_EX_NOACTIVATE;
             else
-                style |= WS_EX_NOACTIVATE;
+                desiredStyle |= WS_EX_NOACTIVATE;
         }
-        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
-        SetWindowPos(hwnd,
-                     HWND_TOPMOST,
-                     0,
-                     0,
-                     0,
-                     0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
+        const bool styleChanged = desiredStyle != style;
+        const bool needsTopmost = (style & WS_EX_TOPMOST) == 0;
+        if (styleChanged) {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, desiredStyle);
+        }
+        if (styleChanged || needsTopmost) {
+            UINT flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
+            HWND insertAfter = HWND_TOPMOST;
+            if (styleChanged) {
+                flags |= SWP_FRAMECHANGED;
+            }
+            if (!needsTopmost) {
+                flags |= SWP_NOZORDER;
+                insertAfter = nullptr;
+            }
+            SetWindowPos(hwnd, insertAfter, 0, 0, 0, 0, flags);
+        }
     };
     QTimer::singleShot(0, &app, keepTopmost);
     QTimer topmostTimer;

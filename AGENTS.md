@@ -27,6 +27,30 @@ Both applications are built with Qt 6, C++20, and QML.
 - Report meaningful blockers, outcomes, and verification evidence without noisy
   progress narration.
 
+## Performance work prerequisites
+
+- Before changing performance-sensitive code, read the current official
+  documentation for every framework or operating-system contract involved.
+  Record the relevant sources in the handoff or performance documentation.
+- Establish a Release-build baseline before editing. Confirm a suspected hot
+  path with two independent forms of evidence, such as a trace plus source
+  inspection, or timings plus an authoritative API contract. Do not optimize a
+  plausible-looking path that has not been verified.
+- Define the user-visible invariants before implementation, then compare the
+  same scenario before and after. Treat unchanged visuals, behavior, focus,
+  input, accessibility, and feature availability as requirements rather than
+  assumptions.
+- Prefer removing redundant work, coalescing updates, pausing inactive timers,
+  and moving blocking work off the UI thread. Do not trade latency or correctness
+  for a lower aggregate CPU number without explicit product approval.
+- For Liquid Glass, preserve the live GPU pipeline and optical output. Validate
+  capture continuity, latency, GPU synchronization, high-DPI behavior, and
+  fallback imagery in the running Release build. Revert an optimization if it
+  introduces artifacts, stale frames, added latency, or an unmeasured benefit.
+- Keep before/after evidence reproducible and machine context explicit. If a
+  result is within measurement noise, report it as inconclusive and leave the
+  code unchanged.
+
 ## Product boundary
 
 - Keep the shipping UI native. Do not introduce Electron, embedded browser

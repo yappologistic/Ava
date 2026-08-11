@@ -84,6 +84,21 @@ triple-buffered GPU textures and timeline fences keep frames off the CPU readbac
 path. When Explorer cannot provide usable desktop pixels, Ava resolves the
 current per-monitor wallpaper instead of showing a black surface.
 
+## Performance and fluidity
+
+Ava keeps rendering and input work bounded without reducing the fidelity of its
+features. Windows system-state queries and monitor sampling run away from the UI
+thread, repeated refresh requests are coalesced, inactive audio metering sleeps,
+and the native silhouette hit region is reused until its geometry changes.
+Window-style updates are applied only when the requested state differs, avoiding
+unnecessary Desktop Window Manager frame recalculation.
+
+Liquid Glass remains a live GPU effect: capture, optical processing, and display
+stay on D3D11 resources with no per-frame CPU readback. Performance work must
+preserve the same shader output, capture continuity, and interaction latency.
+The measurement procedure, invariants, confirmed findings, and official source
+links are documented in [docs/performance.md](docs/performance.md).
+
 ## Interaction
 
 - Hover over Ava for 280 ms or click it to expand.
@@ -246,6 +261,8 @@ exercise the shipping QML layout without replacing the real runtime integration.
 - `qml/chat/`: the separate AvaChat window, composer, conversation timeline,
   attachments, code, images, prompts, work disclosures, and diff inspector.
 - `tests/`: focused native tests plus the opt-in authenticated Codex E2E.
+- `docs/performance.md`: performance invariants, audit evidence, validation
+  workflow, and authoritative Qt and Windows references.
 - `assets/fonts/` and `assets/icons/`: bundled fonts, licenses, Fluent icons,
   and Ava-specific artwork.
 

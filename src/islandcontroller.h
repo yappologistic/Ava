@@ -206,6 +206,7 @@ private:
     struct PlatformState;
 
     void updateClock();
+    void syncAudioMeterTimer();
     void refreshMedia();
     void refreshSystemState();
     void refreshPerformanceState();
