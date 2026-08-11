@@ -817,15 +817,15 @@ static QRect windowBounds(HWND window)
     return {};
 }
 
-static bool isCaptureCandidate(HWND window, DWORD ownProcessId)
+static QRect captureCandidateBounds(HWND window, DWORD ownProcessId)
 {
     if (!window || !IsWindowVisible(window) || IsIconic(window)) {
-        return false;
+        return {};
     }
     DWORD processId = 0;
     GetWindowThreadProcessId(window, &processId);
     if (processId == ownProcessId) {
-        return false;
+        return {};
     }
     BOOL cloaked = FALSE;
     if (SUCCEEDED(DwmGetWindowAttribute(window,
@@ -833,7 +833,7 @@ static bool isCaptureCandidate(HWND window, DWORD ownProcessId)
                                         &cloaked,
                                         sizeof(cloaked)))
         && cloaked) {
-        return false;
+        return {};
     }
 
     const LONG_PTR extendedStyle = GetWindowLongPtrW(window, GWL_EXSTYLE);
@@ -849,10 +849,10 @@ static bool isCaptureCandidate(HWND window, DWORD ownProcessId)
             // GPU overlays and hidden launchers commonly leave a fullscreen,
             // alpha-zero host in the z-order. WGC returns their opaque black
             // backing allocation even though the user sees the desktop.
-            return false;
+            return {};
         }
     }
-    return !windowBounds(window).isEmpty();
+    return windowBounds(window);
 }
 
 static bool isDesktopSurfaceWindow(HWND window)
@@ -943,8 +943,8 @@ static HWND findUnderlyingWindow(HWND foregroundWindow, const QRect &captureRect
     DWORD ownProcessId = 0;
     GetWindowThreadProcessId(foregroundWindow, &ownProcessId);
     const HWND movingWindow = activeMoveSizeWindow();
-    if (movingWindow && isCaptureCandidate(movingWindow, ownProcessId)
-        && windowBounds(movingWindow).intersects(captureRect)) {
+    const QRect movingWindowBounds = captureCandidateBounds(movingWindow, ownProcessId);
+    if (movingWindow && movingWindowBounds.intersects(captureRect)) {
         // DWM can insert snap and drag-host windows above the real window
         // during a sustained move. hwndMoveSize remains the authoritative
         // window whose pixels should be behind the glass.
@@ -955,11 +955,8 @@ static HWND findUnderlyingWindow(HWND foregroundWindow, const QRect &captureRect
     for (HWND candidate = GetWindow(foregroundWindow, GW_HWNDNEXT);
          candidate;
          candidate = GetWindow(candidate, GW_HWNDNEXT)) {
-        if (!isCaptureCandidate(candidate, ownProcessId)) {
-            continue;
-        }
-        const QRect bounds = windowBounds(candidate);
-        if (!bounds.intersects(captureRect)) {
+        const QRect bounds = captureCandidateBounds(candidate, ownProcessId);
+        if (bounds.isEmpty() || !bounds.intersects(captureRect)) {
             continue;
         }
         if (bounds.contains(center)) {

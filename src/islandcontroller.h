@@ -206,6 +206,7 @@ private:
     struct PlatformState;
 
     void updateClock();
+    void updateMediaTimeline();
     void syncAudioMeterTimer();
     void refreshMedia();
     void refreshSystemState();
@@ -221,6 +222,7 @@ private:
     QTimer m_audioMeterTimer;
     QTimer m_alarmTimer;
     int m_slowRefreshCounter = 0;
+    int m_mediaFallbackCounter = 0;
 
     bool m_expanded = false;
     bool m_pinned = false;
@@ -263,7 +265,10 @@ private:
     bool m_mediaCanNext = false;
     bool m_mediaSeekable = false;
     double m_mediaProgress = 0.0;
+    double m_mediaPlaybackRate = 1.0;
     qint64 m_mediaDurationMilliseconds = 0;
+    qint64 m_mediaPositionAtSampleMilliseconds = 0;
+    qint64 m_mediaPositionSampleTimestampMilliseconds = 0;
     QString m_mediaPositionText = QStringLiteral("0:00");
     QString m_mediaDurationText = QStringLiteral("0:00");
     QVariantList m_audioPeakLevels{0.0, 0.0, 0.0, 0.0, 0.0};

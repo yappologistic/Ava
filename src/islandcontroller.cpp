@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <iterator>
@@ -615,16 +616,60 @@ struct IslandController::PlatformState
 
     ~PlatformState()
     {
+        revokeMediaEvents();
         if (gpuQuery) {
             PdhCloseQuery(gpuQuery);
         }
     }
 
+    void revokeSessionEventsLocked() noexcept
+    {
+        if (mediaSession) {
+            if (mediaPropertiesChangedToken.value != 0) {
+                mediaSession.MediaPropertiesChanged(mediaPropertiesChangedToken);
+            }
+            if (playbackInfoChangedToken.value != 0) {
+                mediaSession.PlaybackInfoChanged(playbackInfoChangedToken);
+            }
+            if (timelinePropertiesChangedToken.value != 0) {
+                mediaSession.TimelinePropertiesChanged(timelinePropertiesChangedToken);
+            }
+        }
+        mediaPropertiesChangedToken = {};
+        playbackInfoChangedToken = {};
+        timelinePropertiesChangedToken = {};
+        mediaSessionEventsAttached = false;
+    }
+
+    void revokeMediaEvents() noexcept
+    {
+        const std::scoped_lock lock(mediaMutex);
+        revokeSessionEventsLocked();
+        mediaSession = nullptr;
+        if (mediaManager && currentSessionChangedToken.value != 0) {
+            mediaManager.CurrentSessionChanged(currentSessionChangedToken);
+        }
+        currentSessionChangedToken = {};
+        mediaManagerEventsAttached = false;
+        mediaManager = nullptr;
+        mediaEventsReady = false;
+    }
+
     MediaControl::GlobalSystemMediaTransportControlsSessionManager mediaManager{nullptr};
     MediaControl::GlobalSystemMediaTransportControlsSession mediaSession{nullptr};
+    winrt::event_token currentSessionChangedToken{};
+    winrt::event_token mediaPropertiesChangedToken{};
+    winrt::event_token playbackInfoChangedToken{};
+    winrt::event_token timelinePropertiesChangedToken{};
+    bool mediaManagerEventsAttached = false;
+    bool mediaSessionEventsAttached = false;
     ComPtr<IAudioMeterInformation> audioMeter;
     std::mutex mediaMutex;
     std::atomic_bool mediaRefreshInFlight{false};
+    std::atomic_bool mediaRefreshPending{false};
+    std::atomic_bool mediaRefreshRequested{false};
+    std::atomic_bool mediaEventsReady{false};
+    std::atomic_bool mediaShuttingDown{false};
     std::atomic_bool systemRefreshInFlight{false};
     std::atomic_bool systemRefreshPending{false};
     PDH_HQUERY gpuQuery = nullptr;
@@ -676,10 +721,15 @@ IslandController::~IslandController()
 {
 #ifdef Q_OS_WIN
     m_monitorEnabled = false;
+    m_platform->mediaShuttingDown = true;
+    m_platform->mediaRefreshRequested = false;
     QDeadlineTimer deadline(1000);
-    while (m_platform->performanceRefreshInFlight && !deadline.hasExpired()) {
+    while ((m_platform->performanceRefreshInFlight
+            || m_platform->mediaRefreshInFlight)
+           && !deadline.hasExpired()) {
         QThread::msleep(1);
     }
+    m_platform->revokeMediaEvents();
 #endif
 }
 
@@ -1151,7 +1201,17 @@ void IslandController::tick()
 {
     updateClock();
     refreshForegroundFullscreen();
+#ifdef Q_OS_WIN
+    updateMediaTimeline();
+    const int mediaFallbackTicks = m_platform->mediaEventsReady ? 30 : 1;
+    const bool mediaRefreshRequested = m_platform->mediaRefreshRequested.exchange(false);
+    if (mediaRefreshRequested || ++m_mediaFallbackCounter >= mediaFallbackTicks) {
+        m_mediaFallbackCounter = 0;
+        refreshMedia();
+    }
+#else
     refreshMedia();
+#endif
     refreshPerformanceState();
     if (++m_slowRefreshCounter >= 3) {
         m_slowRefreshCounter = 0;
@@ -1436,6 +1496,39 @@ void IslandController::updateAudioPeak()
 #endif
 }
 
+void IslandController::updateMediaTimeline()
+{
+#ifdef Q_OS_WIN
+    if (!m_mediaAvailable || m_mediaDurationMilliseconds <= 0
+        || m_mediaPositionSampleTimestampMilliseconds <= 0) {
+        return;
+    }
+
+    const qint64 now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    const qint64 elapsed = m_mediaPlaying
+        ? qMax<qint64>(0, now - m_mediaPositionSampleTimestampMilliseconds)
+        : 0;
+    const qint64 position = qBound<qint64>(
+        0,
+        m_mediaPositionAtSampleMilliseconds
+            + qRound64(static_cast<double>(elapsed) * m_mediaPlaybackRate),
+        m_mediaDurationMilliseconds);
+    const double progress = static_cast<double>(position)
+        / static_cast<double>(m_mediaDurationMilliseconds);
+    const QString positionText = formatDuration(position);
+    if (qFuzzyCompare(m_mediaProgress + 1.0, progress + 1.0)
+        && m_mediaPositionText == positionText) {
+        return;
+    }
+
+    m_mediaProgress = progress;
+    m_mediaPositionText = positionText;
+    emit mediaChanged();
+#endif
+}
+
 void IslandController::syncAudioMeterTimer()
 {
 #ifdef Q_OS_WIN
@@ -1460,6 +1553,7 @@ void IslandController::refreshMedia()
 {
 #ifdef Q_OS_WIN
     if (m_platform->mediaRefreshInFlight.exchange(true)) {
+        m_platform->mediaRefreshPending = true;
         return;
     }
 
@@ -1477,7 +1571,10 @@ void IslandController::refreshMedia()
         bool canNext = false;
         bool seekable = false;
         double progress = 0.0;
+        double playbackRate = 1.0;
         qint64 durationMilliseconds = 0;
+        qint64 positionMilliseconds = 0;
+        qint64 positionSampleTimestampMilliseconds = 0;
         QString positionText = QStringLiteral("0:00");
         QString durationText = QStringLiteral("0:00");
     };
@@ -1506,14 +1603,52 @@ void IslandController::refreshMedia()
             }
             if (!manager) {
                 manager = MediaControl::GlobalSystemMediaTransportControlsSessionManager::RequestAsync().get();
-                std::scoped_lock lock(platform->mediaMutex);
-                platform->mediaManager = manager;
+            }
+            {
+                const std::scoped_lock lock(platform->mediaMutex);
+                if (!platform->mediaShuttingDown) {
+                    platform->mediaManager = manager;
+                    if (!platform->mediaManagerEventsAttached) {
+                        const std::weak_ptr<PlatformState> weakPlatform = platform;
+                        platform->currentSessionChangedToken = manager.CurrentSessionChanged(
+                            [weakPlatform](const auto &, const auto &) {
+                                if (const auto state = weakPlatform.lock();
+                                    state && !state->mediaShuttingDown) {
+                                    state->mediaRefreshRequested = true;
+                                }
+                            });
+                        platform->mediaManagerEventsAttached = true;
+                    }
+                }
             }
 
             const auto session = manager.GetCurrentSession();
             {
-                std::scoped_lock lock(platform->mediaMutex);
-                platform->mediaSession = session;
+                const std::scoped_lock lock(platform->mediaMutex);
+                const bool sessionChanged = winrt::get_abi(platform->mediaSession)
+                    != winrt::get_abi(session);
+                if (!platform->mediaShuttingDown && sessionChanged) {
+                    platform->revokeSessionEventsLocked();
+                    platform->mediaSession = session;
+                    if (session) {
+                        const std::weak_ptr<PlatformState> weakPlatform = platform;
+                        const auto requestRefresh = [weakPlatform](const auto &, const auto &) {
+                            if (const auto state = weakPlatform.lock();
+                                state && !state->mediaShuttingDown) {
+                                state->mediaRefreshRequested = true;
+                            }
+                        };
+                        platform->mediaPropertiesChangedToken =
+                            session.MediaPropertiesChanged(requestRefresh);
+                        platform->playbackInfoChangedToken =
+                            session.PlaybackInfoChanged(requestRefresh);
+                        platform->timelinePropertiesChangedToken =
+                            session.TimelinePropertiesChanged(requestRefresh);
+                        platform->mediaSessionEventsAttached = true;
+                    }
+                }
+                platform->mediaEventsReady = platform->mediaManagerEventsAttached
+                    && (!session || platform->mediaSessionEventsAttached);
             }
             if (session) {
                 const auto properties = session.TryGetMediaPropertiesAsync().get();
@@ -1527,17 +1662,38 @@ void IslandController::refreshMedia()
                 snapshot.available = !snapshot.title.isEmpty() || !snapshot.artist.isEmpty();
                 snapshot.playing = playbackInfo.PlaybackStatus()
                     == MediaControl::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+                if (const auto playbackRate = playbackInfo.PlaybackRate()) {
+                    const double value = playbackRate.Value();
+                    if (std::isfinite(value)) {
+                        snapshot.playbackRate = value;
+                    }
+                }
                 snapshot.canPrevious = controls.IsPreviousEnabled();
                 snapshot.canNext = controls.IsNextEnabled();
                 snapshot.seekable = controls.IsPlaybackPositionEnabled();
 
-                const qint64 positionMs = timeline.Position().count() / 10000;
+                qint64 positionMs = timeline.Position().count() / 10000;
                 const qint64 startMs = timeline.StartTime().count() / 10000;
                 const qint64 endMs = timeline.EndTime().count() / 10000;
                 const qint64 durationMs = qMax<qint64>(0, endMs - startMs);
+                if (snapshot.playing) {
+                    const auto timelineAge = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        winrt::clock::now() - timeline.LastUpdatedTime()).count();
+                    if (timelineAge > 0 && timelineAge < 24 * 60 * 60 * 1000LL) {
+                        positionMs += qRound64(
+                            static_cast<double>(timelineAge) * snapshot.playbackRate);
+                    }
+                }
+                positionMs = durationMs > 0
+                    ? qBound(startMs, positionMs, endMs)
+                    : startMs;
                 snapshot.durationMilliseconds = durationMs;
+                snapshot.positionMilliseconds = qMax<qint64>(0, positionMs - startMs);
+                snapshot.positionSampleTimestampMilliseconds =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch()).count();
                 snapshot.progress = durationMs > 0
-                    ? qBound(0.0, static_cast<double>(positionMs - startMs)
+                    ? qBound(0.0, static_cast<double>(snapshot.positionMilliseconds)
                                       / static_cast<double>(durationMs), 1.0)
                     : 0.0;
 
@@ -1556,7 +1712,7 @@ void IslandController::refreshMedia()
                         .arg(minutes)
                         .arg(seconds, 2, 10, QLatin1Char('0'));
                 };
-                snapshot.positionText = formatTime(qMax<qint64>(0, positionMs - startMs));
+                snapshot.positionText = formatTime(snapshot.positionMilliseconds);
                 snapshot.durationText = formatTime(durationMs);
                 snapshot.identity = snapshot.title + QLatin1Char('\n') + snapshot.artist
                                     + QLatin1Char('\n') + snapshot.source;
@@ -1604,8 +1760,10 @@ void IslandController::refreshMedia()
                 }
             }
         } catch (...) {
-            std::scoped_lock lock(platform->mediaMutex);
+            const std::scoped_lock lock(platform->mediaMutex);
+            platform->revokeSessionEventsLocked();
             platform->mediaSession = nullptr;
+            platform->mediaEventsReady = false;
         }
 
         if (apartmentInitialized) {
@@ -1650,12 +1808,19 @@ void IslandController::refreshMedia()
             self->m_mediaCanNext = snapshot.canNext;
             self->m_mediaSeekable = snapshot.seekable;
             self->m_mediaProgress = snapshot.progress;
+            self->m_mediaPlaybackRate = snapshot.playbackRate;
             self->m_mediaDurationMilliseconds = snapshot.durationMilliseconds;
+            self->m_mediaPositionAtSampleMilliseconds = snapshot.positionMilliseconds;
+            self->m_mediaPositionSampleTimestampMilliseconds =
+                snapshot.positionSampleTimestampMilliseconds;
             self->m_mediaPositionText = snapshot.positionText;
             self->m_mediaDurationText = snapshot.durationText;
             self->syncAudioMeterTimer();
             if (changed) {
                 emit self->mediaChanged();
+            }
+            if (self->m_platform->mediaRefreshPending.exchange(false)) {
+                QTimer::singleShot(0, self, &IslandController::refreshMedia);
             }
         }, Qt::QueuedConnection);
     });
