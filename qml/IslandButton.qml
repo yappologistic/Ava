@@ -92,8 +92,12 @@ Button {
                       ? control.accentColor
                       : (control.accented || control.selected ? "#18ffffff" : "#22ffffff")
 
-        Behavior on color { ColorAnimation { duration: 120 } }
-        Behavior on border.color { ColorAnimation { duration: 120 } }
+        Behavior on color {
+            ColorAnimation { duration: control.reducedMotion ? 0 : MotionTokens.hover }
+        }
+        Behavior on border.color {
+            ColorAnimation { duration: control.reducedMotion ? 0 : MotionTokens.hover }
+        }
 
         Rectangle {
             anchors.fill: parent
@@ -139,7 +143,7 @@ Button {
                         target: labelRow
                         property: "scale"
                         from: 1
-                        to: 0.76
+                        to: 0.88
                         duration: MotionTokens.press
                         easing.type: Easing.InCubic
                     }
@@ -236,8 +240,8 @@ Button {
         NumberAnimation {
             target: labelRow
             property: "rotation"
-            from: control.selected ? -10 : 10
-            to: control.selected ? 12 : -12
+            from: control.selected ? -4 : 4
+            to: control.selected ? 5 : -5
             duration: MotionTokens.press
             easing.type: Easing.OutCubic
         }

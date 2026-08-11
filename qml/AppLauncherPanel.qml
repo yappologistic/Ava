@@ -19,15 +19,14 @@ Item {
     visible: open || opacity > 0.001
     enabled: open
     opacity: open ? 1 : 0
-    scale: open ? 1 : 0.985
     transformOrigin: Item.Top
     transform: Translate {
-        y: root.open ? 0 : -6
+        y: root.open ? 0 : -4
         Behavior on y {
             NumberAnimation {
                 duration: root.reducedMotion ? 0 : (root.open ? MotionTokens.content
                                                               : MotionTokens.state)
-                easing.type: Easing.OutCubic
+                easing.type: MotionTokens.easeOut
             }
         }
     }
@@ -44,14 +43,9 @@ Item {
 
     Behavior on opacity {
         NumberAnimation {
-            duration: root.reducedMotion ? 0 : (root.open ? 170 : 120)
+            duration: root.reducedMotion ? 0 : (root.open ? MotionTokens.state
+                                                          : MotionTokens.hover)
             easing.type: root.open ? Easing.OutCubic : Easing.InCubic
-        }
-    }
-    Behavior on scale {
-        NumberAnimation {
-            duration: root.reducedMotion ? 0 : (root.open ? 230 : 120)
-            easing.type: Easing.OutCubic
         }
     }
 
@@ -104,7 +98,7 @@ Item {
         from: 0
         to: 1
         duration: root.reducedMotion ? 0 : MotionTokens.reveal
-        easing.type: Easing.OutCubic
+        easing.type: MotionTokens.easeOut
     }
 
     Timer {
@@ -394,7 +388,7 @@ Item {
                             sourceSize.width: 56
                             sourceSize.height: 56
                             opacity: status === Image.Ready ? 1 : 0
-                            scale: status === Image.Ready ? 1 : 0.9
+                            scale: status === Image.Ready ? 1 : 0.94
 
                             Behavior on opacity {
                                 NumberAnimation {
@@ -405,8 +399,7 @@ Item {
                             Behavior on scale {
                                 NumberAnimation {
                                     duration: root.reducedMotion ? 0 : MotionTokens.content
-                                    easing.type: Easing.OutBack
-                                    easing.overshoot: 0.35
+                                    easing.type: MotionTokens.settle
                                 }
                             }
                         }

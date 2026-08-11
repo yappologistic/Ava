@@ -16,7 +16,7 @@ Item {
         outgoing.opacity = 1
         outgoing.scale = 1
         incoming.opacity = 0
-        incoming.scale = 0.82
+        incoming.scale = 0.92
     }
 
     Component.onCompleted: {
@@ -38,7 +38,7 @@ Item {
         transition.stop()
         incomingSource = source
         incoming.opacity = 0
-        incoming.scale = 0.82
+        incoming.scale = 0.92
         transition.start()
     }
 
@@ -81,7 +81,7 @@ Item {
             NumberAnimation {
                 target: outgoing
                 property: "scale"
-                to: 0.82
+                to: 0.92
                 duration: MotionTokens.state
                 easing.type: Easing.InCubic
             }

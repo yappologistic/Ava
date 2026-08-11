@@ -49,7 +49,7 @@ Item {
 
         SequentialAnimation {
             running: root.active && !root.controller.timerPaused && !root.reducedMotion
-            loops: Animation.Infinite
+            loops: 2
             ParallelAnimation {
                 NumberAnimation { target: halo; property: "scale"; from: 0.94; to: 1.05; duration: 760; easing.type: Easing.OutCubic }
                 NumberAnimation { target: halo; property: "opacity"; from: 0.38; to: 0.08; duration: 760; easing.type: Easing.OutCubic }

@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick 6.5
 import QtQuick.Controls 6.5
+import QtQuick.Effects 6.5
 import Ava 1.0
 
 Item {
@@ -381,18 +382,18 @@ Item {
 
     enabled: expanded && !dragActive && !codexOpen
     opacity: enabled ? 1 : 0
-    scale: enabled ? 1 : 0.975
+    scale: enabled ? 1 : 0.985
     transformOrigin: Item.Top
 
     Behavior on opacity {
         SequentialAnimation {
             PauseAnimation { duration: root.enabled && !root.reducedMotion ? 45 : 0 }
-            NumberAnimation { duration: root.reducedMotion ? 0 : 135; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: MotionTokens.easeOut }
         }
     }
 
     Behavior on scale {
-        NumberAnimation { duration: root.reducedMotion ? 0 : 180; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut }
     }
 
     // The reference is deliberately sparse: artwork and transport controls occupy
@@ -402,17 +403,15 @@ Item {
         enabled: !controller.timerPanelOpen && !controller.wallpaperPanelOpen
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
-        scale: enabled ? 1 : 0.94
         x: 18
         y: 22
         width: 292
         height: 110
         transform: Translate {
-            y: mediaPane.enabled ? 0 : -5
+            y: mediaPane.enabled ? 0 : -3
             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
         }
         Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
-        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
 
         Item {
             anchors.fill: parent
@@ -422,9 +421,11 @@ Item {
                 id: artworkFrame
                 width: 88
                 height: 88
-                radius: Math.min(width / 2, root.shellCornerRadius)
+                // Keep the artwork concentric with the shell: inner radius is
+                // the outer radius minus the average visual inset (18–22 px).
+                radius: Math.max(10, root.shellCornerRadius
+                                      - (mediaPane.x + mediaPane.y) / 2)
                 color: root.colors.raised
-                clip: true
                 opacity: 0.56 + root.revealProgress * 0.44
                 scale: 0.31 + root.revealProgress * 0.69
                 transformOrigin: Item.Center
@@ -446,6 +447,39 @@ Item {
                     cache: false
                     smooth: true
                     mipmap: true
+                    layer.enabled: true
+                    layer.smooth: true
+                    layer.effect: MultiEffect {
+                        maskEnabled: true
+                        maskSource: artworkMask
+                        maskThresholdMin: 0.5
+                        maskSpreadAtMin: 1.0
+                    }
+                }
+
+                Rectangle {
+                    id: artworkMask
+                    anchors.fill: parent
+                    radius: artworkFrame.radius
+                    color: "white"
+                    antialiasing: true
+                    visible: false
+                    layer.enabled: true
+                    layer.smooth: true
+                    layer.samples: 4
+                }
+
+                Rectangle {
+                    anchors.fill: parent
+                    radius: artworkFrame.radius
+                    color: "black"
+                    opacity: root.mediaScrubbing ? 0.18 : 0
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: root.reducedMotion ? 0 : MotionTokens.state
+                            easing.type: MotionTokens.easeOut
+                        }
+                    }
                 }
 
                 Text {
@@ -457,17 +491,6 @@ Item {
                     font.pixelSize: 28
                 }
 
-                Rectangle {
-                    anchors.fill: parent
-                    color: "black"
-                    opacity: root.mediaScrubbing ? 0.18 : 0
-                    Behavior on opacity {
-                        NumberAnimation {
-                            duration: root.reducedMotion ? 0 : MotionTokens.state
-                            easing.type: MotionTokens.easeOut
-                        }
-                    }
-                }
             }
 
             Column {
@@ -846,17 +869,15 @@ Item {
         enabled: !controller.timerPanelOpen && !controller.wallpaperPanelOpen
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
-        scale: enabled ? 1 : 0.94
         x: 360
         y: 17
         width: 175
         height: 106
         transform: Translate {
-            y: clockPane.enabled ? 0 : -5
+            y: clockPane.enabled ? 0 : -3
             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
         }
         Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state } }
-        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
         Accessible.name: controller.timeText
                          + ". " + (controller.networkName.length > 0
                                    ? controller.networkName + ". " : "")
@@ -1494,8 +1515,15 @@ Item {
 
         QtObject { id: fileRevealProgress; property real value: 0 }
 
-        Behavior on color { ColorAnimation { duration: MotionTokens.hover } }
-        Behavior on scale { NumberAnimation { duration: MotionTokens.hover; easing.type: MotionTokens.easeOut } }
+        Behavior on color {
+            ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
+        }
+        Behavior on scale {
+            NumberAnimation {
+                duration: root.reducedMotion ? 0 : MotionTokens.hover
+                easing.type: MotionTokens.easeOut
+            }
+        }
 
         SequentialAnimation {
             id: fileShelfLanding
@@ -1539,7 +1567,7 @@ Item {
         enabled: controller.timerPanelOpen
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
-        scale: enabled ? 1 : 0.94
+        scale: enabled ? 1 : 0.97
         colors: root.colors
         uiFont: root.uiFont
         iconFont: root.iconFont
@@ -1562,7 +1590,7 @@ Item {
         enabled: open
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
-        scale: enabled ? 1 : 0.955
+        scale: enabled ? 1 : 0.97
         colors: root.colors
         uiFont: root.uiFont
         iconFont: root.iconFont

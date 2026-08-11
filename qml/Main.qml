@@ -96,17 +96,16 @@ Window {
                                                 || compactActivity === "codex"
     readonly property bool liquidGlassVisualActive: controller.liquidGlassEnabled
                                                      && !codexSurfaceOpaque
-    // A lightly underdamped, axis-staggered response measured against the reference.
-    // Height leads while opening; width leads while closing. Angular frequency keeps
-    // the response time-based while FrameAnimation samples it at the display cadence.
-    readonly property real openWidthFrequency: 24
-    readonly property real openHeightFrequency: 29
-    readonly property real closeWidthFrequency: 30
-    readonly property real closeHeightFrequency: 24
-    readonly property real openWidthDamping: 0.78
-    readonly property real openHeightDamping: 0.82
-    readonly property real closeWidthDamping: 0.76
-    readonly property real closeHeightDamping: 0.78
+    // The shell is a single continuous spring. Height leads while opening and
+    // width leads while closing, with enough damping to avoid a rubbery tail.
+    readonly property real openWidthFrequency: 25
+    readonly property real openHeightFrequency: 30
+    readonly property real closeWidthFrequency: 32
+    readonly property real closeHeightFrequency: 27
+    readonly property real openWidthDamping: 0.88
+    readonly property real openHeightDamping: 0.90
+    readonly property real closeWidthDamping: 0.92
+    readonly property real closeHeightDamping: 0.90
 
     readonly property real surfaceHeight: islandVisualHeight
     readonly property bool pillMode: controller.pillMode
@@ -235,11 +234,15 @@ Window {
         if (elapsed <= 0)
             return
 
-        const opening = islandTargetWidth > compactWidth + 0.5
-        const widthFrequency = opening ? openWidthFrequency : closeWidthFrequency
-        const heightFrequency = opening ? openHeightFrequency : closeHeightFrequency
-        const widthDamping = opening ? openWidthDamping : closeWidthDamping
-        const heightDamping = opening ? openHeightDamping : closeHeightDamping
+        // Choose direction per axis from the live geometry. Compact activities
+        // can be wider than the base clock pill, so width alone cannot tell us
+        // whether the shell is opening or closing.
+        const widthOpening = islandTargetWidth >= islandVisualWidth
+        const heightOpening = islandTargetHeight >= islandVisualHeight
+        const widthFrequency = widthOpening ? openWidthFrequency : closeWidthFrequency
+        const heightFrequency = heightOpening ? openHeightFrequency : closeHeightFrequency
+        const widthDamping = widthOpening ? openWidthDamping : closeWidthDamping
+        const heightDamping = heightOpening ? openHeightDamping : closeHeightDamping
         const steps = Math.max(1, Math.ceil(elapsed * 240))
         const stepTime = elapsed / steps
 
@@ -386,7 +389,7 @@ Window {
 
     Timer {
         id: delayedShellClose
-        interval: 55
+        interval: 45
         repeat: false
         onTriggered: window.shellExpandedVisual = false
     }
@@ -489,7 +492,7 @@ Window {
 
     Timer {
         id: hoverOpenDelay
-        interval: 280
+        interval: 240
         repeat: false
         running: islandHover.hovered && !controller.expanded && !window.dragActive
                  && !controller.foregroundFullscreen && !qaMode
@@ -498,7 +501,7 @@ Window {
 
     Timer {
         id: leaveCloseDelay
-        interval: 560
+        interval: 480
         repeat: false
         running: controller.expanded && !controller.pinned
                  && !islandHover.hovered && !qaMode
@@ -629,13 +632,11 @@ Window {
                 enabled: window.compactActivity === "clock"
                 visible: opacity > 0.001
                 opacity: enabled ? 1 : 0
-                scale: enabled ? 1 : 0.9
                 transform: Translate {
-                    y: compactClock.enabled ? 0 : -4
+                    y: compactClock.enabled ? 0 : -3
                     Behavior on y { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
                 }
                 Behavior on opacity { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state } }
-                Behavior on scale { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
 
                 RollingDigits {
                     id: compactClockDigits
@@ -663,9 +664,8 @@ Window {
                 enabled: window.compactActivity === "monitor"
                 visible: opacity > 0.001
                 opacity: enabled ? 1 : 0
-                scale: enabled ? 1 : 0.94
                 transform: Translate {
-                    x: compactMonitor.enabled ? 0 : -5
+                    x: compactMonitor.enabled ? 0 : -3
                     Behavior on x {
                         NumberAnimation {
                             duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff
@@ -675,12 +675,6 @@ Window {
                 }
                 Behavior on opacity {
                     NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state }
-                }
-                Behavior on scale {
-                    NumberAnimation {
-                        duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff
-                        easing.type: MotionTokens.easeOut
-                    }
                 }
             }
 
@@ -692,38 +686,33 @@ Window {
                 enabled: window.compactActivity === "media"
                 visible: opacity > 0.001
                 opacity: enabled ? 1 : 0
-                scale: enabled ? 1 : 0.90
+                transform: Translate {
+                    y: compactMediaPeek.enabled ? 0 : 3
+                    Behavior on y {
+                        NumberAnimation {
+                            duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff
+                            easing.type: MotionTokens.easeOut
+                        }
+                    }
+                }
 
                 Behavior on opacity {
                     NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state }
-                }
-                Behavior on scale {
-                    NumberAnimation {
-                        duration: controller.reducedMotion ? 0 : MotionTokens.content
-                        easing.type: MotionTokens.easeOut
-                    }
                 }
 
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     width: 27
                     height: 27
-                    radius: window.pillMode ? height / 2 : 7
+                    radius: Math.min(width, height) * 0.36
                     color: colors.raised
-                    clip: true
-
-                    Behavior on radius {
-                        NumberAnimation {
-                            duration: controller.reducedMotion ? 0 : MotionTokens.content
-                            easing.type: MotionTokens.easeOut
-                        }
-                    }
 
                     MorphingArtwork {
                         id: compactArtwork
                         anchors.fill: parent
                         source: controller.mediaArtworkUrl
                         reducedMotion: controller.reducedMotion
+                        cornerRadius: parent.radius
                     }
                     Text {
                         anchors.centerIn: parent
@@ -812,13 +801,11 @@ Window {
                 enabled: window.compactActivity === "timer"
                 visible: opacity > 0.001
                 opacity: enabled ? 1 : 0
-                scale: enabled ? 1 : 0.90
                 transform: Translate {
-                    y: compactTimer.enabled ? 0 : 4
+                    y: compactTimer.enabled ? 0 : 3
                     Behavior on y { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
                 }
                 Behavior on opacity { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state } }
-                Behavior on scale { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
 
                 Image {
                     anchors.verticalCenter: parent.verticalCenter
@@ -875,13 +862,11 @@ Window {
                 enabled: window.compactActivity === "codex"
                 visible: opacity > 0.001
                 opacity: enabled ? 1 : 0
-                scale: enabled ? 1 : 0.9
                 transform: Translate {
-                    y: compactCodex.enabled ? 0 : 4
+                    y: compactCodex.enabled ? 0 : 3
                     Behavior on y { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
                 }
                 Behavior on opacity { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state } }
-                Behavior on scale { NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.activityHandoff; easing.type: MotionTokens.easeOut } }
 
                 MorphingIcon {
                     anchors.verticalCenter: parent.verticalCenter
@@ -1439,13 +1424,13 @@ Window {
             anchors.fill: parent
             enabled: window.dragActive
             opacity: enabled ? 1 : 0
-            scale: enabled ? 1 : 0.94
+            scale: enabled ? 1 : 0.97
 
             Behavior on opacity {
-                NumberAnimation { duration: controller.reducedMotion ? 0 : 130 }
+                NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.state }
             }
             Behavior on scale {
-                NumberAnimation { duration: controller.reducedMotion ? 0 : 180; easing.type: Easing.OutCubic }
+                NumberAnimation { duration: controller.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut }
             }
 
             Text {

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick 6.5
+import QtQuick.Effects 6.5
 import Ava 1.0
 
 Item {
@@ -9,6 +10,7 @@ Item {
     property url source
     property bool reducedMotion: false
     property int fillMode: Image.PreserveAspectCrop
+    property real cornerRadius: 0
     property url displayedSource
     property url incomingSource
     property bool ready: false
@@ -72,42 +74,70 @@ Item {
 
     Accessible.ignored: true
 
-    Image {
-        id: outgoing
+    Item {
+        id: artworkSource
         anchors.fill: parent
-        source: root.displayedSource
-        fillMode: root.fillMode
-        asynchronous: true
-        cache: false
-        smooth: true
-        mipmap: true
-    }
+        visible: false
+        layer.enabled: true
 
-    Image {
-        id: incoming
-        anchors.fill: parent
-        source: root.incomingSource
-        fillMode: root.fillMode
-        asynchronous: true
-        cache: false
-        smooth: true
-        mipmap: true
-        opacity: 0
-        scale: 0.96
+        Image {
+            id: outgoing
+            anchors.fill: parent
+            source: root.displayedSource
+            fillMode: root.fillMode
+            asynchronous: true
+            cache: false
+            smooth: true
+            mipmap: true
+        }
 
-        onStatusChanged: {
-            if (!root.waitingForIncoming)
-                return
-            if (status === Image.Ready) {
-                root.waitingForIncoming = false
-                handoff.start()
-            } else if (status === Image.Error) {
-                root.waitingForIncoming = false
-                root.displayedSource = ""
-                root.incomingSource = ""
-                root.resetVisuals()
+        Image {
+            id: incoming
+            anchors.fill: parent
+            source: root.incomingSource
+            fillMode: root.fillMode
+            asynchronous: true
+            cache: false
+            smooth: true
+            mipmap: true
+            opacity: 0
+            scale: 0.96
+
+            onStatusChanged: {
+                if (!root.waitingForIncoming)
+                    return
+                if (status === Image.Ready) {
+                    root.waitingForIncoming = false
+                    handoff.start()
+                } else if (status === Image.Error) {
+                    root.waitingForIncoming = false
+                    root.displayedSource = ""
+                    root.incomingSource = ""
+                    root.resetVisuals()
+                }
             }
         }
+    }
+
+    Rectangle {
+        id: artworkMask
+        anchors.fill: parent
+        radius: Math.max(0, root.cornerRadius)
+        color: "white"
+        antialiasing: true
+        visible: false
+        layer.enabled: true
+        layer.smooth: true
+        layer.samples: 4
+    }
+
+    MultiEffect {
+        anchors.fill: parent
+        source: artworkSource
+        maskEnabled: true
+        maskSource: artworkMask
+        maskThresholdMin: 0.5
+        maskSpreadAtMin: 1.0
     }
 
     ParallelAnimation {
@@ -123,7 +153,7 @@ Item {
         NumberAnimation {
             target: outgoing
             property: "scale"
-            to: 1.025
+            to: 1.01
             duration: MotionTokens.content
             easing.type: MotionTokens.easeOut
         }

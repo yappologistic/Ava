@@ -32,8 +32,8 @@ Item {
 
     Behavior on visualTimerProgress {
         NumberAnimation {
-            duration: root.reducedMotion ? 0 : 110
-            easing.type: Easing.OutCubic
+            duration: root.reducedMotion ? 0 : MotionTokens.hover
+            easing.type: MotionTokens.easeOut
         }
     }
 
@@ -67,13 +67,13 @@ Item {
         opacity: root.setupActive ? 1
                                   : (root.timerHandoffActive
                                      ? 1 - root.timerLaunchProgress : 0)
-        scale: root.setupActive ? 1 : 0.97
+        scale: root.setupActive ? 1 : 0.985
 
         Behavior on opacity {
             enabled: !root.timerHandoffActive
-            NumberAnimation { duration: root.reducedMotion ? 0 : 150; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: MotionTokens.easeOut }
         }
-        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 210; easing.type: Easing.OutCubic } }
+        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut } }
 
         Flickable {
             id: ruler
@@ -236,8 +236,17 @@ Item {
             Accessible.name: "Start " + root.selectedMinutes + " minute timer"
             Accessible.role: Accessible.Button
 
-            Behavior on color { ColorAnimation { duration: 110 } }
-            Behavior on scale { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+            Behavior on color {
+                ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
+            }
+            Behavior on scale {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : (startTap.pressed
+                                                         ? MotionTokens.press
+                                                         : MotionTokens.hover)
+                    easing.type: MotionTokens.easeOut
+                }
+            }
 
             HoverHandler { id: startHover }
             TapHandler {
@@ -326,17 +335,17 @@ Item {
                  : 0
         scale: root.runningActive
                ? (root.timerHandoffActive
-                  ? 0.96 + 0.04 * Math.max(0, Math.min(1,
+                  ? 0.985 + 0.015 * Math.max(0, Math.min(1,
                       (root.timerLaunchProgress - 0.42) / 0.58)) : 1)
-               : 0.97
+               : 0.985
 
         Behavior on opacity {
             enabled: !root.timerHandoffActive
-            NumberAnimation { duration: root.reducedMotion ? 0 : 170; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: MotionTokens.easeOut }
         }
         Behavior on scale {
             enabled: !root.timerHandoffActive
-            NumberAnimation { duration: root.reducedMotion ? 0 : 220; easing.type: Easing.OutCubic }
+            NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut }
         }
 
         Row {
@@ -458,8 +467,8 @@ Item {
                     font.pixelSize: 12
                     font.weight: Font.DemiBold
                 }
-                Behavior on color { ColorAnimation { duration: 100 } }
-                Behavior on scale { NumberAnimation { duration: 100 } }
+                Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
+                Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.press; easing.type: MotionTokens.easeOut } }
             }
 
             Rectangle {
@@ -488,8 +497,8 @@ Item {
                     font.pixelSize: 12
                     font.weight: Font.DemiBold
                 }
-                Behavior on color { ColorAnimation { duration: 100 } }
-                Behavior on scale { NumberAnimation { duration: 100 } }
+                Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
+                Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.press; easing.type: MotionTokens.easeOut } }
 
                 Rectangle {
                     id: addMinuteBadge
@@ -552,8 +561,8 @@ Item {
                     font.pixelSize: 12
                     font.weight: Font.DemiBold
                 }
-                Behavior on color { ColorAnimation { duration: 100 } }
-                Behavior on scale { NumberAnimation { duration: 100 } }
+                Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
+                Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.press; easing.type: MotionTokens.easeOut } }
             }
         }
 
@@ -605,10 +614,10 @@ Item {
         enabled: root.ringingActive
         visible: opacity > 0.001
         opacity: root.ringingActive ? 1 : 0
-        scale: root.ringingActive ? 1 : 0.94
+        scale: root.ringingActive ? 1 : 0.97
 
-        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : 160; easing.type: Easing.OutCubic } }
-        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : 240; easing.type: Easing.OutBack } }
+        Behavior on opacity { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.state; easing.type: MotionTokens.easeOut } }
+        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.settle } }
 
         Rectangle {
             id: ringingOrb
@@ -688,7 +697,7 @@ Item {
                 font.pixelSize: 15
                 font.weight: Font.DemiBold
             }
-            Behavior on scale { NumberAnimation { duration: 100 } }
+            Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.press; easing.type: MotionTokens.easeOut } }
         }
     }
 

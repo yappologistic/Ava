@@ -67,7 +67,7 @@ Item {
 
     enabled: open
     opacity: enabled ? 1 : 0
-    scale: enabled ? 1 : 0.975
+    scale: enabled ? 1 : 0.985
     transformOrigin: Item.Top
 
     Behavior on opacity {
@@ -206,7 +206,11 @@ Item {
     SequentialAnimation {
         id: attentionAnimation
         running: codexBridge.awaitingApproval && !root.reducedMotion
-        loops: Animation.Infinite
+        loops: 2
+        onRunningChanged: {
+            if (!running)
+                attentionPulse.value = 1
+        }
         NumberAnimation { target: attentionPulse; property: "value"; to: 1.065; duration: 560; easing.type: Easing.InOutSine }
         NumberAnimation { target: attentionPulse; property: "value"; to: 1; duration: 700; easing.type: Easing.InOutSine }
     }
@@ -303,8 +307,12 @@ Item {
                 font.pixelSize: 11
             }
 
-            Behavior on color { ColorAnimation { duration: MotionTokens.hover } }
-            Behavior on border.width { NumberAnimation { duration: MotionTokens.press } }
+            Behavior on color {
+                ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
+            }
+            Behavior on border.width {
+                NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.press }
+            }
         }
 
         IslandButton {
@@ -340,7 +348,6 @@ Item {
         enabled: codexBridge.active && !codexBridge.awaitingApproval
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
-        scale: enabled ? 1 : 0.975
         transform: Translate {
             y: activityView.enabled ? 0 : root.restingOffset(1)
             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut } }
@@ -352,8 +359,6 @@ Item {
                 NumberAnimation { duration: root.reducedMotion ? 0 : (activityView.enabled ? MotionTokens.state : MotionTokens.press); easing.type: MotionTokens.easeOut }
             }
         }
-        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut } }
-
         Row {
             id: activityTitleRow
             spacing: 7
@@ -435,7 +440,6 @@ Item {
         enabled: codexBridge.awaitingApproval
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
-        scale: enabled ? 1 : 0.96
         transform: Translate {
             y: approvalView.enabled ? 0 : root.restingOffset(2)
             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut } }
@@ -447,8 +451,6 @@ Item {
                 NumberAnimation { duration: root.reducedMotion ? 0 : (approvalView.enabled ? MotionTokens.state : MotionTokens.press); easing.type: MotionTokens.easeOut }
             }
         }
-        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut } }
-
         Text {
             id: approvalTitleLabel
             text: codexBridge.approvalTitle
@@ -503,7 +505,6 @@ Item {
         enabled: codexBridge.phase === "completed"
         visible: opacity > 0.001
         opacity: enabled ? 1 : 0
-        scale: enabled ? 1 : 0.97
         transform: Translate {
             y: completedView.enabled ? 0 : root.restingOffset(3)
             Behavior on y { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut } }
@@ -514,8 +515,6 @@ Item {
                 NumberAnimation { duration: root.reducedMotion ? 0 : (completedView.enabled ? MotionTokens.state : MotionTokens.press); easing.type: MotionTokens.easeOut }
             }
         }
-        Behavior on scale { NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.content; easing.type: MotionTokens.easeOut } }
-
         Text {
             id: completedTitleLabel
             text: "Done"

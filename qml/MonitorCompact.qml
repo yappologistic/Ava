@@ -47,7 +47,6 @@ Item {
         required property url iconSource
         required property string value
         property string suffix: ""
-        property bool charging: false
         property bool interactive: false
         readonly property bool hovered: pointer.containsMouse
         readonly property bool pressed: pointer.pressed
@@ -134,53 +133,6 @@ Item {
                 reducedMotion: root.reducedMotion
             }
 
-            SequentialAnimation {
-                id: chargingPulse
-                running: readout.charging && !root.reducedMotion
-                loops: Animation.Infinite
-                onRunningChanged: {
-                    if (!running) {
-                        iconHost.scale = 1
-                        iconHost.opacity = 1
-                    }
-                }
-                ParallelAnimation {
-                    NumberAnimation {
-                        target: iconHost
-                        property: "scale"
-                        from: 1
-                        to: 1.09
-                        duration: 620
-                        easing.type: Easing.InOutSine
-                    }
-                    NumberAnimation {
-                        target: iconHost
-                        property: "opacity"
-                        from: 0.78
-                        to: 1
-                        duration: 620
-                        easing.type: Easing.InOutSine
-                    }
-                }
-                ParallelAnimation {
-                    NumberAnimation {
-                        target: iconHost
-                        property: "scale"
-                        from: 1.09
-                        to: 1
-                        duration: 620
-                        easing.type: Easing.InOutSine
-                    }
-                    NumberAnimation {
-                        target: iconHost
-                        property: "opacity"
-                        from: 1
-                        to: 0.78
-                        duration: 620
-                        easing.type: Easing.InOutSine
-                    }
-                }
-            }
         }
 
         Item {
@@ -302,7 +254,6 @@ Item {
             value: root.controller.batteryAvailable
                    ? String(root.controller.batteryPercent) : "--"
             suffix: root.controller.batteryAvailable ? "%" : ""
-            charging: root.controller.batteryCharging
         }
     }
 }
