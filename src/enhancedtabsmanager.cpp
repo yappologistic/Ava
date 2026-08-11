@@ -15,6 +15,7 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <utility>
 
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
@@ -34,6 +35,10 @@ constexpr int kCommitAnimationDurationMs = 205;
 // making the switch feel delayed, including on high-refresh displays.
 constexpr int kHandoffDurationMs = 64;
 constexpr int kHandoffReleasePaddingMs = 16;
+constexpr int kActivationCheckIntervalMs = 8;
+constexpr int kActivationMaximumChecks = 12;
+constexpr int kActivationRetryCheck = 4;
+constexpr int kMaximumQueuedSteps = 32;
 
 #ifdef Q_OS_WIN
 using Microsoft::WRL::ComPtr;
@@ -180,6 +185,38 @@ bool isCloaked(HWND window)
                                            &cloaked,
                                            sizeof(cloaked)))
         && cloaked != 0;
+}
+
+bool isActivatableWindow(HWND window)
+{
+    return window && IsWindow(window) && IsWindowEnabled(window)
+        && (IsWindowVisible(window) || IsIconic(window));
+}
+
+bool isForegroundSurface(HWND target)
+{
+    const HWND foreground = GetForegroundWindow();
+    if (!foreground || !target) {
+        return false;
+    }
+    if (foreground == target) {
+        return true;
+    }
+    return GetAncestor(foreground, GA_ROOTOWNER)
+        == GetAncestor(target, GA_ROOTOWNER);
+}
+
+void activateWindow(HWND window)
+{
+    if (!isActivatableWindow(window)) {
+        return;
+    }
+    if (IsIconic(window)) {
+        ShowWindowAsync(window, SW_RESTORE);
+    }
+    // This is an Alt-Tab transition. Passing TRUE asks the shell to preserve
+    // the corresponding window ordering as it moves the target to the front.
+    SwitchToThisWindow(window, TRUE);
 }
 
 HWND lastVisiblePopup(HWND window)
@@ -616,6 +653,12 @@ void EnhancedTabsManager::step(int delta)
     if (!m_active || m_windows.isEmpty() || delta == 0) {
         return;
     }
+    if (m_committing) {
+        if (m_queuedSteps.size() < kMaximumQueuedSteps) {
+            m_queuedSteps.append(delta < 0 ? -1 : 1);
+        }
+        return;
+    }
     const int next = EnhancedTabsLogic::steppedIndex(m_selectedIndex,
                                                      delta,
                                                      m_windows.size());
@@ -629,7 +672,7 @@ void EnhancedTabsManager::step(int delta)
 
 void EnhancedTabsManager::select(int index)
 {
-    if (!m_active || index < 0 || index >= m_windows.size()
+    if (!m_active || m_committing || index < 0 || index >= m_windows.size()
         || index == m_selectedIndex) {
         return;
     }
@@ -640,11 +683,37 @@ void EnhancedTabsManager::select(int index)
 
 void EnhancedTabsManager::accept()
 {
-    if (!m_active || m_committing) {
+    if (!m_active) {
         return;
     }
+#ifdef Q_OS_WIN
+    if (!gAltDown) {
+        gEnhancedTabActive.store(false);
+    }
+#endif
+    if (m_committing) {
+        if (!m_queuedSteps.isEmpty()) {
+            m_queuedAccept = true;
+        }
+        return;
+    }
+    if (m_selectedIndex < 0 || m_selectedIndex >= m_windows.size()) {
+        cancel();
+        return;
+    }
+    // Freeze the exact HWND represented by the selected card. Any new Alt-Tab
+    // gesture arriving during the commit is queued separately and cannot
+    // redirect this in-flight activation.
+    m_committedHandle = m_windows.at(m_selectedIndex).handle;
     m_committing = true;
     emit committingChanged();
+#ifdef Q_OS_WIN
+    // Start the real Alt-Tab transition immediately. The previous delayed
+    // SetForegroundWindow request could be rejected by Windows and turn into
+    // the taskbar attention flash seen by the user.
+    const HWND target = reinterpret_cast<HWND>(m_committedHandle);
+    activateWindow(target);
+#endif
     QTimer::singleShot(kCommitAnimationDurationMs, this, [this] {
         if (m_active && m_committing) {
             finish(true);
@@ -654,6 +723,12 @@ void EnhancedTabsManager::accept()
 
 void EnhancedTabsManager::cancel()
 {
+#ifdef Q_OS_WIN
+    gEnhancedTabActive.store(false);
+#endif
+    m_queuedSteps.clear();
+    m_queuedAccept = false;
+    m_committedHandle = 0;
     if (m_committing) {
         m_committing = false;
         emit committingChanged();
@@ -667,41 +742,89 @@ void EnhancedTabsManager::finish(bool activateSelection)
         return;
     }
 #ifdef Q_OS_WIN
-    gEnhancedTabActive.store(false);
-#endif
-    quintptr selectedHandle = 0;
-    if (activateSelection && m_selectedIndex >= 0
-        && m_selectedIndex < m_windows.size()) {
-        selectedHandle = m_windows.at(m_selectedIndex).handle;
-    }
-#ifdef Q_OS_WIN
-    if (selectedHandle) {
-        const HWND target = reinterpret_cast<HWND>(selectedHandle);
-        if (IsIconic(target)) {
-            ShowWindowAsync(target, SW_RESTORE);
+    if (activateSelection) {
+        const HWND target = reinterpret_cast<HWND>(m_committedHandle);
+        if (!isActivatableWindow(target)) {
+            handleActivationFailure();
+            return;
         }
-        SetForegroundWindow(target);
-    } else if (m_foregroundBeforeSwitch) {
-        SetForegroundWindow(reinterpret_cast<HWND>(m_foregroundBeforeSwitch));
+        if (!isForegroundSurface(target)) {
+            activateWindow(target);
+        }
+        verifyActivation(m_committedHandle, 0);
+        return;
+    }
+    if (m_foregroundBeforeSwitch) {
+        activateWindow(reinterpret_cast<HWND>(m_foregroundBeforeSwitch));
     }
 #endif
 
     if (activateSelection) {
-        // Window activation and the first DWM presentation are not one atomic
-        // operation. Fade the still-live preview over the real surface, then
-        // hide the overlay and release its capture resources only after it is
-        // fully transparent.
-        m_handoffActive = true;
-        emit handoffActiveChanged();
-        QTimer::singleShot(kHandoffDurationMs + kHandoffReleasePaddingMs,
-                           this,
-                           [this] {
-                               completeFinish();
-                           });
+        beginHandoff();
         return;
     }
 
     completeFinish();
+}
+
+void EnhancedTabsManager::verifyActivation(quintptr targetHandle, int check)
+{
+    if (!m_active || !m_committing || m_committedHandle != targetHandle) {
+        return;
+    }
+#ifdef Q_OS_WIN
+    const HWND target = reinterpret_cast<HWND>(targetHandle);
+    if (!isActivatableWindow(target)) {
+        handleActivationFailure();
+        return;
+    }
+    if (isForegroundSurface(target)) {
+        beginHandoff();
+        return;
+    }
+    if (check >= kActivationMaximumChecks) {
+        handleActivationFailure();
+        return;
+    }
+    if (check == kActivationRetryCheck) {
+        activateWindow(target);
+    }
+    QTimer::singleShot(kActivationCheckIntervalMs, this, [this, targetHandle, check] {
+        verifyActivation(targetHandle, check + 1);
+    });
+#else
+    Q_UNUSED(targetHandle);
+    Q_UNUSED(check);
+    beginHandoff();
+#endif
+}
+
+void EnhancedTabsManager::beginHandoff()
+{
+    if (!m_active || m_handoffActive) {
+        return;
+    }
+    // Window activation and the first DWM presentation are not one atomic
+    // operation. Fade the still-live preview over the verified real surface,
+    // then release its capture resources after it is fully transparent.
+    m_handoffActive = true;
+    emit handoffActiveChanged();
+    QTimer::singleShot(kHandoffDurationMs + kHandoffReleasePaddingMs,
+                       this,
+                       [this] {
+                           completeFinish();
+                       });
+}
+
+void EnhancedTabsManager::handleActivationFailure()
+{
+#ifdef Q_OS_WIN
+    if (m_foregroundBeforeSwitch) {
+        activateWindow(reinterpret_cast<HWND>(m_foregroundBeforeSwitch));
+    }
+#endif
+    setStatusText(tr("Enhanced Alt-Tab could not activate the selected window"));
+    beginHandoff();
 }
 
 void EnhancedTabsManager::completeFinish()
@@ -724,6 +847,18 @@ void EnhancedTabsManager::completeFinish()
         m_captureWorker->setWindows({});
     }
 
+    QVector<int> queuedSteps = std::move(m_queuedSteps);
+    m_queuedSteps.clear();
+    bool queuedAccept = std::exchange(m_queuedAccept, false);
+#ifdef Q_OS_WIN
+    // The Alt-up message can be delivered just after this timer event. The
+    // hook state is authoritative, so a released queued gesture must not leave
+    // the replayed switcher stuck open while that message is still in flight.
+    queuedAccept = queuedAccept
+        || (!queuedSteps.isEmpty() && !gEnhancedTabActive.load());
+#endif
+    m_committedHandle = 0;
+
     beginResetModel();
     m_windows.clear();
     m_textures.clear();
@@ -731,6 +866,25 @@ void EnhancedTabsManager::completeFinish()
     endResetModel();
     emit selectedIndexChanged();
     emit windowCountChanged();
+
+    if (!queuedSteps.isEmpty()) {
+        QTimer::singleShot(0,
+                           this,
+                           [this,
+                            queuedSteps = std::move(queuedSteps),
+                            queuedAccept]() mutable {
+                               if (!m_enabled || queuedSteps.isEmpty()
+                                   || !beginSwitch(queuedSteps.first() < 0)) {
+                                   return;
+                               }
+                               for (int index = 1; index < queuedSteps.size(); ++index) {
+                                   step(queuedSteps.at(index));
+                               }
+                               if (queuedAccept) {
+                                   accept();
+                               }
+                           });
+    }
 }
 
 void EnhancedTabsManager::updateCaptureTargets()

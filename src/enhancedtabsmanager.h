@@ -118,6 +118,9 @@ private:
 
     bool beginSwitch(bool backwards, bool preview = false);
     void finish(bool activateSelection);
+    void verifyActivation(quintptr targetHandle, int check);
+    void beginHandoff();
+    void handleActivationFailure();
     void completeFinish();
     void refreshEnvironment(quintptr foregroundWindow);
     QVector<WindowEntry> enumerateWindows(quintptr foregroundWindow) const;
@@ -135,6 +138,9 @@ private:
     QString m_statusText;
     int m_selectedIndex = -1;
     quintptr m_foregroundBeforeSwitch = 0;
+    quintptr m_committedHandle = 0;
+    QVector<int> m_queuedSteps;
+    bool m_queuedAccept = false;
     bool m_enabled = false;
     bool m_available = false;
     bool m_active = false;
