@@ -175,7 +175,7 @@ Item {
         width: 38
         height: 46
         radius: 12
-        color: backHover.hovered ? "#232323" : "transparent"
+        color: backHover.hovered ? colors.raised : "transparent"
         Accessible.name: "Back to applications"
         Accessible.role: Accessible.Button
 
@@ -217,12 +217,12 @@ Item {
 
         background: Rectangle {
             radius: 13
-            color: searchField.activeFocus ? "#171717" : "#131313"
-            border.width: 1
+            color: searchField.activeFocus ? colors.raised : colors.black
+            border.width: searchField.activeFocus ? 1 : 0
             border.color: searchField.activeFocus
                           ? Qt.rgba(root.focusAccent.r, root.focusAccent.g,
-                                    root.focusAccent.b, 0.48)
-                          : "#2b2b2b"
+                                    root.focusAccent.b, 0.56)
+                          : "transparent"
             Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
             Behavior on border.color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
         }
@@ -272,9 +272,12 @@ Item {
         }
         background: Rectangle {
             radius: 13
-            color: categoryBox.hovered ? "#1c1c1c" : "#141414"
-            border.width: 1
-            border.color: categoryBox.activeFocus ? root.focusAccent : "#2b2b2b"
+            color: categoryBox.hovered ? colors.raised : colors.black
+            border.width: categoryBox.activeFocus ? 1 : 0
+            border.color: categoryBox.activeFocus ? root.focusAccent : "transparent"
+            Behavior on color {
+                ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
+            }
         }
         popup: Popup {
             y: categoryBox.height + 6
@@ -290,9 +293,9 @@ Item {
             }
             background: Rectangle {
                 radius: 13
-                color: "#1b1b1b"
+                color: colors.popover
                 border.width: 1
-                border.color: "#343434"
+                border.color: colors.divider
             }
         }
         delegate: ItemDelegate {
@@ -311,7 +314,7 @@ Item {
             }
             background: Rectangle {
                 radius: 8
-                color: parent.highlighted ? "#303030" : "transparent"
+                color: parent.highlighted ? colors.hover : "transparent"
             }
         }
     }
@@ -321,7 +324,13 @@ Item {
         y: 74
         width: parent.width - 32
         height: 1
-        color: "#252525"
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0; color: "transparent" }
+            GradientStop { position: 0.12; color: colors.divider }
+            GradientStop { position: 0.88; color: colors.divider }
+            GradientStop { position: 1; color: "transparent" }
+        }
     }
 
     GridView {
@@ -362,12 +371,12 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 4
                 radius: 12
-                color: grid.currentIndex === characterCell.index ? "#242424"
-                                                                  : cellHover.hovered ? "#1b1b1b"
+                color: grid.currentIndex === characterCell.index ? colors.raised
+                                                                  : cellHover.hovered ? colors.black
                                                                                       : "transparent"
                 border.width: grid.currentIndex === characterCell.index ? 1 : 0
                 border.color: Qt.rgba(root.focusAccent.r, root.focusAccent.g,
-                                      root.focusAccent.b, 0.64)
+                                      root.focusAccent.b, 0.52)
                 scale: cellMouse.pressed ? 0.94 : 1
                 Behavior on color { ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover } }
                 Behavior on scale {
@@ -465,7 +474,13 @@ Item {
             y: 0
             width: parent.width - 36
             height: 1
-            color: Qt.rgba(1, 1, 1, 0.10)
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0; color: "transparent" }
+                GradientStop { position: 0.12; color: colors.divider }
+                GradientStop { position: 0.88; color: colors.divider }
+                GradientStop { position: 1; color: "transparent" }
+            }
         }
 
         Row {
@@ -510,28 +525,43 @@ Item {
                 width: pasteHint.width + 18
                 height: 28
                 radius: 9
-                color: hintHover.hovered ? "#292929" : "#1b1b1b"
+                color: Qt.rgba(root.focusAccent.r, root.focusAccent.g,
+                               root.focusAccent.b, hintHover.hovered ? 0.24 : 0.15)
                 border.width: 1
-                border.color: "#303030"
+                border.color: Qt.rgba(root.focusAccent.r, root.focusAccent.g,
+                                      root.focusAccent.b,
+                                      hintHover.hovered ? 0.46 : 0.28)
                 Text {
                     id: pasteHint
                     anchors.centerIn: parent
                     text: "Paste   ↵"
-                    color: colors.secondary
+                    color: colors.text
                     font.family: root.uiFont
                     font.pixelSize: 9
                     font.weight: Font.Medium
                 }
                 HoverHandler { id: hintHover }
-                TapHandler { onTapped: root.activate(false) }
+                TapHandler {
+                    id: pasteTap
+                    onTapped: root.activate(false)
+                }
+                scale: pasteTap.pressed ? 0.96 : 1
+                Behavior on color {
+                    ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
+                }
+                Behavior on scale {
+                    NumberAnimation {
+                        duration: root.reducedMotion ? 0 : MotionTokens.press
+                        easing.type: Easing.OutCubic
+                    }
+                }
             }
             Rectangle {
                 width: 32
                 height: 28
                 radius: 9
-                color: actionHover.hovered ? "#292929" : "#1b1b1b"
-                border.width: 1
-                border.color: "#303030"
+                color: actionHover.hovered ? colors.raised : colors.black
+                border.width: 0
                 Text {
                     anchors.centerIn: parent
                     text: "\uE712"
@@ -542,7 +572,20 @@ Item {
                 Accessible.name: "Character actions"
                 Accessible.role: Accessible.Button
                 HoverHandler { id: actionHover }
-                TapHandler { onTapped: root.openActions() }
+                TapHandler {
+                    id: actionTap
+                    onTapped: root.openActions()
+                }
+                scale: actionTap.pressed ? 0.94 : 1
+                Behavior on color {
+                    ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
+                }
+                Behavior on scale {
+                    NumberAnimation {
+                        duration: root.reducedMotion ? 0 : MotionTokens.press
+                        easing.type: Easing.OutCubic
+                    }
+                }
             }
         }
     }
@@ -558,9 +601,9 @@ Item {
 
         background: Rectangle {
             radius: 14
-            color: "#1a1a1a"
+            color: colors.popover
             border.width: 1
-            border.color: "#363636"
+            border.color: colors.divider
         }
         contentItem: Column {
             spacing: 2
@@ -580,7 +623,7 @@ Item {
                     height: 34
                     radius: 9
                     visible: modelData.action !== "tone" || root.selectedItem.supportsSkinTone
-                    color: actionRowHover.hovered ? "#303030" : "transparent"
+                    color: actionRowHover.hovered ? colors.hover : "transparent"
                     Text {
                         x: 10
                         anchors.verticalCenter: parent.verticalCenter
@@ -633,9 +676,9 @@ Item {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: Rectangle {
             radius: 14
-            color: "#1a1a1a"
+            color: colors.popover
             border.width: 1
-            border.color: "#363636"
+            border.color: colors.divider
         }
         contentItem: Row {
             spacing: 3
@@ -649,7 +692,7 @@ Item {
                     height: 46
                     radius: 10
                     color: toneHover.hovered || emojiPicker.defaultSkinTone === index
-                           ? "#303030" : "transparent"
+                           ? colors.hover : "transparent"
                     border.width: emojiPicker.defaultSkinTone === index ? 1 : 0
                     border.color: root.focusAccent
                     Text {
@@ -683,9 +726,9 @@ Item {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         background: Rectangle {
             radius: 15
-            color: "#1b1b1b"
+            color: colors.popover
             border.width: 1
-            border.color: "#383838"
+            border.color: colors.divider
         }
         contentItem: Column {
             spacing: 10
@@ -713,9 +756,9 @@ Item {
                 }
                 background: Rectangle {
                     radius: 10
-                    color: "#121212"
-                    border.width: 1
-                    border.color: keywordField.activeFocus ? root.focusAccent : "#323232"
+                    color: keywordField.activeFocus ? colors.raised : colors.black
+                    border.width: keywordField.activeFocus ? 1 : 0
+                    border.color: keywordField.activeFocus ? root.focusAccent : "transparent"
                 }
             }
         }
@@ -729,9 +772,9 @@ Item {
         height: 30
         width: toastLabel.width + 24
         radius: 10
-        color: "#292929"
+        color: colors.popover
         border.width: 1
-        border.color: "#3a3a3a"
+        border.color: colors.divider
         opacity: 0
         visible: opacity > 0.001
         Text {

@@ -193,10 +193,14 @@ Window {
                                        ? "#34080c12" : "#000000"
         readonly property color raised: window.liquidGlassVisualActive
                                         ? "#24ffffff" : "#151515"
+        readonly property color subtle: window.liquidGlassVisualActive
+                                        ? "#14ffffff" : "#101010"
         readonly property color hover: window.liquidGlassVisualActive
                                        ? "#38ffffff" : "#232323"
         readonly property color divider: window.liquidGlassVisualActive
                                          ? "#28ffffff" : "#242424"
+        readonly property color popover: window.liquidGlassVisualActive
+                                         ? "#d4141820" : "#1a1a1a"
         readonly property color text: "#f5f5f7"
         readonly property color secondary: window.liquidGlassVisualActive
                                             ? "#cdd1d8" : "#a1a1a6"

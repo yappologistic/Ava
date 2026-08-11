@@ -120,34 +120,6 @@ Item {
         }
     }
 
-    Rectangle {
-        id: searchGlow
-        visible: !emojiPicker.active && !appLauncher.pasteDismissPending
-        x: 19
-        y: 17
-        width: parent.width - 38
-        height: 56
-        radius: 17
-        color: "transparent"
-        border.width: 5
-        border.color: root.focusAccent
-        opacity: searchField.activeFocus ? 0.075 : 0
-        scale: searchField.activeFocus ? 1.008 : 0.99
-
-        Behavior on opacity {
-            NumberAnimation {
-                duration: root.reducedMotion ? 0 : MotionTokens.hover
-                easing.type: Easing.OutCubic
-            }
-        }
-        Behavior on scale {
-            NumberAnimation {
-                duration: root.reducedMotion ? 0 : MotionTokens.directSettle
-                easing.type: Easing.OutCubic
-            }
-        }
-    }
-
     TextField {
         id: searchField
         visible: !emojiPicker.active && !appLauncher.pasteDismissPending
@@ -208,12 +180,12 @@ Item {
 
         background: Rectangle {
             radius: 14
-            color: searchField.activeFocus ? "#161616" : "#121212"
-            border.width: 1
+            color: searchField.activeFocus ? colors.subtle : colors.black
+            border.width: searchField.activeFocus ? 1 : 0
             border.color: searchField.activeFocus
                           ? Qt.rgba(root.focusAccent.r, root.focusAccent.g,
-                                    root.focusAccent.b, 0.48)
-                          : "#2b2b2b"
+                                    root.focusAccent.b, 0.42)
+                          : "transparent"
 
             Behavior on color {
                 ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
@@ -259,9 +231,8 @@ Item {
             width: parent.width - 4
             height: 58
             radius: 13
-            color: "#202020"
-            border.width: 1
-            border.color: "#2c2c2c"
+            color: colors.subtle
+            border.width: 0
             visible: !appLauncher.loading && appLauncher.resultCount > 0
                      && results.currentIndex >= 0
             opacity: visible ? Math.min(1, root.revealProgress * 1.25) : 0
@@ -368,16 +339,11 @@ Item {
                         height: 38
                         radius: 10
                         color: results.currentIndex === appRow.index
-                               ? "#2a2a2a" : "#191919"
-                        border.width: 1
-                        border.color: results.currentIndex === appRow.index
-                                      ? "#343434" : "#242424"
+                               ? colors.raised : colors.black
+                        border.width: 0
                         scale: rowHover.hovered ? 1.045 : 1
 
                         Behavior on color {
-                            ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
-                        }
-                        Behavior on border.color {
                             ColorAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
                         }
                         Behavior on scale {
@@ -604,9 +570,8 @@ Item {
                 }
                 background: Rectangle {
                     radius: 9
-                    color: parent.hovered ? "#2b2b2b" : "#202020"
-                    border.width: 1
-                    border.color: "#353535"
+                    color: parent.hovered ? colors.hover : colors.raised
+                    border.width: 0
                 }
             }
         }
