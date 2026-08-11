@@ -115,6 +115,10 @@ Window {
                 required property bool windowMinimized
                 required property real windowAspectRatio
                 required property bool captureReady
+                required property int windowFrameX
+                required property int windowFrameY
+                required property int windowFrameWidth
+                required property int windowFrameHeight
 
                 readonly property int slot: root.forwardDistance(index)
                 readonly property bool selected: index === root.manager.selectedIndex
@@ -131,11 +135,40 @@ Window {
                 readonly property real stageSpacing: Math.min(root.width * 0.067, 142)
                 readonly property real stageCenterX: root.width * 0.655
                 readonly property real stageCenterY: root.height * 0.585
-                readonly property real commitScale: Math.max(root.width / width,
-                                                               root.height / height) * 1.025
-                readonly property real finalX: stageCenterX - width / 2
+                readonly property real localFrameX: windowFrameX
+                                                     - root.manager.virtualLeft
+                readonly property real localFrameY: windowFrameY
+                                                     - root.manager.virtualTop
+                readonly property real clippedFrameLeft: Math.max(0, localFrameX)
+                readonly property real clippedFrameTop: Math.max(0, localFrameY)
+                readonly property real clippedFrameRight: Math.min(
+                                                               root.width,
+                                                               localFrameX
+                                                               + windowFrameWidth)
+                readonly property real clippedFrameBottom: Math.min(
+                                                                root.height,
+                                                                localFrameY
+                                                                + windowFrameHeight)
+                readonly property bool commitFrameUsable: !windowMinimized
+                                                           && clippedFrameRight
+                                                              - clippedFrameLeft > 80
+                                                           && clippedFrameBottom
+                                                              - clippedFrameTop > 60
+                readonly property real commitX: commitFrameUsable
+                                                ? clippedFrameLeft : 0
+                readonly property real commitY: commitFrameUsable
+                                                ? clippedFrameTop : 0
+                readonly property real commitWidth: commitFrameUsable
+                                                    ? clippedFrameRight
+                                                      - clippedFrameLeft
+                                                    : root.width
+                readonly property real commitHeight: commitFrameUsable
+                                                     ? clippedFrameBottom
+                                                       - clippedFrameTop
+                                                     : root.height
+                readonly property real finalX: stageCenterX - cardWidth / 2
                                                 - slot * stageSpacing
-                readonly property real finalY: stageCenterY - height / 2
+                readonly property real finalY: stageCenterY - cardHeight / 2
                                                 - slot * Math.min(root.height * 0.038,
                                                                   35)
                 readonly property real finalScale: Math.max(0.62,
@@ -149,6 +182,8 @@ Window {
                 property bool retiring: false
                 property bool teleporting: false
                 property real entranceProgress: root.presented ? 1 : 0
+                property real commitProgress: root.manager.committing && selected
+                                              ? 1 : 0
 
                 Component.onCompleted: {
                     wasSelected = selected
@@ -187,22 +222,31 @@ Window {
                     }
                 }
 
-                x: root.manager.committing && selected
-                   ? root.width / 2 - width / 2
-                   : retiring
+                Behavior on commitProgress {
+                    NumberAnimation {
+                        duration: root.reducedMotion ? 0 : 190
+                        easing.type: MotionTokens.settle
+                    }
+                }
+
+                x: retiring
                      ? root.width * 0.80 - width / 2
-                     : finalX
-                y: root.manager.committing && selected
-                   ? root.height / 2 - height / 2
-                   : retiring
+                     : selected
+                       ? finalX + (commitX - finalX) * commitProgress
+                       : finalX
+                y: retiring
                      ? root.height * 0.615 - height / 2
-                     : finalY
-                width: cardWidth
-                height: cardHeight
+                     : selected
+                       ? finalY + (commitY - finalY) * commitProgress
+                       : finalY
+                width: cardWidth + (commitWidth - cardWidth) * commitProgress
+                height: cardHeight + (commitHeight - cardHeight) * commitProgress
                 z: root.manager.committing && selected ? 4000
                    : retiring ? 3000 : 1500 - slot * 20
-                scale: root.manager.committing && selected ? commitScale
-                       : retiring ? 0.955 : finalScale
+                scale: retiring ? 0.955
+                       : selected
+                         ? finalScale + (1 - finalScale) * commitProgress
+                         : finalScale
                 opacity: root.manager.committing ? (selected ? 1 : 0)
                          : retiring || teleporting ? 0
                          : finalOpacity * (selected
@@ -220,23 +264,21 @@ Window {
                         axis.x: 0
                         axis.y: 1
                         axis.z: 0
-                        angle: root.manager.committing && card.selected ? 0
-                               : card.retiring ? 24
-                               : 38 - (card.selected ? 8 : 4)
-                                 * (1 - card.entranceProgress)
+                        readonly property real restingAngle:
+                            38 - (card.selected ? 8 : 4)
+                            * (1 - card.entranceProgress)
+                        angle: card.retiring ? 24
+                               : restingAngle * (1 - card.commitProgress)
 
                         Behavior on angle {
                             enabled: !card.teleporting
+                                     && !root.manager.committing
                                      && (card.entranceProgress >= 0.999
-                                         || root.manager.committing
                                          || card.retiring)
                             NumberAnimation {
                                 duration: root.reducedMotion ? 0
-                                          : (root.manager.committing
-                                             ? 195 : MotionTokens.state)
-                                easing.type: root.manager.committing
-                                             ? MotionTokens.settle
-                                             : MotionTokens.easeOut
+                                          : MotionTokens.state
+                                easing.type: MotionTokens.easeOut
                             }
                         }
                     },
@@ -258,36 +300,24 @@ Window {
                 ]
 
                 Behavior on x {
-                    enabled: !card.teleporting
+                    enabled: !card.teleporting && !root.manager.committing
                     NumberAnimation {
-                        duration: root.reducedMotion ? 0
-                                  : (root.manager.committing
-                                     ? 195 : MotionTokens.state)
-                        easing.type: root.manager.committing
-                                     ? MotionTokens.settle
-                                     : MotionTokens.easeOut
+                        duration: root.reducedMotion ? 0 : MotionTokens.state
+                        easing.type: MotionTokens.easeOut
                     }
                 }
                 Behavior on y {
-                    enabled: !card.teleporting
+                    enabled: !card.teleporting && !root.manager.committing
                     NumberAnimation {
-                        duration: root.reducedMotion ? 0
-                                  : (root.manager.committing
-                                     ? 195 : MotionTokens.state)
-                        easing.type: root.manager.committing
-                                     ? MotionTokens.settle
-                                     : MotionTokens.easeOut
+                        duration: root.reducedMotion ? 0 : MotionTokens.state
+                        easing.type: MotionTokens.easeOut
                     }
                 }
                 Behavior on scale {
-                    enabled: !card.teleporting
+                    enabled: !card.teleporting && !root.manager.committing
                     NumberAnimation {
-                        duration: root.reducedMotion ? 0
-                                  : (root.manager.committing
-                                     ? 195 : MotionTokens.state)
-                        easing.type: root.manager.committing
-                                     ? MotionTokens.settle
-                                     : MotionTokens.easeOut
+                        duration: root.reducedMotion ? 0 : MotionTokens.state
+                        easing.type: MotionTokens.easeOut
                     }
                 }
                 Behavior on opacity {
@@ -310,7 +340,8 @@ Window {
                     z: -1
                     radius: cardSurface.radius
                     color: "#52000000"
-                    visible: !root.manager.committing
+                    opacity: 1 - card.commitProgress
+                    visible: opacity > 0.01
                 }
 
                 Rectangle {

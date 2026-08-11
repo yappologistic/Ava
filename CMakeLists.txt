@@ -45,6 +45,7 @@ qt_add_executable(Ava
     src/systemmonitor.h
     src/windowtilingmanager.cpp
     src/windowtilingmanager.h
+    src/windowmotionlogic.h
 )
 
 qt_add_library(AvaCodexCore STATIC
@@ -316,6 +317,11 @@ if (BUILD_TESTING)
     target_include_directories(tst_enhancedtabslogic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(tst_enhancedtabslogic PRIVATE Qt6::Core Qt6::Test)
     add_test(NAME enhanced_tabs COMMAND tst_enhancedtabslogic)
+
+    qt_add_executable(tst_windowmotionlogic tests/tst_windowmotionlogic.cpp)
+    target_include_directories(tst_windowmotionlogic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(tst_windowmotionlogic PRIVATE Qt6::Core Qt6::Test)
+    add_test(NAME window_motion COMMAND tst_windowmotionlogic)
 
     qt_add_executable(tst_emojipickermodel
         tests/tst_emojipickermodel.cpp

@@ -236,6 +236,9 @@ int main(int argc, char *argv[])
     const QCommandLineOption enhancedTabsPreviewOption(
         QStringLiteral("enhanced-tabs-preview"),
         QStringLiteral("Render Enhanced Alt-Tab using current windows for screenshot QA."));
+    const QCommandLineOption enhancedTabsPreviewCommitOption(
+        QStringLiteral("enhanced-tabs-preview-commit"),
+        QStringLiteral("Render and automatically commit Enhanced Alt-Tab for motion QA."));
     const QCommandLineOption codexOption(
         QStringLiteral("codex"),
         QStringLiteral("Open the Codex activity panel."));
@@ -272,6 +275,7 @@ int main(int argc, char *argv[])
     parser.addOption(monitorDetailsOption);
     parser.addOption(utilityMenuOption);
     parser.addOption(enhancedTabsPreviewOption);
+    parser.addOption(enhancedTabsPreviewCommitOption);
     parser.addOption(codexOption);
     parser.addOption(codexWorkspaceOption);
     parser.addOption(codexVisualStateOption);
@@ -439,10 +443,16 @@ int main(int argc, char *argv[])
             tilingManager.setEnabled(true);
         });
     }
-    if (parser.isSet(enhancedTabsPreviewOption)) {
+    if (parser.isSet(enhancedTabsPreviewOption)
+        || parser.isSet(enhancedTabsPreviewCommitOption)) {
         QTimer::singleShot(250, &enhancedTabsManager, [&enhancedTabsManager]() {
             enhancedTabsManager.beginPreview();
         });
+        if (parser.isSet(enhancedTabsPreviewCommitOption)) {
+            QTimer::singleShot(1400,
+                               &enhancedTabsManager,
+                               &EnhancedTabsManager::accept);
+        }
     }
 
 #ifdef Q_OS_WIN

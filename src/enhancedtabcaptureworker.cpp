@@ -41,7 +41,8 @@ using namespace winrt::Windows::Graphics::DirectX;
 
 constexpr int kMaximumTextureWidth = 1120;
 constexpr int kMaximumTextureHeight = 700;
-constexpr int kFrameIntervalMs = 30;
+constexpr int kFullRateCaptureCount = 3;
+constexpr int kBackgroundFrameIntervalMs = 30;
 constexpr int kMaximumEmptyFrameRetries = 8;
 constexpr int kMinimizedFallbackDelayMs = 450;
 std::atomic<quint64> g_nextEnhancedTextureId{1};
@@ -520,6 +521,13 @@ public:
     }
     HWND window() const { return m_window; }
 
+    void setPriority(int priority)
+    {
+        m_minimumFrameInterval = priority < kFullRateCaptureCount
+            ? std::chrono::milliseconds(0)
+            : std::chrono::milliseconds(kBackgroundFrameIntervalMs);
+    }
+
     std::shared_ptr<NativeEnhancedTabTexture> takeFrame(ID3D11Device *device,
                                                         ID3D11DeviceContext *context)
     {
@@ -530,8 +538,9 @@ public:
             return {};
         }
         const auto now = std::chrono::steady_clock::now();
-        if (m_lastDelivery.time_since_epoch().count() != 0
-            && now - m_lastDelivery < std::chrono::milliseconds(kFrameIntervalMs)) {
+        if (m_minimumFrameInterval.count() > 0
+            && m_lastDelivery.time_since_epoch().count() != 0
+            && now - m_lastDelivery < m_minimumFrameInterval) {
             return {};
         }
         const bool notified = m_pending.exchange(false, std::memory_order_acq_rel);
@@ -763,6 +772,7 @@ private:
     WINDOWPLACEMENT m_originalPlacement{};
     std::chrono::steady_clock::time_point m_initializedAt;
     std::chrono::steady_clock::time_point m_lastDelivery;
+    std::chrono::milliseconds m_minimumFrameInterval{0};
 };
 
 #endif
@@ -864,16 +874,34 @@ private:
                 revision = m_revision;
             }
             if (revision != appliedRevision) {
-                sessions.clear();
-                sessions.reserve(requested.size());
-                for (quintptr handle : requested) {
-                    auto session = std::make_unique<CaptureSession>(m_wake);
-                    if (session->initialize(reinterpret_cast<HWND>(handle),
-                                            winrtDevice,
-                                            device.Get())) {
-                        sessions.push_back(std::move(session));
+                std::vector<std::unique_ptr<CaptureSession>> nextSessions;
+                nextSessions.reserve(requested.size());
+                for (int priority = 0; priority < requested.size(); ++priority) {
+                    const quintptr handle = requested.at(priority);
+                    auto existing = std::find_if(
+                        sessions.begin(),
+                        sessions.end(),
+                        [handle](const std::unique_ptr<CaptureSession> &candidate) {
+                            return candidate
+                                && reinterpret_cast<quintptr>(candidate->window()) == handle;
+                        });
+                    std::unique_ptr<CaptureSession> session;
+                    if (existing != sessions.end()) {
+                        session = std::move(*existing);
+                    } else {
+                        session = std::make_unique<CaptureSession>(m_wake);
+                        if (!session->initialize(reinterpret_cast<HWND>(handle),
+                                                 winrtDevice,
+                                                 device.Get())) {
+                            session.reset();
+                        }
+                    }
+                    if (session) {
+                        session->setPriority(priority);
+                        nextSessions.push_back(std::move(session));
                     }
                 }
+                sessions = std::move(nextSessions);
                 appliedRevision = revision;
             }
 

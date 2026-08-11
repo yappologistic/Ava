@@ -41,7 +41,11 @@ public:
         ApplicationRole,
         MinimizedRole,
         AspectRatioRole,
-        CaptureReadyRole
+        CaptureReadyRole,
+        FrameXRole,
+        FrameYRole,
+        FrameWidthRole,
+        FrameHeightRole
     };
     Q_ENUM(Role)
 
@@ -104,6 +108,7 @@ private:
         bool minimized = false;
         qreal aspectRatio = 16.0 / 9.0;
         bool captureReady = false;
+        QRect frame;
     };
 
     bool beginSwitch(bool backwards, bool preview = false);

@@ -1,9 +1,12 @@
 #include "windowtilingmanager.h"
+#include "windowmotionlogic.h"
 
 #include <QCoreApplication>
+#include <QGuiApplication>
 #include <QHash>
 #include <QPointF>
 #include <QRect>
+#include <QScreen>
 #include <QSet>
 #include <QSize>
 #include <QVector>
@@ -32,7 +35,6 @@ constexpr int kCompactIslandHeightDip = 39;
 constexpr int kIslandWindowGapDip = 18;
 constexpr int kMinimumTileWidthDip = 220;
 constexpr int kMinimumTileHeightDip = 140;
-constexpr int kFallbackFrameIntervalMs = 8;
 constexpr qreal kMoveSpringFrequency = 32.0;
 constexpr qreal kMoveSpringDamping = 0.94;
 constexpr qreal kResizeSpringFrequency = 25.0;
@@ -59,18 +61,17 @@ HWND gMoveSizeEventSink = nullptr;
 bool gShortcutKeyDown = false;
 bool gKeyboardTilingEnabled = false;
 
-int compositionFrameIntervalMs()
+qreal compositionRefreshRateHz()
 {
     DWM_TIMING_INFO timing{};
     timing.cbSize = sizeof(timing);
     if (SUCCEEDED(DwmGetCompositionTimingInfo(nullptr, &timing))
         && timing.rateRefresh.uiNumerator > 0
         && timing.rateRefresh.uiDenominator > 0) {
-        const qreal interval = 1000.0 * timing.rateRefresh.uiDenominator
-            / timing.rateRefresh.uiNumerator;
-        return qBound(5, qRound(interval), 20);
+        return qreal(timing.rateRefresh.uiNumerator)
+            / qreal(timing.rateRefresh.uiDenominator);
     }
-    return kFallbackFrameIntervalMs;
+    return 60.0;
 }
 
 LRESULT CALLBACK swapPreviewWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -627,6 +628,35 @@ UINT monitorDpi(HMONITOR monitor, HWND fallbackWindow)
     return windowDpi > 0 ? windowDpi : GetDpiForSystem();
 }
 
+qreal monitorRefreshRateHz(HMONITOR monitor)
+{
+    MONITORINFOEXW monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (monitor && GetMonitorInfoW(monitor, &monitorInfo)) {
+        const QString deviceName = QString::fromWCharArray(monitorInfo.szDevice);
+        if (QGuiApplication::instance()) {
+            for (QScreen *screen : QGuiApplication::screens()) {
+                if (screen
+                    && screen->name().compare(deviceName, Qt::CaseInsensitive) == 0
+                    && screen->refreshRate() > 1.0) {
+                    return screen->refreshRate();
+                }
+            }
+        }
+
+        DEVMODEW mode{};
+        mode.dmSize = sizeof(mode);
+        if (EnumDisplaySettingsExW(monitorInfo.szDevice,
+                                   ENUM_CURRENT_SETTINGS,
+                                   &mode,
+                                   0)
+            && mode.dmDisplayFrequency > 1) {
+            return mode.dmDisplayFrequency;
+        }
+    }
+    return compositionRefreshRateHz();
+}
+
 BOOL CALLBACK collectTopLevelWindow(HWND window, LPARAM data)
 {
     auto *windows = reinterpret_cast<QVector<HWND> *>(data);
@@ -993,6 +1023,8 @@ struct WindowTilingManager::NativeState
         HWND window = nullptr;
         std::array<HWND, 4> borderWindows{};
         std::array<QVector<quint8>, 4> coverageMasks;
+        std::array<QRect, 4> appliedSegmentFrames;
+        std::array<bool, 4> segmentVisible{};
         QSize renderedOuterSize;
         int renderedRadius = -1;
         int renderedThickness = -1;
@@ -1003,6 +1035,7 @@ struct WindowTilingManager::NativeState
         qreal targetRed = 54;
         qreal targetGreen = 59;
         qreal targetBlue = 63;
+        bool zOrderDirty = true;
     };
 
     struct DividerItem
@@ -1062,6 +1095,11 @@ struct WindowTilingManager::NativeState
     bool recoveringLayout = false;
     quint64 geometryRevision = 0;
     quint64 lastKnownGoodRevision = 0;
+    qreal refreshRateHz = 60.0;
+    qreal framePeriodMilliseconds = 1000.0 / 60.0;
+    qreal animationCadenceErrorMilliseconds = 0;
+    qreal interactionCadenceErrorMilliseconds = 0;
+    qreal focusCadenceErrorMilliseconds = 0;
 #endif
 };
 
@@ -1075,21 +1113,21 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
             this,
             &WindowTilingManager::reconcileWindows);
 
-    updateAnimationCadence();
+    m_animationTimer.setSingleShot(true);
     m_animationTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_animationTimer,
             &QTimer::timeout,
             this,
             &WindowTilingManager::advanceAnimation);
 
-    m_focusTimer.setInterval(m_animationTimer.interval());
+    m_focusTimer.setSingleShot(true);
     m_focusTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_focusTimer,
             &QTimer::timeout,
             this,
             &WindowTilingManager::advanceFocusBorders);
 
-    m_interactionTimer.setInterval(m_animationTimer.interval());
+    m_interactionTimer.setSingleShot(true);
     m_interactionTimer.setTimerType(Qt::PreciseTimer);
     connect(&m_interactionTimer, &QTimer::timeout, this, [this]() {
 #ifdef Q_OS_WIN
@@ -1100,6 +1138,7 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
         }
         POINT cursor{};
         if (!GetCursorPos(&cursor)) {
+            scheduleInteractionFrame();
             return;
         }
         const QPoint point(cursor.x, cursor.y);
@@ -1291,8 +1330,11 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
             m_interactionConstrained = nextConstrained;
             emit interactionChanged();
         }
+        scheduleInteractionFrame();
 #endif
     });
+
+    updateAnimationCadence();
 
     if (QCoreApplication::instance()) {
         QCoreApplication::instance()->installNativeEventFilter(this);
@@ -1644,7 +1686,9 @@ void WindowTilingManager::beginWindowInteraction(quintptr nativeHandle)
     m_interactionConstrained = false;
     updateDesktopSwapPreview();
     syncDividerWindows();
-    m_interactionTimer.start();
+    updateAnimationCadence();
+    m_native->interactionCadenceErrorMilliseconds = 0;
+    scheduleInteractionFrame();
     emit interactionChanged();
     if (!m_adjusting) {
         m_adjusting = true;
@@ -2259,7 +2303,9 @@ void WindowTilingManager::retargetWindows(const QHash<quintptr, QRect> &targets,
                                              NativeState::AnimationItem &item) {
         const NativeState::ApplicationMotionProfile profile =
             m_native->applicationMotionProfiles.value(item.applicationKey);
-        item.resizeCadence = profileCadence(item.applicationKey);
+        item.resizeCadence = WindowMotionLogic::resizeCommitCadence(
+            m_native->refreshRateHz,
+            profileCadence(item.applicationKey));
         item.motionMode = profile.motionMode;
     };
     m_native->animationItems.erase(
@@ -2339,10 +2385,13 @@ void WindowTilingManager::retargetWindows(const QHash<quintptr, QRect> &targets,
         m_native->animationItems.append(next);
     }
 
-    if (!m_native->animationItems.isEmpty() && !m_animationTimer.isActive()) {
-        m_animationClock.start();
-        m_animationTimer.start();
+    updateAnimationCadence();
+    for (NativeState::AnimationItem &item : m_native->animationItems) {
+        item.resizeCadence = WindowMotionLogic::resizeCommitCadence(
+            m_native->refreshRateHz,
+            profileCadence(item.applicationKey));
     }
+    startAnimationFrames();
 #else
     Q_UNUSED(targets)
     Q_UNUSED(excludedHandle)
@@ -2950,10 +2999,97 @@ void WindowTilingManager::moveFocusedWindowByKeyboard(int virtualKey)
 void WindowTilingManager::updateAnimationCadence()
 {
 #ifdef Q_OS_WIN
-    const int frameInterval = compositionFrameIntervalMs();
-    m_animationTimer.setInterval(frameInterval);
-    m_interactionTimer.setInterval(frameInterval);
-    m_focusTimer.setInterval(frameInterval);
+    QSet<quintptr> monitors;
+    if (m_native->interactionWindow) {
+        monitors.insert(reinterpret_cast<quintptr>(MonitorFromWindow(
+            m_native->interactionWindow,
+            MONITOR_DEFAULTTONEAREST)));
+    }
+    for (const NativeState::AnimationItem &item : std::as_const(
+             m_native->animationItems)) {
+        RECT target{item.targetNative.left(),
+                    item.targetNative.top(),
+                    item.targetNative.right() + 1,
+                    item.targetNative.bottom() + 1};
+        monitors.insert(reinterpret_cast<quintptr>(MonitorFromRect(
+            &target,
+            MONITOR_DEFAULTTONEAREST)));
+    }
+    if (monitors.isEmpty() && m_native->islandWindow) {
+        monitors.insert(reinterpret_cast<quintptr>(MonitorFromWindow(
+            m_native->islandWindow,
+            MONITOR_DEFAULTTONEAREST)));
+    }
+
+    qreal refreshRate = monitors.isEmpty() ? compositionRefreshRateHz() : 0.0;
+    for (quintptr monitor : std::as_const(monitors)) {
+        refreshRate = qMax(refreshRate,
+                           monitorRefreshRateHz(reinterpret_cast<HMONITOR>(monitor)));
+    }
+    if (refreshRate <= 1.0) {
+        refreshRate = compositionRefreshRateHz();
+    }
+    const qreal nextPeriod = WindowMotionLogic::framePeriodMilliseconds(refreshRate);
+    if (qAbs(nextPeriod - m_native->framePeriodMilliseconds) < 0.01) {
+        return;
+    }
+    m_native->refreshRateHz = refreshRate;
+    m_native->framePeriodMilliseconds = nextPeriod;
+    m_native->animationCadenceErrorMilliseconds = 0;
+    m_native->interactionCadenceErrorMilliseconds = 0;
+    m_native->focusCadenceErrorMilliseconds = 0;
+#endif
+}
+
+void WindowTilingManager::startAnimationFrames()
+{
+#ifdef Q_OS_WIN
+    if (m_native->animationItems.isEmpty() || m_animationTimer.isActive()) {
+        return;
+    }
+    updateAnimationCadence();
+    m_native->animationCadenceErrorMilliseconds = 0;
+    m_animationClock.start();
+    scheduleAnimationFrame();
+#endif
+}
+
+void WindowTilingManager::scheduleAnimationFrame()
+{
+#ifdef Q_OS_WIN
+    if (m_native->animationItems.isEmpty() || (!m_enabled && !m_native->restoring)) {
+        m_animationTimer.stop();
+        return;
+    }
+    m_animationTimer.start(WindowMotionLogic::nextTimerIntervalMilliseconds(
+        m_native->framePeriodMilliseconds,
+        m_native->animationCadenceErrorMilliseconds));
+#endif
+}
+
+void WindowTilingManager::scheduleInteractionFrame()
+{
+#ifdef Q_OS_WIN
+    if (!m_enabled || !m_native->interactionWindow) {
+        m_interactionTimer.stop();
+        return;
+    }
+    m_interactionTimer.start(WindowMotionLogic::nextTimerIntervalMilliseconds(
+        m_native->framePeriodMilliseconds,
+        m_native->interactionCadenceErrorMilliseconds));
+#endif
+}
+
+void WindowTilingManager::scheduleFocusFrame()
+{
+#ifdef Q_OS_WIN
+    if (!m_enabled || m_native->focusBorderItems.isEmpty()) {
+        m_focusTimer.stop();
+        return;
+    }
+    m_focusTimer.start(WindowMotionLogic::nextTimerIntervalMilliseconds(
+        m_native->framePeriodMilliseconds,
+        m_native->focusCadenceErrorMilliseconds));
 #endif
 }
 
@@ -3075,6 +3211,7 @@ void WindowTilingManager::updateFocusBorders(quintptr focusedHandle, bool immedi
             item = std::prev(m_native->focusBorderItems.end());
         }
         const bool focused = reinterpret_cast<quintptr>(window) == focusedHandle;
+        item->zOrderDirty = true;
         item->targetRed = focused ? activeRed : inactiveRed;
         item->targetGreen = focused ? activeGreen : inactiveGreen;
         item->targetBlue = focused ? activeBlue : inactiveBlue;
@@ -3090,8 +3227,9 @@ void WindowTilingManager::updateFocusBorders(quintptr focusedHandle, bool immedi
     }
 
     if (needsAnimation && !m_focusTimer.isActive()) {
+        updateAnimationCadence();
+        m_native->focusCadenceErrorMilliseconds = 0;
         m_focusClock.start();
-        m_focusTimer.start();
         advanceFocusBorders();
     }
     syncFocusBorderWindows();
@@ -3133,7 +3271,9 @@ void WindowTilingManager::advanceFocusBorders()
         }
     }
     syncFocusBorderWindows();
-    if (!stillAnimating) {
+    if (stillAnimating) {
+        scheduleFocusFrame();
+    } else {
         m_focusTimer.stop();
     }
 #endif
@@ -3150,9 +3290,15 @@ void WindowTilingManager::syncFocusBorderWindows()
                 return borderWindow && IsWindow(borderWindow);
             });
         const auto hideBorderWindows = [&item]() {
-            for (HWND borderWindow : item.borderWindows) {
+            for (int segmentIndex = 0;
+                 segmentIndex < static_cast<int>(item.borderWindows.size());
+                 ++segmentIndex) {
+                HWND borderWindow = item.borderWindows.at(segmentIndex);
                 if (borderWindow && IsWindow(borderWindow)) {
-                    ShowWindow(borderWindow, SW_HIDE);
+                    if (item.segmentVisible.at(segmentIndex)) {
+                        ShowWindow(borderWindow, SW_HIDE);
+                    }
+                    item.segmentVisible.at(segmentIndex) = false;
                 }
             }
         };
@@ -3207,45 +3353,78 @@ void WindowTilingManager::syncFocusBorderWindows()
             HWND borderWindow = item.borderWindows.at(segmentIndex);
             const QRect source = sources.at(segmentIndex);
             if (source.isEmpty()) {
-                ShowWindow(borderWindow, SW_HIDE);
+                if (item.segmentVisible.at(segmentIndex)) {
+                    ShowWindow(borderWindow, SW_HIDE);
+                    item.segmentVisible.at(segmentIndex) = false;
+                }
                 continue;
             }
             const QRect destination(outerFrame.x() + source.x(),
                                     outerFrame.y() + source.y(),
                                     source.width(),
                                     source.height());
-            if (needsRender
-                && !updateLayeredBorderSegment(borderWindow,
-                                               destination,
-                                               source,
-                                               outerFrame.size(),
-                                               radius,
-                                               thickness,
-                                               color,
-                                               item.coverageMasks.at(segmentIndex),
-                                               geometryChanged)) {
+            bool segmentReady = true;
+            if (needsRender) {
+                segmentReady = updateLayeredBorderSegment(
+                    borderWindow,
+                    destination,
+                    source,
+                    outerFrame.size(),
+                    radius,
+                    thickness,
+                    color,
+                    item.coverageMasks.at(segmentIndex),
+                    geometryChanged);
+            } else if (item.appliedSegmentFrames.at(segmentIndex) != destination) {
+                segmentReady = SetWindowPos(
+                    borderWindow,
+                    nullptr,
+                    destination.x(),
+                    destination.y(),
+                    destination.width(),
+                    destination.height(),
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER)
+                    == TRUE;
+            }
+            if (!segmentReady) {
                 ShowWindow(borderWindow, SW_HIDE);
+                item.segmentVisible.at(segmentIndex) = false;
                 allSegmentsRendered = false;
                 continue;
             }
-            SetWindowPos(borderWindow,
-                         item.window,
-                         destination.x(),
-                         destination.y(),
-                         destination.width(),
-                         destination.height(),
-                         SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+            if (item.zOrderDirty || !item.segmentVisible.at(segmentIndex)) {
+                segmentReady = SetWindowPos(
+                    borderWindow,
+                    item.window,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+                        | SWP_NOOWNERZORDER | SWP_SHOWWINDOW)
+                    == TRUE;
+            }
+            if (!segmentReady) {
+                ShowWindow(borderWindow, SW_HIDE);
+                item.segmentVisible.at(segmentIndex) = false;
+                allSegmentsRendered = false;
+                continue;
+            }
+            item.appliedSegmentFrames.at(segmentIndex) = destination;
+            item.segmentVisible.at(segmentIndex) = true;
         }
         if (allSegmentsRendered) {
             item.renderedOuterSize = outerFrame.size();
             item.renderedRadius = radius;
             item.renderedThickness = thickness;
             item.renderedColor = static_cast<quint32>(color);
+            item.zOrderDirty = false;
         } else {
             item.renderedOuterSize = {};
             item.renderedRadius = -1;
             item.renderedThickness = -1;
             item.renderedColor = std::numeric_limits<quint32>::max();
+            item.zOrderDirty = true;
         }
     }
 #endif
@@ -3656,9 +3835,8 @@ void WindowTilingManager::enforceLayoutInvariants()
 
     if (m_native->animationItems.isEmpty()) {
         m_animationTimer.stop();
-    } else if ((m_enabled || m_native->restoring) && !m_animationTimer.isActive()) {
-        m_animationClock.start();
-        m_animationTimer.start();
+    } else if (m_enabled || m_native->restoring) {
+        startAnimationFrames();
     }
 #endif
 }
@@ -3677,7 +3855,6 @@ void WindowTilingManager::advanceAnimation()
         m_animationTimer.stop();
         return;
     }
-    enforceLayoutInvariants();
     if (m_native->animationItems.isEmpty()) {
         m_animationTimer.stop();
         return;
@@ -3875,7 +4052,9 @@ void WindowTilingManager::advanceAnimation()
             // the spring alternate between short and long visual steps.
             syncFocusBorderWindows();
         }
-        const qreal frameBudget = qMax(12.0, m_animationTimer.interval() * 1.75);
+        const qreal frameBudget = qMax(
+            4.0,
+            m_native->framePeriodMilliseconds * 0.82);
         const bool missedBudget = !transactionCommitted
             || transactionMilliseconds > frameBudget;
         QSet<QString> measuredApplications;
@@ -3948,7 +4127,9 @@ void WindowTilingManager::advanceAnimation()
                         == NativeState::AnimationItem::ReducedResize
                     ? 2 : 1;
                 item->motionMode = profile.motionMode;
-                item->resizeCadence = profile.resizeCadence;
+                item->resizeCadence = WindowMotionLogic::resizeCommitCadence(
+                    m_native->refreshRateHz,
+                    profile.resizeCadence);
             }
         }
         if (!transactionCommitted && restoreLastKnownGoodLayout()) {
@@ -4008,6 +4189,7 @@ void WindowTilingManager::advanceAnimation()
         m_native->animationItems.end());
 
     if (!m_native->animationItems.isEmpty()) {
+        scheduleAnimationFrame();
         return;
     }
     m_animationTimer.stop();

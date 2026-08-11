@@ -382,6 +382,10 @@ QVariant EnhancedTabsManager::data(const QModelIndex &index, int role) const
     case MinimizedRole: return entry.minimized;
     case AspectRatioRole: return entry.aspectRatio;
     case CaptureReadyRole: return entry.captureReady;
+    case FrameXRole: return entry.frame.x();
+    case FrameYRole: return entry.frame.y();
+    case FrameWidthRole: return entry.frame.width();
+    case FrameHeightRole: return entry.frame.height();
     default: return {};
     }
 }
@@ -393,7 +397,11 @@ QHash<int, QByteArray> EnhancedTabsManager::roleNames() const
             {ApplicationRole, "applicationName"},
             {MinimizedRole, "windowMinimized"},
             {AspectRatioRole, "windowAspectRatio"},
-            {CaptureReadyRole, "captureReady"}};
+            {CaptureReadyRole, "captureReady"},
+            {FrameXRole, "windowFrameX"},
+            {FrameYRole, "windowFrameY"},
+            {FrameWidthRole, "windowFrameWidth"},
+            {FrameHeightRole, "windowFrameHeight"}};
 }
 
 QString EnhancedTabsManager::selectedTitle() const
@@ -651,21 +659,11 @@ void EnhancedTabsManager::finish(bool activateSelection)
 #ifdef Q_OS_WIN
     gEnhancedTabActive.store(false);
 #endif
-    if (m_committing) {
-        m_committing = false;
-        emit committingChanged();
-    }
     quintptr selectedHandle = 0;
     if (activateSelection && m_selectedIndex >= 0
         && m_selectedIndex < m_windows.size()) {
         selectedHandle = m_windows.at(m_selectedIndex).handle;
     }
-    m_active = false;
-    if (m_captureWorker) {
-        m_captureWorker->setWindows({});
-    }
-    emit activeChanged();
-
 #ifdef Q_OS_WIN
     if (selectedHandle) {
         const HWND target = reinterpret_cast<HWND>(selectedHandle);
@@ -677,6 +675,19 @@ void EnhancedTabsManager::finish(bool activateSelection)
         SetForegroundWindow(reinterpret_cast<HWND>(m_foregroundBeforeSwitch));
     }
 #endif
+
+    // Put the real window behind the still-opaque final preview first. Hiding
+    // the overlay before focus transfer exposed a desktop frame and made the
+    // otherwise smooth commit end with a visible flash.
+    m_active = false;
+    emit activeChanged();
+    if (m_committing) {
+        m_committing = false;
+        emit committingChanged();
+    }
+    if (m_captureWorker) {
+        m_captureWorker->setWindows({});
+    }
 
     beginResetModel();
     m_windows.clear();
@@ -770,6 +781,7 @@ QVector<EnhancedTabsManager::WindowEntry> EnhancedTabsManager::enumerateWindows(
         }
         entry.minimized = IsIconic(window);
         const QRect bounds = frameBounds(window);
+        entry.frame = bounds;
         if (!bounds.isEmpty()) {
             entry.aspectRatio = qBound(0.55,
                                        qreal(bounds.width()) / qreal(bounds.height()),

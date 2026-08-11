@@ -90,6 +90,10 @@ private:
     void endDividerInteraction();
     void moveFocusedWindowByKeyboard(int virtualKey);
     void updateAnimationCadence();
+    void startAnimationFrames();
+    void scheduleAnimationFrame();
+    void scheduleInteractionFrame();
+    void scheduleFocusFrame();
     void updateDesktopSwapPreview(const QRect &frame = {});
     void updateFocusBorders(quintptr focusedHandle, bool immediate = false);
     void advanceFocusBorders();
