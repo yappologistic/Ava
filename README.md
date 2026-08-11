@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/ava-hero.png" alt="Ava expanded on the Windows 11 desktop with live media controls and calendar" width="100%">
+  <img src="docs/ava-hero.png" alt="Ava expanded with live media controls and calendar above a metallic knight wallpaper on Windows 11" width="100%">
 </p>
 
 # Ava
