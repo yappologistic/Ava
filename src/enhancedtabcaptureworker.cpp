@@ -803,8 +803,13 @@ public:
 
     void setWindows(const QVector<quintptr> &windows)
     {
-        QVector<quintptr> ordered = windows;
-        std::sort(ordered.begin(), ordered.end());
+        QVector<quintptr> ordered;
+        ordered.reserve(windows.size());
+        for (quintptr window : windows) {
+            if (window && !ordered.contains(window)) {
+                ordered.append(window);
+            }
+        }
         {
             std::scoped_lock lock(m_commandMutex);
             if (m_requestedWindows == ordered) {

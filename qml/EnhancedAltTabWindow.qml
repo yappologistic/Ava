@@ -9,6 +9,8 @@ Window {
     required property var manager
     property bool reducedMotion: false
     property bool presented: false
+    readonly property int selectionMotionDuration: 155
+    readonly property int selectionFadeDuration: 115
 
     objectName: "enhancedAltTabWindow"
     visible: manager.active
@@ -23,8 +25,9 @@ Window {
     title: "Ava Enhanced Alt-Tab"
 
     Behavior on opacity {
+        enabled: root.visible && !root.reducedMotion
         NumberAnimation {
-            duration: root.reducedMotion ? 0 : root.manager.handoffDuration
+            duration: root.manager.handoffDuration
             easing.type: Easing.Linear
         }
     }
@@ -41,11 +44,14 @@ Window {
     onVisibleChanged: {
         if (visible) {
             presented = false
-            presentationTimer.restart()
+            if (reducedMotion)
+                presented = true
+            else
+                presentationFrame.restart()
             requestActivate()
             keyboardSurface.forceActiveFocus()
         } else {
-            presentationTimer.stop()
+            presentationFrame.stop()
             presented = false
         }
     }
@@ -84,10 +90,12 @@ Window {
         }
     }
 
-    Timer {
-        id: presentationTimer
-        interval: root.reducedMotion ? 0 : 16
-        onTriggered: root.presented = true
+    FrameAnimation {
+        id: presentationFrame
+        onTriggered: {
+            stop()
+            root.presented = true
+        }
     }
 
     Item {
@@ -213,7 +221,8 @@ Window {
 
                 Timer {
                     id: retireTimer
-                    interval: root.reducedMotion ? 1 : MotionTokens.state
+                    interval: root.reducedMotion ? 1
+                                                 : root.selectionMotionDuration
                     onTriggered: {
                         card.teleporting = true
                         card.retiring = false
@@ -232,8 +241,8 @@ Window {
 
                 Behavior on commitProgress {
                     NumberAnimation {
-                        duration: root.reducedMotion ? 0 : 190
-                        easing.type: MotionTokens.settle
+                        duration: root.reducedMotion ? 0 : 196
+                        easing.type: Easing.OutCubic
                     }
                 }
 
@@ -260,7 +269,10 @@ Window {
                          : finalOpacity * (selected
                                            ? 0.56 + entranceProgress * 0.44
                                            : entranceProgress)
-                visible: opacity > 0.01
+                // Keep scene-graph resources alive while a card wraps from the
+                // front to the back. Recreating the live texture node during
+                // the zero-opacity frame causes a visible preview hitch.
+                visible: onStage || retiring || teleporting || selected
                 Accessible.role: Accessible.Button
                 Accessible.name: applicationName + ": " + windowTitle
                 Accessible.focused: selected
@@ -280,13 +292,15 @@ Window {
 
                         Behavior on angle {
                             enabled: !card.teleporting
+                                     && !root.reducedMotion
                                      && !root.manager.committing
                                      && (card.entranceProgress >= 0.999
                                          || card.retiring)
-                            NumberAnimation {
-                                duration: root.reducedMotion ? 0
-                                          : MotionTokens.state
-                                easing.type: MotionTokens.easeOut
+                            SmoothedAnimation {
+                                duration: root.selectionMotionDuration
+                                velocity: -1
+                                maximumEasingTime: 68
+                                reversingMode: SmoothedAnimation.Eased
                             }
                         }
                     },
@@ -308,24 +322,33 @@ Window {
                 ]
 
                 Behavior on x {
-                    enabled: !card.teleporting && !root.manager.committing
-                    NumberAnimation {
-                        duration: root.reducedMotion ? 0 : MotionTokens.state
-                        easing.type: MotionTokens.easeOut
+                    enabled: !card.teleporting && !root.reducedMotion
+                             && !root.manager.committing
+                    SmoothedAnimation {
+                        duration: root.selectionMotionDuration
+                        velocity: -1
+                        maximumEasingTime: 68
+                        reversingMode: SmoothedAnimation.Eased
                     }
                 }
                 Behavior on y {
-                    enabled: !card.teleporting && !root.manager.committing
-                    NumberAnimation {
-                        duration: root.reducedMotion ? 0 : MotionTokens.state
-                        easing.type: MotionTokens.easeOut
+                    enabled: !card.teleporting && !root.reducedMotion
+                             && !root.manager.committing
+                    SmoothedAnimation {
+                        duration: root.selectionMotionDuration
+                        velocity: -1
+                        maximumEasingTime: 68
+                        reversingMode: SmoothedAnimation.Eased
                     }
                 }
                 Behavior on scale {
-                    enabled: !card.teleporting && !root.manager.committing
-                    NumberAnimation {
-                        duration: root.reducedMotion ? 0 : MotionTokens.state
-                        easing.type: MotionTokens.easeOut
+                    enabled: !card.teleporting && !root.reducedMotion
+                             && !root.manager.committing
+                    SmoothedAnimation {
+                        duration: root.selectionMotionDuration
+                        velocity: -1
+                        maximumEasingTime: 68
+                        reversingMode: SmoothedAnimation.Eased
                     }
                 }
                 Behavior on opacity {
@@ -336,7 +359,7 @@ Window {
                     NumberAnimation {
                         duration: root.reducedMotion ? 0
                                   : (root.manager.committing
-                                     ? 105 : MotionTokens.hover)
+                                     ? 105 : root.selectionFadeDuration)
                         easing.type: MotionTokens.easeOut
                     }
                 }
