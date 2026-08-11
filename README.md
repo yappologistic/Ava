@@ -240,6 +240,11 @@ exercise the shipping QML layout without replacing the real runtime integration.
 - `assets/fonts/` and `assets/icons/`: bundled fonts, licenses, Fluent icons,
   and Ava-specific artwork.
 
+## Support Ava
+
+If Ava is useful to you, you can support its continued development on
+[Buy Me a Coffee](https://buymeacoffee.com/e_gurl).
+
 ## License
 
 Ava's original source code is available under the
