@@ -23,6 +23,8 @@ class EnhancedTabsManager final : public QAbstractListModel,
     Q_PROPERTY(bool available READ available CONSTANT)
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
     Q_PROPERTY(bool committing READ committing NOTIFY committingChanged)
+    Q_PROPERTY(bool handoffActive READ handoffActive NOTIFY handoffActiveChanged)
+    Q_PROPERTY(int handoffDuration READ handoffDuration CONSTANT)
     Q_PROPERTY(int selectedIndex READ selectedIndex NOTIFY selectedIndexChanged)
     Q_PROPERTY(int windowCount READ windowCount NOTIFY windowCountChanged)
     Q_PROPERTY(QString selectedTitle READ selectedTitle NOTIFY selectedIndexChanged)
@@ -56,6 +58,8 @@ public:
     bool available() const { return m_available; }
     bool active() const { return m_active; }
     bool committing() const { return m_committing; }
+    bool handoffActive() const { return m_handoffActive; }
+    int handoffDuration() const;
     int selectedIndex() const { return m_selectedIndex; }
     int windowCount() const { return m_windows.size(); }
     QString selectedTitle() const;
@@ -93,6 +97,7 @@ signals:
     void enabledChanged();
     void activeChanged();
     void committingChanged();
+    void handoffActiveChanged();
     void selectedIndexChanged();
     void windowCountChanged();
     void statusTextChanged();
@@ -113,6 +118,7 @@ private:
 
     bool beginSwitch(bool backwards, bool preview = false);
     void finish(bool activateSelection);
+    void completeFinish();
     void refreshEnvironment(quintptr foregroundWindow);
     QVector<WindowEntry> enumerateWindows(quintptr foregroundWindow) const;
     void deliverFrame(NativeEnhancedTabFrame frame);
@@ -133,4 +139,5 @@ private:
     bool m_available = false;
     bool m_active = false;
     bool m_committing = false;
+    bool m_handoffActive = false;
 };

@@ -12,6 +12,7 @@ Window {
 
     objectName: "enhancedAltTabWindow"
     visible: manager.active
+    opacity: manager.handoffActive ? 0 : 1
     x: manager.virtualLeft
     y: manager.virtualTop
     width: manager.virtualWidth
@@ -20,6 +21,13 @@ Window {
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
            | Qt.Tool | Qt.NoDropShadowWindowHint
     title: "Ava Enhanced Alt-Tab"
+
+    Behavior on opacity {
+        NumberAnimation {
+            duration: root.reducedMotion ? 0 : root.manager.handoffDuration
+            easing.type: Easing.Linear
+        }
+    }
 
     function forwardDistance(index) {
         if (manager.windowCount <= 0 || manager.selectedIndex < 0)

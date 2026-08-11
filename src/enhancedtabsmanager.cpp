@@ -29,6 +29,11 @@ namespace {
 
 constexpr int kMaximumLiveCaptures = 14;
 constexpr int kCommitAnimationDurationMs = 205;
+// Keep the final preview alive for a few compositor frames after activating the
+// real window. This masks the asynchronous foreground/present handoff without
+// making the switch feel delayed, including on high-refresh displays.
+constexpr int kHandoffDurationMs = 64;
+constexpr int kHandoffReleasePaddingMs = 16;
 
 #ifdef Q_OS_WIN
 using Microsoft::WRL::ComPtr;
@@ -364,6 +369,11 @@ EnhancedTabsManager::~EnhancedTabsManager()
     }
 }
 
+int EnhancedTabsManager::handoffDuration() const
+{
+    return kHandoffDurationMs;
+}
+
 int EnhancedTabsManager::rowCount(const QModelIndex &parent) const
 {
     return parent.isValid() ? 0 : m_windows.size();
@@ -676,11 +686,36 @@ void EnhancedTabsManager::finish(bool activateSelection)
     }
 #endif
 
-    // Put the real window behind the still-opaque final preview first. Hiding
-    // the overlay before focus transfer exposed a desktop frame and made the
-    // otherwise smooth commit end with a visible flash.
+    if (activateSelection) {
+        // Window activation and the first DWM presentation are not one atomic
+        // operation. Fade the still-live preview over the real surface, then
+        // hide the overlay and release its capture resources only after it is
+        // fully transparent.
+        m_handoffActive = true;
+        emit handoffActiveChanged();
+        QTimer::singleShot(kHandoffDurationMs + kHandoffReleasePaddingMs,
+                           this,
+                           [this] {
+                               completeFinish();
+                           });
+        return;
+    }
+
+    completeFinish();
+}
+
+void EnhancedTabsManager::completeFinish()
+{
+    if (!m_active) {
+        return;
+    }
+
     m_active = false;
     emit activeChanged();
+    if (m_handoffActive) {
+        m_handoffActive = false;
+        emit handoffActiveChanged();
+    }
     if (m_committing) {
         m_committing = false;
         emit committingChanged();
