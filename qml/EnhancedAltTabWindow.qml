@@ -8,10 +8,7 @@ Window {
 
     required property var manager
     property bool reducedMotion: false
-    property int previousSelectedIndex: -1
-    property int outgoingIndex: -1
-    property int hiddenIndex: -1
-    property bool recyclingCard: false
+    property bool presented: false
 
     objectName: "enhancedAltTabWindow"
     visible: manager.active
@@ -19,7 +16,7 @@ Window {
     y: manager.virtualTop
     width: manager.virtualWidth
     height: manager.virtualHeight
-    color: "#030507"
+    color: "transparent"
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
            | Qt.Tool | Qt.NoDropShadowWindowHint
     title: "Ava Enhanced Alt-Tab"
@@ -35,15 +32,13 @@ Window {
 
     onVisibleChanged: {
         if (visible) {
-            previousSelectedIndex = manager.selectedIndex
-            outgoingIndex = -1
-            hiddenIndex = -1
+            presented = false
+            presentationTimer.restart()
             requestActivate()
             keyboardSurface.forceActiveFocus()
         } else {
-            previousSelectedIndex = -1
-            outgoingIndex = -1
-            hiddenIndex = -1
+            presentationTimer.stop()
+            presented = false
         }
     }
     onClosing: function(close) {
@@ -58,57 +53,33 @@ Window {
         asynchronous: true
         cache: true
         visible: source.toString().length > 0
+        opacity: root.presented ? 1 : 0
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: root.reducedMotion ? 0 : MotionTokens.state
+                easing.type: MotionTokens.easeOut
+            }
+        }
     }
 
     Rectangle {
         anchors.fill: parent
         color: "#18000000"
-        opacity: root.manager.committing ? 0 : 1
+        opacity: root.manager.committing ? 0 : (root.presented ? 1 : 0)
 
         Behavior on opacity {
             NumberAnimation {
-                duration: root.reducedMotion ? 0 : 170
-                easing.type: Easing.OutCubic
+                duration: root.reducedMotion ? 0 : MotionTokens.state
+                easing.type: MotionTokens.easeOut
             }
-        }
-    }
-
-    Connections {
-        target: root.manager
-
-        function onSelectedIndexChanged() {
-            const nextIndex = root.manager.selectedIndex
-            if (!root.visible || nextIndex < 0) {
-                root.previousSelectedIndex = nextIndex
-                return
-            }
-            if (root.previousSelectedIndex >= 0
-                    && root.previousSelectedIndex !== nextIndex) {
-                root.outgoingIndex = root.previousSelectedIndex
-                recycleTimer.restart()
-            }
-            root.previousSelectedIndex = nextIndex
         }
     }
 
     Timer {
-        id: recycleTimer
-        interval: root.reducedMotion ? 1 : 190
-        onTriggered: {
-            root.recyclingCard = true
-            root.hiddenIndex = root.outgoingIndex
-            root.outgoingIndex = -1
-            Qt.callLater(function() {
-                root.recyclingCard = false
-                revealTimer.restart()
-            })
-        }
-    }
-
-    Timer {
-        id: revealTimer
-        interval: root.reducedMotion ? 1 : 45
-        onTriggered: root.hiddenIndex = -1
+        id: presentationTimer
+        interval: root.reducedMotion ? 0 : 16
+        onTriggered: root.presented = true
     }
 
     Item {
@@ -147,8 +118,6 @@ Window {
 
                 readonly property int slot: root.forwardDistance(index)
                 readonly property bool selected: index === root.manager.selectedIndex
-                readonly property bool outgoing: index === root.outgoingIndex
-                                                   && !selected
                 readonly property bool onStage: slot <= Math.min(6,
                                                                   root.manager.windowCount - 1)
                 readonly property real boundedAspect: Math.max(0.55,
@@ -164,77 +133,173 @@ Window {
                 readonly property real stageCenterY: root.height * 0.585
                 readonly property real commitScale: Math.max(root.width / width,
                                                                root.height / height) * 1.025
+                readonly property real finalX: stageCenterX - width / 2
+                                                - slot * stageSpacing
+                readonly property real finalY: stageCenterY - height / 2
+                                                - slot * Math.min(root.height * 0.038,
+                                                                  35)
+                readonly property real finalScale: Math.max(0.62,
+                                                             1 - slot * 0.072)
+                readonly property real finalOpacity: onStage
+                                                      ? Math.max(0.58,
+                                                                 1 - slot * 0.065)
+                                                      : 0
+                property bool selectionInitialized: false
+                property bool wasSelected: false
+                property bool retiring: false
+                property bool teleporting: false
+                property real entranceProgress: root.presented ? 1 : 0
+
+                Component.onCompleted: {
+                    wasSelected = selected
+                    selectionInitialized = true
+                }
+                onSelectedChanged: {
+                    if (!selectionInitialized)
+                        return
+                    if (selected) {
+                        retireTimer.stop()
+                        retiring = false
+                        teleporting = false
+                    } else if (wasSelected && root.visible) {
+                        retiring = true
+                        retireTimer.restart()
+                    }
+                    wasSelected = selected
+                }
+
+                Timer {
+                    id: retireTimer
+                    interval: root.reducedMotion ? 1 : MotionTokens.state
+                    onTriggered: {
+                        card.teleporting = true
+                        card.retiring = false
+                        Qt.callLater(function() {
+                            card.teleporting = false
+                        })
+                    }
+                }
+
+                Behavior on entranceProgress {
+                    NumberAnimation {
+                        duration: root.reducedMotion ? 0 : MotionTokens.content
+                        easing.type: MotionTokens.easeOut
+                    }
+                }
 
                 x: root.manager.committing && selected
                    ? root.width / 2 - width / 2
-                   : outgoing
-                     ? root.width * 0.79 - width / 2
-                     : stageCenterX - width / 2 - slot * stageSpacing
+                   : retiring
+                     ? root.width * 0.80 - width / 2
+                     : finalX
                 y: root.manager.committing && selected
                    ? root.height / 2 - height / 2
-                   : outgoing
-                     ? root.height * 0.62 - height / 2
-                     : stageCenterY - height / 2
-                       - slot * Math.min(root.height * 0.038, 35)
+                   : retiring
+                     ? root.height * 0.615 - height / 2
+                     : finalY
                 width: cardWidth
                 height: cardHeight
                 z: root.manager.committing && selected ? 4000
-                   : outgoing ? 3000 : 1500 - slot * 20
+                   : retiring ? 3000 : 1500 - slot * 20
                 scale: root.manager.committing && selected ? commitScale
-                       : outgoing ? 0.94 : Math.max(0.62, 1 - slot * 0.072)
+                       : retiring ? 0.955 : finalScale
                 opacity: root.manager.committing ? (selected ? 1 : 0)
-                         : outgoing || index === root.hiddenIndex ? 0
-                         : onStage ? Math.max(0.58, 1 - slot * 0.065) : 0
+                         : retiring || teleporting ? 0
+                         : finalOpacity * (selected
+                                           ? 0.56 + entranceProgress * 0.44
+                                           : entranceProgress)
                 visible: opacity > 0.01
                 Accessible.role: Accessible.Button
                 Accessible.name: applicationName + ": " + windowTitle
                 Accessible.focused: selected
 
-                transform: Rotation {
-                    origin.x: card.width / 2
-                    origin.y: card.height / 2
-                    axis.x: 0
-                    axis.y: 1
-                    axis.z: 0
-                    angle: root.manager.committing && card.selected ? 0
-                           : card.outgoing ? 24
-                           : 38
+                transform: [
+                    Rotation {
+                        origin.x: card.width / 2
+                        origin.y: card.height / 2
+                        axis.x: 0
+                        axis.y: 1
+                        axis.z: 0
+                        angle: root.manager.committing && card.selected ? 0
+                               : card.retiring ? 24
+                               : 38 - (card.selected ? 8 : 4)
+                                 * (1 - card.entranceProgress)
 
-                    Behavior on angle {
-                        enabled: !root.recyclingCard
-                        NumberAnimation {
-                            duration: root.reducedMotion ? 0 : 185
-                            easing.type: Easing.OutCubic
+                        Behavior on angle {
+                            enabled: !card.teleporting
+                                     && (card.entranceProgress >= 0.999
+                                         || root.manager.committing
+                                         || card.retiring)
+                            NumberAnimation {
+                                duration: root.reducedMotion ? 0
+                                          : (root.manager.committing
+                                             ? 195 : MotionTokens.state)
+                                easing.type: root.manager.committing
+                                             ? MotionTokens.settle
+                                             : MotionTokens.easeOut
+                            }
                         }
+                    },
+                    Scale {
+                        origin.x: card.width / 2
+                        origin.y: card.height / 2
+                        xScale: 1 + (card.selected ? 0.045 : 0.022)
+                                * (1 - card.entranceProgress)
+                        yScale: xScale
+                    },
+                    Translate {
+                        x: (card.selected ? card.stageSpacing * 0.22
+                                          : card.stageSpacing
+                                            * (0.34 + Math.min(card.slot, 6) * 0.025))
+                           * (1 - card.entranceProgress)
+                        y: (card.selected ? 14 : 10 + Math.min(card.slot, 6) * 4)
+                           * (1 - card.entranceProgress)
                     }
-                }
+                ]
 
                 Behavior on x {
-                    enabled: !root.recyclingCard
+                    enabled: !card.teleporting
                     NumberAnimation {
-                        duration: root.reducedMotion ? 0 : 185
-                        easing.type: Easing.OutCubic
+                        duration: root.reducedMotion ? 0
+                                  : (root.manager.committing
+                                     ? 195 : MotionTokens.state)
+                        easing.type: root.manager.committing
+                                     ? MotionTokens.settle
+                                     : MotionTokens.easeOut
                     }
                 }
                 Behavior on y {
-                    enabled: !root.recyclingCard
+                    enabled: !card.teleporting
                     NumberAnimation {
-                        duration: root.reducedMotion ? 0 : 185
-                        easing.type: Easing.OutCubic
+                        duration: root.reducedMotion ? 0
+                                  : (root.manager.committing
+                                     ? 195 : MotionTokens.state)
+                        easing.type: root.manager.committing
+                                     ? MotionTokens.settle
+                                     : MotionTokens.easeOut
                     }
                 }
                 Behavior on scale {
-                    enabled: !root.recyclingCard
+                    enabled: !card.teleporting
                     NumberAnimation {
-                        duration: root.reducedMotion ? 0 : 185
-                        easing.type: Easing.OutCubic
+                        duration: root.reducedMotion ? 0
+                                  : (root.manager.committing
+                                     ? 195 : MotionTokens.state)
+                        easing.type: root.manager.committing
+                                     ? MotionTokens.settle
+                                     : MotionTokens.easeOut
                     }
                 }
                 Behavior on opacity {
-                    enabled: !root.recyclingCard
+                    enabled: !card.teleporting
+                             && (card.entranceProgress >= 0.999
+                                 || root.manager.committing
+                                 || card.retiring)
                     NumberAnimation {
-                        duration: root.reducedMotion ? 0 : 155
-                        easing.type: Easing.OutCubic
+                        duration: root.reducedMotion ? 0
+                                  : (root.manager.committing
+                                     ? 105 : MotionTokens.hover)
+                        easing.type: MotionTokens.easeOut
                     }
                 }
 
@@ -262,7 +327,19 @@ Window {
                         Column {
                             anchors.centerIn: parent
                             spacing: 12
-                            opacity: card.captureReady ? 0 : 1
+                            opacity: card.captureReady ? 0
+                                     : Math.max(0,
+                                                Math.min(1,
+                                                         (card.entranceProgress - 0.45)
+                                                         / 0.55))
+
+                            Behavior on opacity {
+                                enabled: card.entranceProgress >= 0.999
+                                NumberAnimation {
+                                    duration: root.reducedMotion ? 0 : 100
+                                    easing.type: MotionTokens.easeOut
+                                }
+                            }
 
                             Rectangle {
                                 anchors.horizontalCenter: parent.horizontalCenter
@@ -303,7 +380,10 @@ Window {
                         opacity: card.captureReady ? 1 : 0
 
                         Behavior on opacity {
-                            NumberAnimation { duration: root.reducedMotion ? 0 : 100 }
+                            NumberAnimation {
+                                duration: root.reducedMotion ? 0 : MotionTokens.hover
+                                easing.type: MotionTokens.easeOut
+                            }
                         }
                     }
 

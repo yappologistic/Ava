@@ -28,6 +28,7 @@
 namespace {
 
 constexpr int kMaximumLiveCaptures = 14;
+constexpr int kCommitAnimationDurationMs = 205;
 
 #ifdef Q_OS_WIN
 using Microsoft::WRL::ComPtr;
@@ -534,7 +535,13 @@ void EnhancedTabsManager::toggleEnabled()
 bool EnhancedTabsManager::beginPreview()
 {
     m_captureWorker->start();
-    return beginSwitch(false, true);
+    const bool started = beginSwitch(false, true);
+#ifdef Q_OS_WIN
+    // Keep the explicit QA preview keyboard-driven even though the overlay uses
+    // a no-activate tool window and cannot be targeted by desktop automation.
+    gEnhancedTabActive.store(started);
+#endif
+    return started;
 }
 
 bool EnhancedTabsManager::beginSwitch(bool backwards, bool preview)
@@ -620,7 +627,7 @@ void EnhancedTabsManager::accept()
     }
     m_committing = true;
     emit committingChanged();
-    QTimer::singleShot(190, this, [this] {
+    QTimer::singleShot(kCommitAnimationDurationMs, this, [this] {
         if (m_active && m_committing) {
             finish(true);
         }
