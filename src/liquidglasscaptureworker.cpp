@@ -130,6 +130,7 @@ cbuffer OpticalData : register(b0)
     float4 shapeData;      // radius, side inset, ear depth, lens band
     float4 materialData;   // thickness, intensity, pill mode, desktop surface
     float4 interactionData; // pointer-local position, active, reduced motion
+    float4 finishData;     // optical edge strength, reserved
 };
 
 float roundedBoxDistance(float2 samplePoint, float2 halfSize, float radius)
@@ -255,6 +256,7 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     const float thickness = saturate(materialData.x);
     const float intensity = max(0.0, materialData.y);
     const float panel = smoothstep(0.62, 0.72, thickness);
+    const float edgeStrength = saturate(finishData.x);
     const float2 centered = local / max(contentRect.zw, float2(1.0, 1.0)) - 0.5;
 
     // A convex lens samples toward its optical center. The displacement grows
@@ -293,7 +295,10 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
                                angularDeflection * lensBand
                                    * glassThickness * glassScale * bendGain
                                    + meniscusKick)
-                           * lerp(0.86, 1.0, thickness) * intensity;
+                           * lerp(0.86, 1.0, thickness) * intensity
+                           * lerp(1.0,
+                                  0.49 + edgeStrength * 0.51,
+                                  panel);
     const float2 centerBend = -centered
                                * min(contentRect.z, contentRect.w)
                                * lerp(0.018, 0.016, panel)
@@ -387,7 +392,11 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
                               * (0.48 + 0.52
                                  * max(0.0, dot(outward,
                                                 normalize(float2(0.86, -0.28)))));
-    color *= 1.0 - innerShadow * lerp(0.06, 0.10, thickness);
+    const float panelEdgeFinish = lerp(1.0, edgeStrength, panel);
+    color *= 1.0 - innerShadow * lerp(0.06, 0.10, thickness)
+                              * lerp(1.0,
+                                     0.12 + edgeStrength * 0.88,
+                                     panel);
 
     const float2 uv = local / max(contentRect.zw, float2(1.0, 1.0));
     const float reflectionLine = uv.y - (0.035 + 0.16 * uv.x);
@@ -402,16 +411,19 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
 
     const float3 environmentSpill = saturate((redSample + blueSample) * 0.5);
     color += environmentSpill * (rimSheet * 0.018 + caustic * 0.025)
-             * intensity;
+             * intensity * panelEdgeFinish;
     color += float3(0.93, 0.97, 1.0)
              * (fresnel * 0.17 + physicalFresnel * 0.09
                 + outerRim * 0.018 + rimSheet * 0.055
-                + upperReflection * 0.045
                 + physicalSpecular * 0.14)
-             * intensity;
-    color += float3(0.58, 0.82, 1.0) * coolRim * 0.035 * intensity;
-    color += float3(1.0, 0.76, 0.43) * warmRim * 0.035 * intensity;
-    color += float3(1.0, 0.93, 0.78) * caustic * 0.08 * intensity;
+             * intensity * panelEdgeFinish;
+    color += float3(0.93, 0.97, 1.0) * upperReflection * 0.035 * intensity;
+    color += float3(0.58, 0.82, 1.0) * coolRim * 0.035
+             * intensity * panelEdgeFinish;
+    color += float3(1.0, 0.76, 0.43) * warmRim * 0.035
+             * intensity * panelEdgeFinish;
+    color += float3(1.0, 0.93, 0.78) * caustic * 0.08
+             * intensity * panelEdgeFinish;
     const float pointerRim = pow(edge, 1.65)
                              * (0.35 + 0.65
                                 * saturate(dot(outward,
@@ -467,7 +479,7 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
         }
 
         D3D11_BUFFER_DESC constantDescription{};
-        constantDescription.ByteWidth = 112;
+        constantDescription.ByteWidth = 128;
         constantDescription.Usage = D3D11_USAGE_DYNAMIC;
         constantDescription.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         constantDescription.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -612,6 +624,7 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
             float shapeData[4];
             float materialData[4];
             float interactionData[4];
+            float finishData[4];
         } constants{
             {float(requestedRect.x()), float(requestedRect.y()),
              float(requestedRect.width()), float(requestedRect.height())},
@@ -627,7 +640,8 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
              desktopSurface ? 1.0f : 0.0f},
             {float(optics.pointer.x()), float(optics.pointer.y()),
              optics.pointerActive ? 1.0f : 0.0f,
-             optics.reducedMotion ? 1.0f : 0.0f}
+             optics.reducedMotion ? 1.0f : 0.0f},
+            {optics.edgeStrength, 0.0f, 0.0f, 0.0f}
         };
         D3D11_MAPPED_SUBRESOURCE mappedConstants{};
         if (FAILED(context->Map(constantBuffer,
@@ -1669,6 +1683,7 @@ private:
             && qFuzzyCompare(left.optics.lensBand, right.optics.lensBand)
             && qFuzzyCompare(left.optics.thickness, right.optics.thickness)
             && qFuzzyCompare(left.optics.intensity, right.optics.intensity)
+            && qFuzzyCompare(left.optics.edgeStrength, right.optics.edgeStrength)
             && left.optics.pointer == right.optics.pointer
             && left.optics.pointerActive == right.optics.pointerActive
             && left.optics.reducedMotion == right.optics.reducedMotion

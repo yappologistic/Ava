@@ -5,6 +5,14 @@
 #include <QTemporaryFile>
 #include <QtTest>
 
+#include <iterator>
+
+#ifdef Q_OS_WIN
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 class AppLauncherTest final : public QObject
 {
     Q_OBJECT
@@ -16,6 +24,7 @@ private slots:
     void recognizesExistingFile();
     void rejectsAmbiguousAndMissingTargets();
     void exposesDirectResultThroughModel();
+    void pastesIntoPreviousWindowsControl();
 };
 
 void AppLauncherTest::recognizesExplicitWebUrl()
@@ -94,6 +103,74 @@ void AppLauncherTest::exposesDirectResultThroughModel()
              QStringLiteral("Open example.com"));
 }
 
-QTEST_GUILESS_MAIN(AppLauncherTest)
+void AppLauncherTest::pastesIntoPreviousWindowsControl()
+{
+#ifdef Q_OS_WIN
+    struct NativeWindows
+    {
+        HWND target = nullptr;
+        HWND launcher = nullptr;
+        ~NativeWindows()
+        {
+            if (launcher)
+                DestroyWindow(launcher);
+            if (target)
+                DestroyWindow(target);
+        }
+    } windows;
+    windows.target = CreateWindowExW(WS_EX_TOOLWINDOW,
+                                      L"EDIT",
+                                      L"",
+                                      WS_OVERLAPPEDWINDOW | WS_VISIBLE | ES_MULTILINE,
+                                      20,
+                                      20,
+                                      260,
+                                      120,
+                                      nullptr,
+                                      nullptr,
+                                      GetModuleHandleW(nullptr),
+                                      nullptr);
+    windows.launcher = CreateWindowExW(WS_EX_TOOLWINDOW,
+                                        L"STATIC",
+                                        L"Ava paste test",
+                                        WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                                        300,
+                                        20,
+                                        260,
+                                        120,
+                                        nullptr,
+                                        nullptr,
+                                        GetModuleHandleW(nullptr),
+                                        nullptr);
+    QVERIFY(windows.target);
+    QVERIFY(windows.launcher);
+    keybd_event(VK_MENU, 0, 0, 0);
+    SetForegroundWindow(windows.target);
+    keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0);
+    SetFocus(windows.target);
+    QTest::qWait(100);
+    if (GetForegroundWindow() != windows.target)
+        QSKIP("Windows denied foreground ownership to the paste test fixture.");
+
+    {
+        AppLauncher launcher;
+        launcher.setWindowHandle(reinterpret_cast<quintptr>(windows.launcher));
+        launcher.openLauncher();
+        QTest::qWait(100);
+        if (GetForegroundWindow() != windows.launcher)
+            QSKIP("Windows denied launcher focus to the paste test fixture.");
+        launcher.pasteText(QStringLiteral("\U0001F680"), false);
+
+        wchar_t value[16]{};
+        QTRY_VERIFY_WITH_TIMEOUT(GetWindowTextLengthW(windows.target) > 0, 2000);
+        GetWindowTextW(windows.target, value, static_cast<int>(std::size(value)));
+        QCOMPARE(QString::fromWCharArray(value), QStringLiteral("\U0001F680"));
+    }
+#else
+    QSKIP("Native paste routing is only available on Windows.");
+#endif
+}
+
+QTEST_MAIN(AppLauncherTest)
 
 #include "tst_applauncher.moc"

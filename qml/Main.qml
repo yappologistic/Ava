@@ -128,6 +128,7 @@ Window {
     readonly property real liquidGlassPointerY: islandHover.point.position.y
     readonly property bool liquidGlassPointerActive: islandHover.hovered
     readonly property bool liquidGlassReducedMotion: controller.reducedMotion
+    readonly property real liquidGlassEdgeStrength: appLauncher.open ? 0.18 : 1.0
     readonly property bool timerSatelliteVisible: controller.monitorEnabled
                                                    && controller.timerActive
                                                    && !shellExpandedVisual

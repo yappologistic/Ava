@@ -24,6 +24,7 @@
 
 #include "applauncher.h"
 #include "codexbridge.h"
+#include "emojipickermodel.h"
 #include "islandcontroller.h"
 #include "liquidglassbackdrop.h"
 #include "liquidglasstextureitem.h"
@@ -216,6 +217,13 @@ int main(int argc, char *argv[])
         QStringLiteral("launcher-query"),
         QStringLiteral("Populate the application launcher search field."),
         QStringLiteral("query"));
+    const QCommandLineOption emojiOption(
+        QStringLiteral("emoji"),
+        QStringLiteral("Open the emoji and symbols picker."));
+    const QCommandLineOption emojiQueryOption(
+        QStringLiteral("emoji-query"),
+        QStringLiteral("Populate the emoji and symbols search field."),
+        QStringLiteral("query"));
     const QCommandLineOption monitorDetailsOption(
         QStringLiteral("monitor-details"),
         QStringLiteral("Open the system monitor drill-down."));
@@ -253,6 +261,8 @@ int main(int argc, char *argv[])
     parser.addOption(wallpapersOption);
     parser.addOption(launcherOption);
     parser.addOption(launcherQueryOption);
+    parser.addOption(emojiOption);
+    parser.addOption(emojiQueryOption);
     parser.addOption(monitorDetailsOption);
     parser.addOption(utilityMenuOption);
     parser.addOption(codexOption);
@@ -274,6 +284,7 @@ int main(int argc, char *argv[])
 
     IslandController controller;
     AppLauncher appLauncher;
+    EmojiPickerModel emojiPicker;
     CodexBridge codexBridge;
     LiquidGlassBackdrop liquidGlassBackdrop;
     WindowTilingManager tilingManager;
@@ -302,6 +313,7 @@ int main(int argc, char *argv[])
                            || parser.isSet(codexOption)
                            || parser.isSet(wallpapersOption)
                            || parser.isSet(launcherOption)
+                           || parser.isSet(emojiOption)
                            || parser.isSet(monitorDetailsOption)
                            || parser.isSet(utilityMenuOption)
                            || (parser.isSet(codexVisualStateOption)
@@ -328,6 +340,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<LiquidGlassTextureItem>("Ava", 1, 0, "LiquidGlassTexture");
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
     engine.rootContext()->setContextProperty(QStringLiteral("appLauncher"), &appLauncher);
+    engine.rootContext()->setContextProperty(QStringLiteral("emojiPicker"), &emojiPicker);
     engine.rootContext()->setContextProperty(QStringLiteral("codexBridge"), &codexBridge);
     engine.rootContext()->setContextProperty(QStringLiteral("liquidGlassBackdrop"),
                                              &liquidGlassBackdrop);
@@ -361,12 +374,42 @@ int main(int argc, char *argv[])
     rootWindow->setPersistentSceneGraph(true);
     appLauncher.setWindowHandle(rootWindow->winId());
     app.installNativeEventFilter(&appLauncher);
+    QObject::connect(&appLauncher,
+                     &AppLauncher::emojiPickerRequested,
+                     &emojiPicker,
+                     &EmojiPickerModel::openPicker);
+    QObject::connect(&emojiPicker,
+                     &EmojiPickerModel::pasteRequested,
+                     &appLauncher,
+                     &AppLauncher::pasteText);
+    QObject::connect(&emojiPicker,
+                     &EmojiPickerModel::dismissRequested,
+                     &appLauncher,
+                     &AppLauncher::closeLauncher);
+    QObject::connect(&appLauncher,
+                     &AppLauncher::openChanged,
+                     &emojiPicker,
+                     [&appLauncher, &emojiPicker]() {
+        if (!appLauncher.isOpen())
+            emojiPicker.closePicker();
+    });
     tilingManager.setIslandWindow(rootWindow->winId());
-    if (parser.isSet(launcherOption)) {
+    if (parser.isSet(launcherOption) || parser.isSet(emojiOption)) {
         QTimer::singleShot(80,
                            &appLauncher,
-                           [&appLauncher, &parser, &launcherQueryOption]() {
+                           [&appLauncher,
+                            &emojiPicker,
+                            &parser,
+                            &launcherQueryOption,
+                            &emojiOption,
+                            &emojiQueryOption]() {
             appLauncher.openLauncher();
+            if (parser.isSet(emojiOption)) {
+                emojiPicker.openPicker();
+                if (parser.isSet(emojiQueryOption))
+                    emojiPicker.setQuery(parser.value(emojiQueryOption));
+                return;
+            }
             if (parser.isSet(launcherQueryOption)) {
                 appLauncher.setQuery(parser.value(launcherQueryOption));
             }
@@ -462,6 +505,7 @@ int main(int argc, char *argv[])
     if (parser.isSet(screenshotOption)) {
         const QString screenshotPath = QDir::cleanPath(parser.value(screenshotOption));
         const int screenshotDelay = parser.isSet(launcherOption)
+                                      || parser.isSet(emojiOption)
                                       || parser.isSet(monitorDetailsOption)
                                       || controller.monitorEnabled() ? 2400
                                   : (parser.isSet(mediaPeekOption) ? 1600 : 1000);

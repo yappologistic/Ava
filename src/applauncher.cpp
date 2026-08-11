@@ -1,12 +1,14 @@
 #include "applauncher.h"
 
 #include <QBuffer>
+#include <QClipboard>
 #include <QCollator>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QImage>
 #include <QMetaObject>
 #include <QPointer>
@@ -20,6 +22,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <utility>
 
 #ifdef Q_OS_WIN
@@ -43,6 +46,9 @@ struct ScanResult
 };
 
 constexpr int kDirectEntryIndex = -1;
+constexpr int kPasteDismissDurationMs = 80;
+constexpr int kPasteFocusDelayMs = 55;
+constexpr int kPasteLayerHoldDurationMs = 240;
 
 QString unquoteQuery(QString query)
 {
@@ -112,6 +118,43 @@ std::optional<QUrl> webUrlForQuery(const QString &query)
 using Microsoft::WRL::ComPtr;
 
 constexpr int kLauncherHotkeyId = 0x4156;
+
+void focusNativeWindow(HWND window)
+{
+    if (!window || !IsWindow(window))
+        return;
+    const HWND foreground = GetForegroundWindow();
+    const DWORD currentThread = GetCurrentThreadId();
+    const DWORD foregroundThread = foreground
+        ? GetWindowThreadProcessId(foreground, nullptr)
+        : 0;
+    const bool attached = foregroundThread != 0
+        && foregroundThread != currentThread
+        && AttachThreadInput(currentThread, foregroundThread, TRUE) == TRUE;
+    ShowWindow(window, SW_SHOWNORMAL);
+    BringWindowToTop(window);
+    SetForegroundWindow(window);
+    SetActiveWindow(window);
+    SetFocus(window);
+    if (attached)
+        AttachThreadInput(currentThread, foregroundThread, FALSE);
+}
+
+void sendPasteShortcut()
+{
+    INPUT input[4]{};
+    input[0].type = INPUT_KEYBOARD;
+    input[0].ki.wVk = VK_CONTROL;
+    input[1].type = INPUT_KEYBOARD;
+    input[1].ki.wVk = 'V';
+    input[2].type = INPUT_KEYBOARD;
+    input[2].ki.wVk = 'V';
+    input[2].ki.dwFlags = KEYEVENTF_KEYUP;
+    input[3].type = INPUT_KEYBOARD;
+    input[3].ki.wVk = VK_CONTROL;
+    input[3].ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(static_cast<UINT>(std::size(input)), input, sizeof(INPUT));
+}
 
 QString takeShellString(PWSTR value)
 {
@@ -694,6 +737,9 @@ bool AppLauncher::nativeEventFilter(const QByteArray &,
             if (!m_open || !m_windowHandle) {
                 return;
             }
+            if (QDateTime::currentMSecsSinceEpoch() < m_ignoreFocusLossUntil) {
+                return;
+            }
             const HWND launcherWindow = reinterpret_cast<HWND>(m_windowHandle);
             if (GetForegroundWindow() != launcherWindow) {
                 closeInternal(false);
@@ -732,6 +778,7 @@ void AppLauncher::openLauncher()
         activateLauncherWindow();
         return;
     }
+    setPasteDismissPending(false);
     setQuery(QString());
     setErrorMessage(QString());
 #ifdef Q_OS_WIN
@@ -866,6 +913,11 @@ bool AppLauncher::launch(int row)
     if (!entry) {
         return false;
     }
+    if (entry->id == QStringLiteral("ava:emoji-symbols")) {
+        recordUsage(*entry);
+        emit emojiPickerRequested();
+        return true;
+    }
 #ifdef Q_OS_WIN
     const bool launched = entry->id == QStringLiteral("ava:ai-chat")
         ? QProcess::startDetached(entry->launchTarget, {})
@@ -891,6 +943,52 @@ bool AppLauncher::launch(int row)
     return true;
 }
 
+void AppLauncher::pasteText(const QString &text, bool keepOpen)
+{
+    if (text.isEmpty() || m_pasteDismissPending)
+        return;
+    QGuiApplication::clipboard()->setText(text);
+#ifdef Q_OS_WIN
+    const HWND target = reinterpret_cast<HWND>(m_previousForegroundWindow);
+    if (!target || !IsWindow(target)) {
+        setErrorMessage(QStringLiteral("The previous app is no longer available."));
+        return;
+    }
+    m_ignoreFocusLossUntil = QDateTime::currentMSecsSinceEpoch() + 900;
+    if (!keepOpen) {
+        setPasteDismissPending(true);
+        QTimer::singleShot(kPasteDismissDurationMs, this, [this, target]() {
+            if (!m_pasteDismissPending)
+                return;
+            closeInternal(false, true);
+            QTimer::singleShot(kPasteLayerHoldDurationMs, this, [this]() {
+                setPasteDismissPending(false);
+            });
+            QTimer::singleShot(kPasteFocusDelayMs, qApp, [target]() {
+                focusNativeWindow(target);
+                sendPasteShortcut();
+            });
+        });
+        return;
+    }
+
+    focusNativeWindow(target);
+    QTimer::singleShot(55, this, [this, target]() {
+        if (!IsWindow(target))
+            return;
+        focusNativeWindow(target);
+        sendPasteShortcut();
+        QTimer::singleShot(90, this, [this]() {
+            if (m_open)
+                activateLauncherWindow();
+        });
+    });
+#else
+    Q_UNUSED(keepOpen)
+    closeInternal(true);
+#endif
+}
+
 void AppLauncher::applyEntries(QVector<AppEntry> entries)
 {
     AppEntry aiChat;
@@ -904,6 +1002,16 @@ void AppLauncher::applyEntries(QVector<AppEntry> entries)
     aiChat.searchText = QStringLiteral(
         "ai chat codex code coding agent developer workspace");
     entries.prepend(std::move(aiChat));
+
+    AppEntry emojiPicker;
+    emojiPicker.id = QStringLiteral("ava:emoji-symbols");
+    emojiPicker.name = QStringLiteral("Emoji & Symbols");
+    emojiPicker.subtitle = QStringLiteral("Emoji, flags, and Unicode symbols");
+    emojiPicker.iconSource = QStringLiteral(
+        "qrc:/qt/qml/Ava/assets/icons/fluent-emoji.svg");
+    emojiPicker.searchText = QStringLiteral(
+        "emoji emojis symbol symbols unicode character characters glyph smiley flag math currency arrow");
+    entries.prepend(std::move(emojiPicker));
     for (AppEntry &entry : entries) {
         loadUsage(entry);
     }
@@ -982,11 +1090,21 @@ void AppLauncher::setErrorMessage(const QString &message)
     emit errorMessageChanged();
 }
 
-void AppLauncher::closeInternal(bool restorePreviousWindow)
+void AppLauncher::setPasteDismissPending(bool pending)
+{
+    if (m_pasteDismissPending == pending)
+        return;
+    m_pasteDismissPending = pending;
+    emit pasteDismissPendingChanged();
+}
+
+void AppLauncher::closeInternal(bool restorePreviousWindow, bool preservePasteDismiss)
 {
     if (!m_open) {
         return;
     }
+    if (!preservePasteDismiss)
+        setPasteDismissPending(false);
     m_open = false;
     emit openChanged();
     deactivateLauncherWindow(restorePreviousWindow);

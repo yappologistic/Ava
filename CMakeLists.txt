@@ -21,6 +21,8 @@ qt_add_executable(Ava
     src/main.cpp
     src/applauncher.cpp
     src/applauncher.h
+    src/emojipickermodel.cpp
+    src/emojipickermodel.h
     src/codexbridge.cpp
     src/codexbridge.h
     src/islandcontroller.cpp
@@ -143,6 +145,7 @@ qt_add_qml_module(Ava
     QML_FILES
         qml/Main.qml
         qml/AppLauncherPanel.qml
+        qml/EmojiPickerPanel.qml
         qml/ExpandedPanel.qml
         qml/TimerPanel.qml
         qml/IslandButton.qml
@@ -204,6 +207,12 @@ qt_add_qml_module(Ava
         assets/icons/launcher-link.svg
         assets/icons/launcher-folder.svg
         assets/icons/launcher-file.svg
+        assets/icons/fluent-emoji.svg
+        assets/icons/FLUENT-LICENSE
+        assets/emoji/emoji-test.txt
+        assets/emoji/annotations-en.json
+        assets/emoji/annotations-derived-en.json
+        assets/emoji/LICENSE
         assets/wallpapers/runtime/01-alpine-first-light.jpg
         assets/wallpapers/runtime/02-volcanic-coast-after-rain.jpg
         assets/wallpapers/runtime/03-redwood-creek-mist.jpg
@@ -291,6 +300,17 @@ if (BUILD_TESTING)
         target_link_libraries(tst_applauncher PRIVATE user32 shell32 ole32 propsys)
     endif()
     add_test(NAME app_launcher COMMAND tst_applauncher)
+
+    qt_add_executable(tst_emojipickermodel
+        tests/tst_emojipickermodel.cpp
+        src/emojipickermodel.cpp
+        src/emojipickermodel.h)
+    target_compile_definitions(tst_emojipickermodel PRIVATE
+        AVA_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_include_directories(tst_emojipickermodel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(tst_emojipickermodel PRIVATE
+        Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Test)
+    add_test(NAME emoji_picker COMMAND tst_emojipickermodel)
 
     qt_add_executable(tst_codexmodels tests/tst_codexmodels.cpp)
     target_link_libraries(tst_codexmodels PRIVATE AvaCodexCore Qt6::Test)

@@ -38,7 +38,7 @@ Item {
         }
     }
 
-    Accessible.name: "Application launcher"
+    Accessible.name: emojiPicker.active ? "Emoji and symbols" : "Application launcher"
     Accessible.role: Accessible.Pane
 
     Behavior on opacity {
@@ -79,6 +79,7 @@ Item {
             focusSearch.stop()
             revealAnimation.stop()
             revealProgress = 0
+            emojiPicker.closePicker()
         }
     }
 
@@ -88,6 +89,14 @@ Item {
         function onQueryChanged() {
             if (searchField.text !== appLauncher.query)
                 searchField.text = appLauncher.query
+        }
+    }
+
+    Connections {
+        target: emojiPicker
+        function onActiveChanged() {
+            if (!emojiPicker.active && root.open)
+                focusSearch.restart()
         }
     }
 
@@ -113,6 +122,7 @@ Item {
 
     Rectangle {
         id: searchGlow
+        visible: !emojiPicker.active && !appLauncher.pasteDismissPending
         x: 19
         y: 17
         width: parent.width - 38
@@ -140,6 +150,7 @@ Item {
 
     TextField {
         id: searchField
+        visible: !emojiPicker.active && !appLauncher.pasteDismissPending
         x: 22
         y: 20
         width: parent.width - 44
@@ -230,6 +241,7 @@ Item {
 
     Item {
         id: resultRegion
+        visible: !emojiPicker.active && !appLauncher.pasteDismissPending
         x: 14
         y: 82
         width: parent.width - 28
@@ -598,6 +610,16 @@ Item {
                 }
             }
         }
+    }
+
+    EmojiPickerPanel {
+        anchors.fill: parent
+        colors: root.colors
+        uiFont: root.uiFont
+        iconFont: root.iconFont
+        focusAccent: root.focusAccent
+        reducedMotion: root.reducedMotion
+        open: root.open && emojiPicker.active
     }
 
 }

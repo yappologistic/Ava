@@ -20,6 +20,7 @@ class AppLauncher final : public QAbstractListModel,
     Q_PROPERTY(int resultCount READ resultCount NOTIFY resultsChanged)
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool shortcutRegistered READ shortcutRegistered NOTIFY shortcutRegisteredChanged)
+    Q_PROPERTY(bool pasteDismissPending READ pasteDismissPending NOTIFY pasteDismissPendingChanged)
 
 public:
     struct AppEntry
@@ -58,6 +59,7 @@ public:
     int resultCount() const { return m_filteredIndices.size(); }
     QString errorMessage() const { return m_errorMessage; }
     bool shortcutRegistered() const { return m_shortcutRegistered; }
+    bool pasteDismissPending() const { return m_pasteDismissPending; }
 
     void setWindowHandle(quintptr nativeHandle);
     bool nativeEventFilter(const QByteArray &eventType,
@@ -73,6 +75,7 @@ public slots:
     void refresh();
     void requestIcon(const QString &appId);
     bool launch(int row);
+    void pasteText(const QString &text, bool keepOpen);
 
 signals:
     void openChanged();
@@ -81,15 +84,18 @@ signals:
     void resultsChanged();
     void errorMessageChanged();
     void shortcutRegisteredChanged();
+    void pasteDismissPendingChanged();
     void applicationLaunched(const QString &name);
     void launchFailed(const QString &name, const QString &reason);
+    void emojiPickerRequested();
 
 private:
     void applyEntries(QVector<AppEntry> entries);
     void rebuildResults();
     void setLoading(bool loading);
     void setErrorMessage(const QString &message);
-    void closeInternal(bool restorePreviousWindow);
+    void setPasteDismissPending(bool pending);
+    void closeInternal(bool restorePreviousWindow, bool preservePasteDismiss = false);
     void activateLauncherWindow();
     void deactivateLauncherWindow(bool restorePreviousWindow);
     void registerShortcut();
@@ -107,7 +113,9 @@ private:
     bool m_loading = false;
     bool m_shortcutRegistered = false;
     bool m_refreshInFlight = false;
+    bool m_pasteDismissPending = false;
     QSet<QString> m_iconRequests;
     quintptr m_windowHandle = 0;
     quintptr m_previousForegroundWindow = 0;
+    qint64 m_ignoreFocusLossUntil = 0;
 };
