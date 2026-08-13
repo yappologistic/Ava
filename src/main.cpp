@@ -23,6 +23,7 @@
 #include <cmath>
 
 #include "applauncher.h"
+#include "ciderintegration.h"
 #include "codexbridge.h"
 #include "emojipickermodel.h"
 #include "enhancedtabsmanager.h"
@@ -303,6 +304,14 @@ int main(int argc, char *argv[])
     const QCommandLineOption mediaPeekOption(
         QStringLiteral("media-peek"),
         QStringLiteral("Render the compact media state for screenshot QA."));
+    const QCommandLineOption ciderVisualStateOption(
+        QStringLiteral("cider-visual-state"),
+        QStringLiteral("Render a Cider state for screenshot QA."),
+        QStringLiteral("state"));
+    const QCommandLineOption ciderOpenOption(
+        QStringLiteral("cider-open"),
+        QStringLiteral("Open live Cider queue or lyrics for screenshot QA."),
+        QStringLiteral("view"));
     const QCommandLineOption startTimerOption(
         QStringLiteral("start-timer"),
         QStringLiteral("Start a timer for the given number of seconds."),
@@ -330,6 +339,8 @@ int main(int argc, char *argv[])
     parser.addOption(codexWorkspaceOption);
     parser.addOption(codexVisualStateOption);
     parser.addOption(mediaPeekOption);
+    parser.addOption(ciderVisualStateOption);
+    parser.addOption(ciderOpenOption);
     parser.addOption(startTimerOption);
     parser.addOption(tilingProcessOption);
     parser.process(app);
@@ -344,12 +355,32 @@ int main(int argc, char *argv[])
     const bool liveGlassQa = qEnvironmentVariableIntValue("AVA_LIQUID_GLASS_QA") == 1;
 
     IslandController controller;
+    CiderIntegration cider;
     AppLauncher appLauncher;
     EmojiPickerModel emojiPicker;
     CodexBridge codexBridge;
     LiquidGlassBackdrop liquidGlassBackdrop;
     WindowTilingManager tilingManager;
     EnhancedTabsManager enhancedTabsManager;
+    const auto syncCiderSession = [&controller, &cider]() {
+        cider.setMediaSession(
+            controller.mediaSource(),
+            controller.mediaTitle(),
+            controller.mediaArtist(),
+            qRound64(controller.mediaProgress()
+                     * static_cast<double>(controller.mediaDurationMilliseconds())),
+            controller.mediaDurationMilliseconds(),
+            controller.mediaPlaying());
+    };
+    QObject::connect(&controller,
+                     &IslandController::mediaChanged,
+                     &cider,
+                     syncCiderSession);
+    if (parser.isSet(ciderVisualStateOption) && parser.isSet(screenshotOption)) {
+        cider.setVisualTestState(parser.value(ciderVisualStateOption));
+    } else {
+        syncCiderSession();
+    }
     if (parser.isSet(codexWorkspaceOption)) {
         codexBridge.setWorkspacePath(parser.value(codexWorkspaceOption));
     }
@@ -402,6 +433,7 @@ int main(int argc, char *argv[])
     qmlRegisterType<LiquidGlassTextureItem>("Ava", 1, 0, "LiquidGlassTexture");
     qmlRegisterType<EnhancedTabTextureItem>("Ava", 1, 0, "EnhancedTabTexture");
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
+    engine.rootContext()->setContextProperty(QStringLiteral("cider"), &cider);
     engine.rootContext()->setContextProperty(QStringLiteral("appLauncher"), &appLauncher);
     engine.rootContext()->setContextProperty(QStringLiteral("emojiPicker"), &emojiPicker);
     engine.rootContext()->setContextProperty(QStringLiteral("codexBridge"), &codexBridge);
@@ -420,6 +452,12 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(QStringLiteral("liveGlassQa"), liveGlassQa);
     engine.rootContext()->setContextProperty(QStringLiteral("qaUtilityMenu"),
                                              parser.isSet(utilityMenuOption));
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("qaCiderState"),
+        parser.isSet(screenshotOption) ? parser.value(ciderVisualStateOption) : QString());
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("qaCiderOpen"),
+        parser.isSet(screenshotOption) ? parser.value(ciderOpenOption) : QString());
     engine.loadFromModule(QStringLiteral("Ava"), QStringLiteral("Main"));
 
     if (engine.rootObjects().isEmpty()) {
@@ -633,6 +671,7 @@ int main(int argc, char *argv[])
                                       || parser.isSet(emojiOption)
                                       || parser.isSet(monitorDetailsOption)
                                       || controller.monitorEnabled() ? 2400
+                                  : parser.isSet(ciderOpenOption) ? 2200
                                   : (parser.isSet(mediaPeekOption) ? 1600 : 1000);
         QTimer::singleShot(screenshotDelay,
                            &app,

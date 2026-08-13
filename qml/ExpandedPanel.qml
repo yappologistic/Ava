@@ -49,6 +49,13 @@ Item {
     property real utilityRevealProgress: qaUtilityMenu
                                          ? 1 : (actionHover.hovered ? 1 : 0)
     property int utilityMenuIndex: 2
+    property int ciderContextMode: qaCiderOpen === "lyrics" || qaCiderState === "lyrics" ? 1
+                                   : (qaCiderOpen === "queue" || qaCiderState === "queue" ? 2
+                                      : (qaCiderState === "connect" ? 3 : 0))
+    readonly property bool ciderContextActive: cider.active && ciderContextMode !== 0
+    readonly property bool ciderMediaContextActive: cider.active
+                                                    && (ciderContextMode === 1
+                                                        || ciderContextMode === 2)
     readonly property real calendarHandoffProgress: Math.min(1,
         utilityRevealProgress * 1.14)
     readonly property real utilityMenuProgress: Math.max(0, Math.min(1,
@@ -79,6 +86,15 @@ Item {
             duration: root.reducedMotion ? 0 : MotionTokens.content
             easing.type: MotionTokens.easeOut
         }
+    }
+
+    onExpandedChanged: {
+        if (!expanded && qaCiderState.length === 0)
+            ciderContextMode = 0
+    }
+
+    onCiderContextModeChanged: {
+        cider.setLyricsVisible(cider.active && ciderContextMode === 1)
     }
 
     function utilityItemReveal(index) {
@@ -224,6 +240,7 @@ Item {
         observedArtworkAccent = controller.mediaArtworkAccent
         displayedArtworkAccent = controller.mediaArtworkAccent
         mediaMotionReady = true
+        cider.setLyricsVisible(cider.active && ciderContextMode === 1)
     }
 
     Connections {
@@ -312,6 +329,16 @@ Item {
                 nextButton.reject()
             else if (command === "playback")
                 playbackButton.reject()
+        }
+    }
+
+    Connections {
+        target: cider
+        function onChanged() {
+            if (!cider.active)
+                root.ciderContextMode = 0
+            else if (root.ciderContextMode === 3 && cider.connected)
+                root.ciderContextMode = 0
         }
     }
 
@@ -651,7 +678,7 @@ Item {
                 id: transportControls
                 x: 99
                 y: 56
-                spacing: 8
+                spacing: cider.active ? 4 : 8
                 opacity: Math.max(0, Math.min(1, (root.revealProgress - 0.20) / 0.80))
                          * root.mediaDetailsProgress
                 scale: (0.88 + root.revealProgress * 0.12)
@@ -700,6 +727,78 @@ Item {
                     onClicked: {
                         root.mediaTransitionDirection = 1
                         controller.nextTrack()
+                    }
+                }
+                IslandButton {
+                    id: favoriteButton
+                    visible: cider.active && cider.connected && cider.favoriteAvailable
+                    width: visible ? 24 : 0
+                    height: 24
+                    iconOnly: true
+                    bare: true
+                    transportKind: "favorite"
+                    mediaIconActive: cider.favorite
+                    iconSize: 14
+                    accessibleName: cider.favorite
+                                    ? "Remove Cider favorite" : "Favorite in Cider"
+                    onClicked: cider.toggleFavorite()
+                }
+                IslandButton {
+                    id: lyricsButton
+                    visible: cider.active && cider.connected
+                    width: visible ? 24 : 0
+                    height: 24
+                    iconOnly: true
+                    bare: true
+                    transportKind: "lyrics"
+                    mediaIconActive: root.ciderContextMode === 1
+                    iconSize: 14
+                    accessibleName: root.ciderContextMode === 1
+                                    ? "Close Cider lyrics" : "Show Cider lyrics"
+                    onClicked: {
+                        root.ciderContextMode = root.ciderContextMode === 1 ? 0 : 1
+                    }
+                }
+                IslandButton {
+                    id: queueButton
+                    visible: cider.active && cider.connected
+                    width: visible ? 24 : 0
+                    height: 24
+                    iconOnly: true
+                    bare: true
+                    transportKind: "queue"
+                    mediaIconActive: root.ciderContextMode === 2
+                    iconSize: 14
+                    accessibleName: root.ciderContextMode === 2
+                                    ? "Close Cider queue" : "Show Cider queue"
+                    onClicked: {
+                        root.ciderContextMode = root.ciderContextMode === 2 ? 0 : 2
+                        if (root.ciderContextMode === 2)
+                            cider.refreshQueue()
+                    }
+                }
+                IslandButton {
+                    id: ciderConnectButton
+                    visible: cider.active && !cider.connected
+                    width: visible ? 24 : 0
+                    height: 24
+                    iconOnly: true
+                    bare: true
+                    transportKind: "connect"
+                    mediaIconActive: root.ciderContextMode === 3
+                    iconSize: 14
+                    accessibleName: "Connect Cider using the API token on the clipboard"
+                    Keys.onPressed: function(event) {
+                        if (event.key === Qt.Key_V
+                                && (event.modifiers & Qt.ControlModifier)) {
+                            root.ciderContextMode = 3
+                            cider.connectFromClipboard()
+                            event.accepted = true
+                        }
+                    }
+                    onClicked: {
+                        root.ciderContextMode = 3
+                        cider.connectFromClipboard()
                     }
                 }
             }
@@ -888,6 +987,12 @@ Item {
                          + controller.networkStatus
                          + (controller.batteryAvailable ? ". " + controller.powerText : "")
                          + (tilingManager.enabled ? ". " + tilingManager.statusText : "")
+                         + (root.ciderContextMode === 1
+                            ? ". Cider lyrics. " + cider.currentLyric + ". " + cider.nextLyric
+                            : (root.ciderContextMode === 2
+                               ? ". Cider upcoming queue"
+                               : (root.ciderContextMode === 3
+                                  ? ". Cider connection help" : "")))
 
         RollingDigits {
             id: expandedClockDigits
@@ -899,8 +1004,24 @@ Item {
             fontWeight: Font.Medium
             letterSpacing: -0.5
             reducedMotion: root.reducedMotion
-            scale: 0.72 + root.revealProgress * 0.28
+            visible: opacity > 0.001
+            opacity: root.ciderMediaContextActive ? 0 : 1
+            scale: (0.72 + root.revealProgress * 0.28)
+                   * (root.ciderMediaContextActive ? 0.97 : 1)
             transform: Translate { y: -7 * (1 - root.revealProgress) }
+
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.press
+                    easing.type: MotionTokens.easeOut
+                }
+            }
+            Behavior on scale {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.state
+                    easing.type: MotionTokens.easeOut
+                }
+            }
         }
 
         Item {
@@ -909,6 +1030,7 @@ Item {
             width: parent.width
             height: 62
             opacity: tilingManager.adjusting || root.tilingFeedbackActive
+                     || root.ciderContextActive
                      ? 0 : 1 - root.calendarHandoffProgress
             scale: 1 - root.calendarHandoffProgress * 0.055
             transform: Translate {
@@ -991,6 +1113,239 @@ Item {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        Item {
+            id: ciderContextView
+            y: root.ciderContextMode === 2 ? 24
+               : (root.ciderContextMode === 1 ? 30 : 48)
+            width: parent.width
+            height: 62
+            visible: opacity > 0.001
+            enabled: opacity > 0.5
+            opacity: root.ciderContextActive
+                     && !tilingManager.adjusting && !root.tilingFeedbackActive
+                     ? 1 - root.calendarHandoffProgress : 0
+            scale: 0.97 + opacity * 0.03
+            transform: Translate { y: 3 * (1 - ciderContextView.opacity) }
+
+            Behavior on opacity {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.state
+                    easing.type: MotionTokens.easeOut
+                }
+            }
+            Behavior on scale {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.state
+                    easing.type: MotionTokens.easeOut
+                }
+            }
+            Behavior on y {
+                NumberAnimation {
+                    duration: root.reducedMotion ? 0 : MotionTokens.state
+                    easing.type: MotionTokens.easeOut
+                }
+            }
+
+            Item {
+                anchors.fill: parent
+                visible: root.ciderContextMode === 1
+                clip: true
+
+                MorphingLabel {
+                    x: 4
+                    y: 0
+                    width: parent.width - 8
+                    text: cider.currentLyric.length > 0
+                          ? cider.currentLyric
+                          : (cider.lyricsAvailable && cider.lyricsSynchronized
+                             ? cider.nextLyric
+                             : "Lyrics unavailable for this track")
+                    color: root.colors.text
+                    elide: Text.ElideRight
+                    fontFamily: root.uiFont
+                    fontPixelSize: 10
+                    fontWeight: Font.DemiBold
+                    motionOffset: 7
+                    reducedMotion: root.reducedMotion
+                }
+
+                Repeater {
+                    model: root.ciderContextMode === 1 && cider.lyricsSynchronized
+                           ? cider.upcomingLyrics : []
+
+                    delegate: Text {
+                        id: upcomingLyric
+                        required property int index
+                        required property string modelData
+                        x: 4
+                        y: 20 + index * 15
+                        width: parent.width - 8
+                        text: modelData
+                        color: root.colors.text
+                        opacity: index === 0 ? 0.42 : (index === 1 ? 0.22 : 0.10)
+                        elide: Text.ElideRight
+                        font.family: root.uiFont
+                        font.pixelSize: index === 0 ? 8 : 7
+                        font.weight: Font.Medium
+                        layer.enabled: !root.reducedMotion
+                        layer.smooth: true
+                        layer.effect: MultiEffect {
+                            blurEnabled: true
+                            blurMax: 12
+                            blur: upcomingLyric.index === 0
+                                  ? 0.14 : (upcomingLyric.index === 1 ? 0.25 : 0.38)
+                            autoPaddingEnabled: false
+                        }
+
+                        NumberAnimation on opacity {
+                            from: 0
+                            to: upcomingLyric.index === 0
+                                ? 0.42 : (upcomingLyric.index === 1 ? 0.22 : 0.10)
+                            duration: root.reducedMotion ? 0 : MotionTokens.content
+                            easing.type: MotionTokens.easeOut
+                        }
+                        NumberAnimation on y {
+                            from: 25 + upcomingLyric.index * 15
+                            to: 20 + upcomingLyric.index * 15
+                            duration: root.reducedMotion ? 0 : MotionTokens.content
+                            easing.type: MotionTokens.easeOut
+                        }
+                    }
+                }
+
+                Text {
+                    x: 4
+                    y: 23
+                    width: parent.width - 8
+                    text: cider.lyricsAvailable && !cider.lyricsSynchronized
+                          ? "Lyrics aren't time-synced for this track" : ""
+                    visible: text.length > 0
+                    color: root.colors.tertiary
+                    elide: Text.ElideRight
+                    font.family: root.uiFont
+                    font.pixelSize: 8
+                    font.weight: Font.Normal
+                }
+            }
+
+            Item {
+                anchors.fill: parent
+                visible: root.ciderContextMode === 2
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: cider.queue.length === 0
+                    text: cider.queueAvailable ? "Nothing else in the queue" : "Queue unavailable"
+                    color: root.colors.tertiary
+                    font.family: root.uiFont
+                    font.pixelSize: 8
+                }
+
+                Repeater {
+                    model: cider.queue
+
+                    delegate: Item {
+                        id: queueLine
+                        required property int index
+                        required property var modelData
+                        x: 2
+                        y: index * 29
+                        width: parent.width - 4
+                        height: 29
+                        activeFocusOnTab: true
+                        opacity: queueLineHover.hovered || activeFocus ? 1 : 0.86
+                        Accessible.name: "Play " + modelData.title + " by " + modelData.artist
+                        Accessible.role: Accessible.Button
+
+                        HoverHandler { id: queueLineHover }
+                        TapHandler {
+                            onTapped: cider.playQueueIndex(queueLine.modelData.index)
+                        }
+                        Keys.onReturnPressed: cider.playQueueIndex(queueLine.modelData.index)
+                        Keys.onEnterPressed: cider.playQueueIndex(queueLine.modelData.index)
+                        Keys.onSpacePressed: cider.playQueueIndex(queueLine.modelData.index)
+
+                        Text {
+                            x: 1
+                            y: 5
+                            width: 10
+                            text: queueLine.index + 1
+                            color: queueLineHover.hovered || queueLine.activeFocus
+                                   ? root.calendarActiveAccent : root.colors.tertiary
+                            font.family: root.monoFont
+                            font.pixelSize: 7
+                            font.features: { "tnum": 1 }
+                        }
+                        Text {
+                            x: 15
+                            y: 3
+                            width: parent.width - 17
+                            text: queueLine.modelData.title
+                            color: root.colors.text
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                            font.family: root.uiFont
+                            font.pixelSize: 8
+                            font.weight: Font.Medium
+                        }
+                        Text {
+                            x: 15
+                            y: 15
+                            width: parent.width - 17
+                            text: queueLine.modelData.artist
+                            color: root.colors.tertiary
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                            font.family: root.uiFont
+                            font.pixelSize: 7
+                        }
+
+                        Behavior on opacity {
+                            NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
+                        }
+                    }
+                }
+            }
+
+            Item {
+                anchors.fill: parent
+                visible: root.ciderContextMode === 3
+
+                Text {
+                    x: 3
+                    y: 4
+                    width: parent.width - 6
+                    text: "COPY A CIDER API TOKEN"
+                    color: root.colors.text
+                    font.family: root.uiFont
+                    font.pixelSize: 8
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: 0.5
+                }
+                Text {
+                    x: 3
+                    y: 20
+                    width: parent.width - 6
+                    text: "Settings  ›  Connections  ›  Tokens"
+                    color: root.colors.tertiary
+                    elide: Text.ElideRight
+                    font.family: root.uiFont
+                    font.pixelSize: 8
+                }
+                Text {
+                    x: 3
+                    y: 37
+                    width: parent.width - 6
+                    text: cider.busy ? "Checking local Cider…" : cider.statusMessage
+                    color: cider.pairingRequired ? root.calendarActiveAccent
+                                                 : root.colors.tertiary
+                    elide: Text.ElideRight
+                    font.family: root.uiFont
+                    font.pixelSize: 7
                 }
             }
         }
@@ -1279,7 +1634,10 @@ Item {
             width: parent.width - 4
             height: 59
 
-            HoverHandler { id: actionHover }
+            HoverHandler {
+                id: actionHover
+                enabled: root.ciderContextMode === 0
+            }
 
             ListModel {
                 id: utilityMenu

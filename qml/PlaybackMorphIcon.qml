@@ -9,6 +9,8 @@ Item {
     property bool playing: false
     property string kind: "playback"
     property color color: "#f5f5f7"
+    property color activeColor: "#5ac8fa"
+    property bool active: false
     property bool reducedMotion: false
     property real morphProgress: playing ? 1 : 0
 
@@ -22,77 +24,67 @@ Item {
         }
     }
 
-    onMorphProgressChanged: iconCanvas.requestPaint()
-    onColorChanged: iconCanvas.requestPaint()
-    onKindChanged: iconCanvas.requestPaint()
+    function iconSource(iconKind) {
+        if (iconKind === "previous")
+            return Qt.resolvedUrl("../assets/icons/fluent-media/previous-regular.svg")
+        if (iconKind === "next")
+            return Qt.resolvedUrl("../assets/icons/fluent-media/next-regular.svg")
+        if (iconKind === "favorite")
+            return Qt.resolvedUrl(root.active
+                                  ? "../assets/icons/fluent-media/star-filled.svg"
+                                  : "../assets/icons/fluent-media/star-regular.svg")
+        if (iconKind === "queue")
+            return Qt.resolvedUrl("../assets/icons/fluent-media/queue-regular.svg")
+        if (iconKind === "lyrics")
+            return Qt.resolvedUrl("../assets/icons/fluent-media/lyrics-regular.svg")
+        if (iconKind === "connect")
+            return Qt.resolvedUrl("../assets/icons/fluent-media/connect-regular.svg")
+        return ""
+    }
 
-    Canvas {
-        id: iconCanvas
+    Image {
         anchors.fill: parent
-        antialiasing: true
+        visible: root.kind !== "playback"
+        source: root.iconSource(root.kind)
+        sourceSize: Qt.size(Math.ceil(width * 2), Math.ceil(height * 2))
+        fillMode: Image.PreserveAspectFit
+        smooth: true
+        mipmap: true
+        opacity: root.active ? 1 : 0.92
+        scale: root.active ? 1 : 0.96
 
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
-        Component.onCompleted: requestPaint()
-
-        onPaint: {
-            const context = getContext("2d")
-            const progress = root.morphProgress
-            const centerX = width / 2
-            const centerY = height / 2
-            context.reset()
-            context.fillStyle = root.color
-
-            if (root.kind === "previous" || root.kind === "next") {
-                const forward = root.kind === "next"
-                const barX = width * (forward ? 0.79 : 0.21)
-                context.strokeStyle = root.color
-                context.lineWidth = Math.max(1.35, width * 0.105)
-                context.lineCap = "round"
-                context.beginPath()
-                context.moveTo(barX, height * 0.20)
-                context.lineTo(barX, height * 0.80)
-                context.stroke()
-
-                context.lineJoin = "round"
-                context.beginPath()
-                if (forward) {
-                    context.moveTo(width * 0.31, height * 0.18)
-                    context.lineTo(width * 0.69, height * 0.50)
-                    context.lineTo(width * 0.31, height * 0.82)
-                } else {
-                    context.moveTo(width * 0.69, height * 0.18)
-                    context.lineTo(width * 0.31, height * 0.50)
-                    context.lineTo(width * 0.69, height * 0.82)
-                }
-                context.closePath()
-                context.fill()
-                return
-            }
-
-            context.save()
-            context.globalAlpha = 1 - progress
-            const playScale = 1 - progress * 0.12
-            context.translate(centerX, centerY)
-            context.scale(playScale, playScale)
-            context.translate(-centerX, -centerY)
-            context.beginPath()
-            context.moveTo(width * 0.28, height * 0.18)
-            context.lineTo(width * 0.76, height * 0.50)
-            context.lineTo(width * 0.28, height * 0.82)
-            context.closePath()
-            context.fill()
-            context.restore()
-
-            context.save()
-            context.globalAlpha = progress
-            const pauseScale = 0.86 + progress * 0.14
-            context.translate(centerX, centerY)
-            context.scale(pauseScale, pauseScale)
-            context.translate(-centerX, -centerY)
-            context.fillRect(width * 0.25, height * 0.18, width * 0.16, height * 0.64)
-            context.fillRect(width * 0.59, height * 0.18, width * 0.16, height * 0.64)
-            context.restore()
+        Behavior on opacity {
+            NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
         }
+        Behavior on scale {
+            NumberAnimation {
+                duration: root.reducedMotion ? 0 : MotionTokens.directSettle
+                easing.type: MotionTokens.easeOut
+            }
+        }
+    }
+
+    Image {
+        anchors.fill: parent
+        visible: root.kind === "playback"
+        source: Qt.resolvedUrl("../assets/icons/fluent-media/play-regular.svg")
+        sourceSize: Qt.size(Math.ceil(width * 2), Math.ceil(height * 2))
+        fillMode: Image.PreserveAspectFit
+        smooth: true
+        mipmap: true
+        opacity: 1 - root.morphProgress
+        scale: 1 - root.morphProgress * 0.12
+    }
+
+    Image {
+        anchors.fill: parent
+        visible: root.kind === "playback"
+        source: Qt.resolvedUrl("../assets/icons/fluent-media/pause-regular.svg")
+        sourceSize: Qt.size(Math.ceil(width * 2), Math.ceil(height * 2))
+        fillMode: Image.PreserveAspectFit
+        smooth: true
+        mipmap: true
+        opacity: root.morphProgress
+        scale: 0.88 + root.morphProgress * 0.12
     }
 }

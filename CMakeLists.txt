@@ -19,6 +19,8 @@ qt_standard_project_setup(REQUIRES 6.5)
 
 qt_add_executable(Ava
     src/main.cpp
+    src/ciderintegration.cpp
+    src/ciderintegration.h
     src/applauncher.cpp
     src/applauncher.h
     src/emojipickermodel.cpp
@@ -180,6 +182,15 @@ qt_add_qml_module(Ava
         assets/icons/pause-light.svg
         assets/icons/previous-light.svg
         assets/icons/next-light.svg
+        assets/icons/fluent-media/connect-regular.svg
+        assets/icons/fluent-media/lyrics-regular.svg
+        assets/icons/fluent-media/next-regular.svg
+        assets/icons/fluent-media/pause-regular.svg
+        assets/icons/fluent-media/play-regular.svg
+        assets/icons/fluent-media/previous-regular.svg
+        assets/icons/fluent-media/queue-regular.svg
+        assets/icons/fluent-media/star-filled.svg
+        assets/icons/fluent-media/star-regular.svg
         assets/icons/speaker-light.svg
         assets/icons/speaker-muted-dark.svg
         assets/icons/pin-light.svg
@@ -261,7 +272,7 @@ if (AVA_FORCE_AUTOMATION_MODE)
 endif()
 
 if (WIN32)
-    target_link_libraries(Ava PRIVATE user32 gdi32 d3d11 d3dcompiler dxgi shell32 dwmapi ole32 propsys windowsapp pdh psapi)
+    target_link_libraries(Ava PRIVATE user32 gdi32 d3d11 d3dcompiler dxgi shell32 dwmapi ole32 propsys windowsapp pdh psapi advapi32)
     target_link_libraries(AvaChat PRIVATE user32 shell32 dwmapi)
     set_target_properties(Ava PROPERTIES
         WIN32_EXECUTABLE TRUE
@@ -360,6 +371,18 @@ if (BUILD_TESTING)
         "QT_QPA_PLATFORM=offscreen"
         "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>"
         "QT_QUICK_BACKEND=software")
+
+    qt_add_executable(tst_ciderintegration
+        tests/tst_ciderintegration.cpp
+        src/ciderintegration.cpp
+        src/ciderintegration.h)
+    target_include_directories(tst_ciderintegration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(tst_ciderintegration PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
+    if (WIN32)
+        target_link_libraries(tst_ciderintegration PRIVATE advapi32)
+    endif()
+    add_test(NAME cider_integration COMMAND tst_ciderintegration)
 
     qt_add_executable(tst_codexlive tests/tst_codexlive.cpp)
     target_link_libraries(tst_codexlive PRIVATE AvaCodexCore Qt6::Test)

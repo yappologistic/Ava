@@ -24,6 +24,7 @@ Button {
     property bool rotatesOnSelection: false
     property bool playbackMorph: false
     property bool playbackPlaying: false
+    property bool mediaIconActive: false
     property bool dwindleMorph: false
     property string transportKind: ""
     property real pressShiftX: 0
@@ -210,7 +211,9 @@ Button {
                 kind: control.transportKind.length > 0
                       ? control.transportKind : "playback"
                 playing: control.playbackPlaying
+                active: control.mediaIconActive
                 color: control.accented || control.selected ? "#000000" : "#f5f5f7"
+                activeColor: control.accentColor
                 reducedMotion: control.reducedMotion
             }
 
