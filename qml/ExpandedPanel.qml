@@ -1236,78 +1236,15 @@ Item {
                 anchors.fill: parent
                 visible: root.ciderContextMode === 2
 
-                Text {
-                    anchors.centerIn: parent
-                    visible: cider.queue.length === 0
-                    text: cider.queueAvailable ? "Nothing else in the queue" : "Queue unavailable"
-                    color: root.colors.tertiary
-                    font.family: root.uiFont
-                    font.pixelSize: 8
-                }
-
-                Repeater {
-                    model: cider.queue
-
-                    delegate: Item {
-                        id: queueLine
-                        required property int index
-                        required property var modelData
-                        x: 2
-                        y: index * 29
-                        width: parent.width - 4
-                        height: 29
-                        activeFocusOnTab: true
-                        opacity: queueLineHover.hovered || activeFocus ? 1 : 0.86
-                        Accessible.name: "Play " + modelData.title + " by " + modelData.artist
-                        Accessible.role: Accessible.Button
-
-                        HoverHandler { id: queueLineHover }
-                        TapHandler {
-                            onTapped: cider.playQueueIndex(queueLine.modelData.index)
-                        }
-                        Keys.onReturnPressed: cider.playQueueIndex(queueLine.modelData.index)
-                        Keys.onEnterPressed: cider.playQueueIndex(queueLine.modelData.index)
-                        Keys.onSpacePressed: cider.playQueueIndex(queueLine.modelData.index)
-
-                        Text {
-                            x: 1
-                            y: 5
-                            width: 10
-                            text: queueLine.index + 1
-                            color: queueLineHover.hovered || queueLine.activeFocus
-                                   ? root.calendarActiveAccent : root.colors.tertiary
-                            font.family: root.monoFont
-                            font.pixelSize: 7
-                            font.features: { "tnum": 1 }
-                        }
-                        Text {
-                            x: 15
-                            y: 3
-                            width: parent.width - 17
-                            text: queueLine.modelData.title
-                            color: root.colors.text
-                            elide: Text.ElideRight
-                            maximumLineCount: 1
-                            font.family: root.uiFont
-                            font.pixelSize: 8
-                            font.weight: Font.Medium
-                        }
-                        Text {
-                            x: 15
-                            y: 15
-                            width: parent.width - 17
-                            text: queueLine.modelData.artist
-                            color: root.colors.tertiary
-                            elide: Text.ElideRight
-                            maximumLineCount: 1
-                            font.family: root.uiFont
-                            font.pixelSize: 7
-                        }
-
-                        Behavior on opacity {
-                            NumberAnimation { duration: root.reducedMotion ? 0 : MotionTokens.hover }
-                        }
-                    }
+                CiderQueueView {
+                    anchors.fill: parent
+                    provider: cider
+                    colors: root.colors
+                    accentColor: root.calendarActiveAccent
+                    uiFont: root.uiFont
+                    monoFont: root.monoFont
+                    reducedMotion: root.reducedMotion
+                    active: root.ciderContextMode === 2
                 }
             }
 
