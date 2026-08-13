@@ -11,7 +11,16 @@ CMakeUserPresets.json
 *.jpg
 *.jpeg
 *.gif
+*.webp
+*.bmp
+*.tif
+*.tiff
+*.heic
+*.avif
 *.mp4
+*.webm
+*.mov
+*.mkv
 *.csv
 *.log
 *.user
