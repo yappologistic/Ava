@@ -19,6 +19,8 @@ qt_standard_project_setup(REQUIRES 6.5)
 
 qt_add_executable(Ava
     src/main.cpp
+    src/cideraudiometer.cpp
+    src/cideraudiometer.h
     src/ciderintegration.cpp
     src/ciderintegration.h
     src/applauncher.cpp
@@ -172,6 +174,11 @@ qt_add_qml_module(Ava
         qml/PlaybackMorphIcon.qml
         qml/CiderLyricsView.qml
         qml/CiderQueueView.qml
+        qml/CiderAudioPulse.qml
+        qml/CiderBrowserView.qml
+        qml/CiderPlaylistView.qml
+        qml/CiderRecentView.qml
+        qml/CiderSearchView.qml
         qml/DwindleMorphIcon.qml
         qml/CodexPanel.qml
         qml/OpenTuiSpinner.qml
@@ -185,12 +192,19 @@ qt_add_qml_module(Ava
         assets/icons/previous-light.svg
         assets/icons/next-light.svg
         assets/icons/fluent-media/connect-regular.svg
+        assets/icons/fluent-media/add-regular.svg
+        assets/icons/fluent-media/check-regular.svg
+        assets/icons/fluent-media/delete-regular.svg
+        assets/icons/fluent-media/history-regular.svg
         assets/icons/fluent-media/lyrics-regular.svg
         assets/icons/fluent-media/next-regular.svg
         assets/icons/fluent-media/pause-regular.svg
         assets/icons/fluent-media/play-regular.svg
+        assets/icons/fluent-media/playlist-regular.svg
         assets/icons/fluent-media/previous-regular.svg
         assets/icons/fluent-media/queue-regular.svg
+        assets/icons/fluent-media/reorder-regular.svg
+        assets/icons/fluent-media/search-regular.svg
         assets/icons/fluent-media/star-filled.svg
         assets/icons/fluent-media/star-regular.svg
         assets/icons/speaker-light.svg
@@ -376,13 +390,15 @@ if (BUILD_TESTING)
 
     qt_add_executable(tst_ciderintegration
         tests/tst_ciderintegration.cpp
+        src/cideraudiometer.cpp
+        src/cideraudiometer.h
         src/ciderintegration.cpp
         src/ciderintegration.h)
     target_include_directories(tst_ciderintegration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(tst_ciderintegration PRIVATE
         Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)
     if (WIN32)
-        target_link_libraries(tst_ciderintegration PRIVATE advapi32)
+        target_link_libraries(tst_ciderintegration PRIVATE advapi32 ole32)
     endif()
     add_test(NAME cider_integration COMMAND tst_ciderintegration)
 

@@ -8,8 +8,10 @@
 #endif
 
 #include "ciderintegration.h"
+#include "cideraudiometer.h"
 
 #include <QClipboard>
+#include <QDateTime>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -89,6 +91,54 @@ QString itemIdentifier(const QJsonValue &value) {
   return firstString(item, {QStringLiteral("id"), QStringLiteral("catalogId")});
 }
 
+QString itemType(const QJsonValue &value, const QString &fallback = {}) {
+  const QString type = mediaItem(value).value(QStringLiteral("type")).toString();
+  return type.isEmpty() ? fallback : type;
+}
+
+QString normalizedPlaybackType(const QString &type) {
+  if (type.compare(QStringLiteral("songs"), Qt::CaseInsensitive) == 0 ||
+      type.compare(QStringLiteral("library-songs"), Qt::CaseInsensitive) ==
+          0) {
+    return QStringLiteral("song");
+  }
+  if (type.compare(QStringLiteral("albums"), Qt::CaseInsensitive) == 0 ||
+      type.compare(QStringLiteral("library-albums"), Qt::CaseInsensitive) ==
+          0) {
+    return QStringLiteral("album");
+  }
+  if (type.compare(QStringLiteral("playlists"), Qt::CaseInsensitive) == 0 ||
+      type.compare(QStringLiteral("library-playlists"),
+                   Qt::CaseInsensitive) == 0) {
+    return QStringLiteral("playlist");
+  }
+  return type;
+}
+
+QString itemPlaybackType(const QJsonValue &value,
+                         const QString &fallback = {}) {
+  const QJsonObject playParams =
+      itemAttributes(value).value(QStringLiteral("playParams")).toObject();
+  const QString kind = playParams.value(QStringLiteral("kind")).toString();
+  if (!kind.isEmpty()) {
+    return kind;
+  }
+
+  return normalizedPlaybackType(itemType(value, fallback));
+}
+
+QString itemArtworkUrl(const QJsonValue &value) {
+  const QJsonObject attributes = itemAttributes(value);
+  QString url = attributes.value(QStringLiteral("artwork"))
+                    .toObject()
+                    .value(QStringLiteral("url"))
+                    .toString();
+  url.replace(QStringLiteral("{w}"), QStringLiteral("64"));
+  url.replace(QStringLiteral("{h}"), QStringLiteral("64"));
+  url.replace(QStringLiteral("{f}"), QStringLiteral("jpg"));
+  return url;
+}
+
 bool isAuthenticationFailure(int statusCode) {
   return statusCode == 401 || statusCode == 403;
 }
@@ -101,7 +151,17 @@ CiderIntegration::CiderIntegration(QObject *parent)
 CiderIntegration::CiderIntegration(const QUrl &baseUrl,
                                    bool usePersistentCredentials,
                                    QObject *parent)
+    : CiderIntegration(
+          baseUrl, usePersistentCredentials,
+          QUrl(QStringLiteral("https://amp-api.music.apple.com")), parent) {}
+
+CiderIntegration::CiderIntegration(const QUrl &baseUrl,
+                                   bool usePersistentCredentials,
+                                   const QUrl &appleMusicBaseUrl,
+                                   QObject *parent)
     : QObject(parent), m_baseUrl(baseUrl),
+      m_appleMusicBaseUrl(appleMusicBaseUrl),
+      m_audioMeter(std::make_unique<CiderAudioMeter>()),
       m_usePersistentCredentials(usePersistentCredentials) {
   m_lyricBoundaryTimer.setSingleShot(true);
   m_lyricBoundaryTimer.setTimerType(Qt::PreciseTimer);
@@ -109,10 +169,25 @@ CiderIntegration::CiderIntegration(const QUrl &baseUrl,
     updateLyricsForPosition();
     scheduleNextLyricBoundary();
   });
+  m_idleProbeTimer.setInterval(5000);
+  m_idleProbeTimer.setTimerType(Qt::VeryCoarseTimer);
+  connect(&m_idleProbeTimer, &QTimer::timeout, this,
+          &CiderIntegration::probeClientAvailability);
   if (m_usePersistentCredentials) {
     m_token = loadCredential();
   }
+  connect(m_audioMeter.get(), &CiderAudioMeter::levelChanged, this,
+          [this](qreal level) {
+            const qreal normalized = std::clamp(level, 0.0, 1.0);
+            if (qFuzzyCompare(1.0 + m_audioLevel, 1.0 + normalized)) {
+              return;
+            }
+            m_audioLevel = normalized;
+            emit audioLevelChanged();
+          });
 }
+
+CiderIntegration::~CiderIntegration() = default;
 
 void CiderIntegration::setMediaSession(
     const QString &source, const QString &title, const QString &artist,
@@ -131,15 +206,34 @@ void CiderIntegration::setMediaSession(
   m_positionMilliseconds = std::max<qint64>(0, positionMilliseconds);
   m_durationMilliseconds = std::max<qint64>(0, durationMilliseconds);
   m_mediaPlaying = activeNow && playing;
+  m_ciderMediaActive = activeNow;
+  m_foreignMediaActive = !activeNow && !source.trimmed().isEmpty();
   m_positionClock.start();
 
   if (!activeNow) {
     m_lyricBoundaryTimer.stop();
+    updateAudioMeterState();
+    const bool hadTrack = !m_trackIdentity.isEmpty();
+    if (hadTrack) {
+      m_trackIdentity.clear();
+      ++m_generation;
+      clearContent();
+    }
+    if (m_panelVisible && !m_foreignMediaActive) {
+      if (!m_idleProbeTimer.isActive()) {
+        m_idleProbeTimer.start();
+      }
+      probeClientAvailability();
+      if (hadTrack) {
+        emit changed();
+      }
+      return;
+    }
+    m_idleProbeTimer.stop();
     if (!m_active && m_trackIdentity.isEmpty()) {
       return;
     }
     m_active = false;
-    m_trackIdentity.clear();
     m_connected = false;
     m_pairingRequired = false;
     m_apiVersion = ApiVersion::Unknown;
@@ -152,7 +246,9 @@ void CiderIntegration::setMediaSession(
     return;
   }
 
+  m_idleProbeTimer.stop();
   m_active = true;
+  updateAudioMeterState();
   if (trackChanged) {
     m_trackIdentity = identity;
     ++m_generation;
@@ -187,6 +283,12 @@ void CiderIntegration::setVisualTestState(const QString &state) {
   m_queueAvailable = m_connected;
   m_lyricsSynchronized = false;
   m_queue.clear();
+  m_playlists.clear();
+  m_searchResults.clear();
+  m_recentlyPlayed.clear();
+  m_lastAddedPlaylistId.clear();
+  m_browserMessage.clear();
+  m_browserBusy = false;
   m_lyrics.clear();
   m_previousLyric.clear();
   m_currentLyric.clear();
@@ -213,6 +315,48 @@ void CiderIntegration::setVisualTestState(const QString &state) {
         QVariantMap{{QStringLiteral("title"), QStringLiteral("Soft Static")},
                     {QStringLiteral("artist"), QStringLiteral("Hana Field")},
                     {QStringLiteral("index"), 6}}};
+  } else if (state == QStringLiteral("playlists")) {
+    m_playlists = {
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Night Coding")},
+                    {QStringLiteral("id"), QStringLiteral("p.night")},
+                    {QStringLiteral("type"), QStringLiteral("library-playlists")},
+                    {QStringLiteral("artworkUrl"), QString()}},
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Late Train Home")},
+                    {QStringLiteral("id"), QStringLiteral("p.train")},
+                    {QStringLiteral("type"), QStringLiteral("library-playlists")},
+                    {QStringLiteral("artworkUrl"), QString()}},
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Saved for Later")},
+                    {QStringLiteral("id"), QStringLiteral("p.saved")},
+                    {QStringLiteral("type"), QStringLiteral("library-playlists")},
+                    {QStringLiteral("artworkUrl"), QString()}}};
+  } else if (state == QStringLiteral("search")) {
+    m_searchResults = {
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Afterglow Avenue")},
+                    {QStringLiteral("subtitle"), QStringLiteral("Mira Vale")},
+                    {QStringLiteral("id"), QStringLiteral("1001")},
+                    {QStringLiteral("type"), QStringLiteral("songs")}},
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Night Drive")},
+                    {QStringLiteral("subtitle"), QStringLiteral("Album")},
+                    {QStringLiteral("id"), QStringLiteral("1002")},
+                    {QStringLiteral("type"), QStringLiteral("albums")}},
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Neon Evenings")},
+                    {QStringLiteral("subtitle"), QStringLiteral("Playlist")},
+                    {QStringLiteral("id"), QStringLiteral("1003")},
+                    {QStringLiteral("type"), QStringLiteral("playlists")}}};
+  } else if (state == QStringLiteral("recent")) {
+    m_recentlyPlayed = {
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Glass Signals")},
+                    {QStringLiteral("subtitle"), QStringLiteral("Mira Vale")},
+                    {QStringLiteral("id"), QStringLiteral("2001")},
+                    {QStringLiteral("type"), QStringLiteral("songs")}},
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Low Orbit")},
+                    {QStringLiteral("subtitle"), QStringLiteral("Serein")},
+                    {QStringLiteral("id"), QStringLiteral("2002")},
+                    {QStringLiteral("type"), QStringLiteral("songs")}},
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Violet Lines")},
+                    {QStringLiteral("subtitle"), QStringLiteral("Common Static")},
+                    {QStringLiteral("id"), QStringLiteral("2003")},
+                    {QStringLiteral("type"), QStringLiteral("songs")}}};
   } else if (state == QStringLiteral("lyrics")) {
     m_lyrics = {
         {0, 8000, QStringLiteral("The city settles into light")},
@@ -228,6 +372,8 @@ void CiderIntegration::setVisualTestState(const QString &state) {
       state == QStringLiteral("connect")
           ? QStringLiteral("Copy a Cider API token, then select connect")
           : QString();
+  m_audioLevel = state == QStringLiteral("audio") ? 0.72 : 0.0;
+  emit audioLevelChanged();
   emit changed();
 }
 
@@ -246,6 +392,12 @@ void CiderIntegration::connectWithToken(const QString &token) {
     return;
   }
 
+  if (m_token != normalized) {
+    m_storefront.clear();
+    m_appleDeveloperToken.clear();
+    m_appleUserToken.clear();
+    m_appleCredentialsExpireAt = 0;
+  }
   m_token = normalized;
   m_lastProbeKey.clear();
   m_pendingCredentialSave = true;
@@ -259,6 +411,10 @@ void CiderIntegration::connectWithToken(const QString &token) {
 void CiderIntegration::forgetConnection() {
   ++m_generation;
   m_token.clear();
+  m_storefront.clear();
+  m_appleDeveloperToken.clear();
+  m_appleUserToken.clear();
+  m_appleCredentialsExpireAt = 0;
   m_lastProbeKey.clear();
   m_pendingCredentialSave = false;
   m_connected = false;
@@ -268,6 +424,11 @@ void CiderIntegration::forgetConnection() {
     deleteCredential();
   }
   clearContent();
+  m_playlists.clear();
+  m_searchResults.clear();
+  m_recentlyPlayed.clear();
+  m_lastAddedPlaylistId.clear();
+  setBrowserMessage({});
   setStatus(QStringLiteral("Cider connection removed"));
   emit changed();
   if (m_active) {
@@ -386,6 +547,9 @@ void CiderIntegration::refreshNowPlayingV1(quint64 generation) {
 }
 
 void CiderIntegration::refreshQueue() {
+  if (m_visualTestMode) {
+    return;
+  }
   if (!m_active || !m_connected || m_apiVersion == ApiVersion::Unknown) {
     return;
   }
@@ -489,9 +653,12 @@ void CiderIntegration::applyQueueResult(NetworkResult result,
     }
     const QString artist = normalizedText(firstString(
         attributes, {QStringLiteral("artistName"), QStringLiteral("artist")}));
-    queue.append(QVariantMap{{QStringLiteral("title"), title},
-                             {QStringLiteral("artist"), artist},
-                             {QStringLiteral("index"), offset + index}});
+    queue.append(QVariantMap{
+        {QStringLiteral("title"), title},
+        {QStringLiteral("artist"), artist},
+        {QStringLiteral("id"), itemIdentifier(items.at(index))},
+        {QStringLiteral("artworkUrl"), itemArtworkUrl(items.at(index))},
+        {QStringLiteral("index"), offset + index}});
   }
   m_queue = queue;
   m_queueAvailable = true;
@@ -595,17 +762,469 @@ void CiderIntegration::playQueueIndex(int index) {
               });
 }
 
+void CiderIntegration::removeQueueIndex(int index) {
+  if (!queueEditable() || index < 0) {
+    return;
+  }
+
+  const QVariantList previousQueue = m_queue;
+  for (qsizetype row = 0; row < m_queue.size(); ++row) {
+    if (m_queue.at(row).toMap().value(QStringLiteral("index")).toInt() ==
+        index) {
+      m_queue.removeAt(row);
+      emit changed();
+      break;
+    }
+  }
+
+  const quint64 generation = m_generation;
+  sendRequest(QStringLiteral("/api/v2/queue/items/%1").arg(index),
+              QByteArrayLiteral("DELETE"), {},
+              [this, generation, previousQueue](NetworkResult result) {
+                if (generation != m_generation) {
+                  return;
+                }
+                if (result.statusCode < 200 || result.statusCode >= 300) {
+                  m_queue = previousQueue;
+                  setBrowserMessage(QStringLiteral("Could not remove that song"));
+                  emit changed();
+                  return;
+                }
+                setBrowserMessage({});
+                QTimer::singleShot(100, this, &CiderIntegration::refreshQueue);
+              });
+}
+
+void CiderIntegration::moveQueueIndex(int from, int to) {
+  if (!queueEditable() || from < 0 || to < 0 || from == to) {
+    return;
+  }
+
+  int sourceRow = -1;
+  int targetRow = -1;
+  for (qsizetype row = 0; row < m_queue.size(); ++row) {
+    const int itemIndex =
+        m_queue.at(row).toMap().value(QStringLiteral("index")).toInt();
+    if (itemIndex == from) {
+      sourceRow = static_cast<int>(row);
+    }
+    if (itemIndex == to) {
+      targetRow = static_cast<int>(row);
+    }
+  }
+  if (sourceRow < 0 || targetRow < 0) {
+    return;
+  }
+
+  const QVariantList previousQueue = m_queue;
+  QVariantMap moving = m_queue.takeAt(sourceRow).toMap();
+  m_queue.insert(targetRow, moving);
+  const int firstIndex = previousQueue.constFirst()
+                             .toMap()
+                             .value(QStringLiteral("index"))
+                             .toInt();
+  for (qsizetype row = 0; row < m_queue.size(); ++row) {
+    QVariantMap item = m_queue.at(row).toMap();
+    item.insert(QStringLiteral("index"), firstIndex + row);
+    m_queue[row] = item;
+  }
+  emit changed();
+
+  const quint64 generation = m_generation;
+  sendRequest(QStringLiteral("/api/v2/queue/move"),
+              QByteArrayLiteral("POST"),
+              QJsonDocument(QJsonObject{{QStringLiteral("from"), from},
+                                        {QStringLiteral("to"), to}}),
+              [this, generation, previousQueue](NetworkResult result) {
+                if (generation != m_generation) {
+                  return;
+                }
+                if (result.statusCode < 200 || result.statusCode >= 300) {
+                  m_queue = previousQueue;
+                  setBrowserMessage(QStringLiteral("Could not move that song"));
+                  emit changed();
+                  return;
+                }
+                setBrowserMessage({});
+                QTimer::singleShot(100, this, &CiderIntegration::refreshQueue);
+              });
+}
+
+void CiderIntegration::refreshPlaylists() {
+  if (m_visualTestMode) {
+    return;
+  }
+  if (!m_active || !m_connected || m_apiVersion != ApiVersion::V2) {
+    return;
+  }
+
+  setBrowserBusy(true);
+  const quint64 generation = m_generation;
+  sendRequest(QStringLiteral("/api/v2/library/playlists?offset=0&limit=8"),
+              [this, generation](NetworkResult result) {
+                if (generation != m_generation) {
+                  return;
+                }
+                setBrowserBusy(false);
+                if (result.statusCode < 200 || result.statusCode >= 300) {
+                  setBrowserMessage(isAuthenticationFailure(result.statusCode)
+                                        ? QStringLiteral("Playlist access is not enabled")
+                                        : QStringLiteral("Playlists are unavailable"));
+                  return;
+                }
+
+                const QJsonValue payload = unwrappedData(parseJson(result.body));
+                QJsonArray items = payload.isArray()
+                                       ? payload.toArray()
+                                       : payload.toObject()
+                                             .value(QStringLiteral("items"))
+                                             .toArray();
+                QVariantList playlists;
+                for (const QJsonValue &item : items) {
+                  const QJsonObject attributes = itemAttributes(item);
+                  const QString title = normalizedText(firstString(
+                      attributes,
+                      {QStringLiteral("name"), QStringLiteral("title")}));
+                  const QString id = itemIdentifier(item);
+                  if (title.isEmpty() || id.isEmpty()) {
+                    continue;
+                  }
+                  playlists.append(QVariantMap{
+                      {QStringLiteral("title"), title},
+                      {QStringLiteral("id"), id},
+                      {QStringLiteral("type"),
+                       itemType(item, QStringLiteral("library-playlists"))},
+                      {QStringLiteral("artworkUrl"), itemArtworkUrl(item)}});
+                }
+                m_playlists = playlists;
+                setBrowserMessage({});
+                emit changed();
+              });
+}
+
+void CiderIntegration::addCurrentTrackToPlaylist(const QString &playlistId) {
+  static const QRegularExpression safeIdentifier(
+      QStringLiteral("^[A-Za-z0-9._-]+$"));
+  if (!m_active || !m_connected || m_apiVersion != ApiVersion::V2 ||
+      !safeIdentifier.match(playlistId).hasMatch() ||
+      !safeIdentifier.match(m_catalogId).hasMatch()) {
+    setBrowserMessage(QStringLiteral("This track cannot be added"));
+    return;
+  }
+
+  setBrowserBusy(true);
+  setBrowserMessage({});
+  const quint64 generation = m_generation;
+  ensureAppleMusicCredentials(
+      generation, [this, generation, playlistId](bool available) {
+        if (generation != m_generation) {
+          return;
+        }
+        if (!available) {
+          setBrowserBusy(false);
+          setBrowserMessage(QStringLiteral("Cider account access is unavailable"));
+          return;
+        }
+
+        const QJsonDocument body(QJsonObject{
+            {QStringLiteral("data"),
+             QJsonArray{QJsonObject{
+                 {QStringLiteral("id"), m_catalogId},
+                 {QStringLiteral("type"), QStringLiteral("songs")}}}}});
+        const QString path =
+            QStringLiteral("/v1/me/library/playlists/%1/tracks")
+                .arg(playlistId);
+        sendAppleMusicRequest(
+            path, QByteArrayLiteral("POST"), body, m_appleDeveloperToken,
+            m_appleUserToken,
+            [this, generation, playlistId](NetworkResult result) {
+              if (generation != m_generation) {
+                return;
+              }
+              setBrowserBusy(false);
+              if (result.statusCode < 200 || result.statusCode >= 300) {
+                setBrowserMessage(QStringLiteral("Could not add this track"));
+                return;
+              }
+              m_lastAddedPlaylistId = playlistId;
+              setBrowserMessage({});
+              emit changed();
+              QTimer::singleShot(1400, this, [this, playlistId]() {
+                if (m_lastAddedPlaylistId == playlistId) {
+                  m_lastAddedPlaylistId.clear();
+                  emit changed();
+                }
+              });
+            });
+      });
+}
+
+void CiderIntegration::search(const QString &query) {
+  if (m_visualTestMode) {
+    return;
+  }
+  const QString normalized = query.simplified().left(100);
+  const quint64 searchGeneration = ++m_searchGeneration;
+  if (normalized.isEmpty()) {
+    m_searchResults.clear();
+    setBrowserBusy(false);
+    setBrowserMessage({});
+    emit changed();
+    return;
+  }
+  if (!m_active || !m_connected) {
+    return;
+  }
+
+  setBrowserBusy(true);
+  setBrowserMessage({});
+  const quint64 trackGeneration = m_generation;
+  ensureAppleMusicCredentials(
+      trackGeneration,
+      [this, normalized, searchGeneration](bool available) {
+        if (searchGeneration != m_searchGeneration) {
+          return;
+        }
+        if (!available) {
+          setBrowserBusy(false);
+          setBrowserMessage(QStringLiteral("Search requires Cider account access"));
+          return;
+        }
+        performSearch(normalized, searchGeneration);
+      });
+}
+
+void CiderIntegration::performSearch(const QString &query,
+                                     quint64 generation) {
+  if (generation != m_searchGeneration || m_storefront.isEmpty()) {
+    return;
+  }
+
+  QUrl apiPath;
+  apiPath.setPath(QStringLiteral("/v1/catalog/%1/search").arg(m_storefront));
+  QUrlQuery parameters;
+  parameters.addQueryItem(QStringLiteral("term"), query);
+  parameters.addQueryItem(QStringLiteral("types"),
+                          QStringLiteral("songs,albums,playlists"));
+  parameters.addQueryItem(QStringLiteral("limit"), QStringLiteral("6"));
+  apiPath.setQuery(parameters);
+  sendAppleMusicRequest(apiPath.toString(QUrl::FullyEncoded),
+                        QByteArrayLiteral("GET"), {}, m_appleDeveloperToken,
+                        m_appleUserToken,
+                        [this, generation](NetworkResult result) {
+                if (generation != m_searchGeneration) {
+                  return;
+                }
+                setBrowserBusy(false);
+                if (result.statusCode < 200 || result.statusCode >= 300) {
+                  setBrowserMessage(QStringLiteral("Search is unavailable"));
+                  return;
+                }
+
+                const QJsonObject payload =
+                    unwrappedData(parseJson(result.body)).toObject();
+                const QJsonObject groups =
+                    payload.contains(QStringLiteral("results"))
+                        ? payload.value(QStringLiteral("results")).toObject()
+                        : payload;
+                QVariantList results;
+                const QStringList groupNames{QStringLiteral("songs"),
+                                             QStringLiteral("albums"),
+                                             QStringLiteral("playlists")};
+                for (const QString &groupName : groupNames) {
+                  const QJsonArray items = groups.value(groupName)
+                                               .toObject()
+                                               .value(QStringLiteral("data"))
+                                               .toArray();
+                  for (const QJsonValue &item : items) {
+                    const QJsonObject attributes = itemAttributes(item);
+                    const QString title = normalizedText(firstString(
+                        attributes,
+                        {QStringLiteral("name"), QStringLiteral("title")}));
+                    const QString id = itemIdentifier(item);
+                    if (title.isEmpty() || id.isEmpty()) {
+                      continue;
+                    }
+                    QString subtitle = normalizedText(firstString(
+                        attributes,
+                        {QStringLiteral("artistName"),
+                         QStringLiteral("curatorName")}));
+                    if (subtitle.isEmpty()) {
+                      subtitle = groupName == QStringLiteral("albums")
+                                     ? QStringLiteral("Album")
+                                     : (groupName == QStringLiteral("playlists")
+                                            ? QStringLiteral("Playlist")
+                                            : QString());
+                    }
+                    results.append(QVariantMap{
+                        {QStringLiteral("title"), title},
+                        {QStringLiteral("subtitle"), subtitle},
+                        {QStringLiteral("id"), id},
+                        {QStringLiteral("type"),
+                         itemPlaybackType(item, groupName)},
+                        {QStringLiteral("resourceType"),
+                         itemType(item, groupName)},
+                        {QStringLiteral("href"),
+                         mediaItem(item).value(QStringLiteral("href")).toString()},
+                        {QStringLiteral("artworkUrl"), itemArtworkUrl(item)}});
+                    if (results.size() >= 6) {
+                      break;
+                    }
+                  }
+                  if (results.size() >= 6) {
+                    break;
+                  }
+                }
+                m_searchResults = results;
+                setBrowserMessage(results.isEmpty()
+                                      ? QStringLiteral("No matches")
+                                      : QString());
+                emit changed();
+              });
+}
+
+void CiderIntegration::refreshRecentlyPlayed() {
+  if (m_visualTestMode) {
+    return;
+  }
+  if (!m_active || !m_connected) {
+    return;
+  }
+  setBrowserBusy(true);
+  setBrowserMessage({});
+  const quint64 generation = m_generation;
+  ensureAppleMusicCredentials(generation, [this, generation](bool available) {
+    if (generation != m_generation) {
+      return;
+    }
+    if (!available) {
+      setBrowserBusy(false);
+      setBrowserMessage(QStringLiteral("Listening history requires account access"));
+      return;
+    }
+    sendAppleMusicRequest(
+        QStringLiteral(
+            "/v1/me/recent/played?limit=8&types=albums,library-albums,"
+            "playlists,library-playlists,stations"),
+        QByteArrayLiteral("GET"), {}, m_appleDeveloperToken,
+        m_appleUserToken, [this, generation](NetworkResult result) {
+                if (generation != m_generation) {
+                  return;
+                }
+                setBrowserBusy(false);
+                if (result.statusCode < 200 || result.statusCode >= 300) {
+                  setBrowserMessage(QStringLiteral("Listening history is unavailable"));
+                  return;
+                }
+
+                const QJsonValue payload = unwrappedData(parseJson(result.body));
+                const QJsonArray items = payload.isArray()
+                                             ? payload.toArray()
+                                             : payload.toObject()
+                                                   .value(QStringLiteral("data"))
+                                                   .toArray();
+                QVariantList recent;
+                for (const QJsonValue &item : items) {
+                  const QJsonObject attributes = itemAttributes(item);
+                  const QString title = normalizedText(firstString(
+                      attributes,
+                      {QStringLiteral("name"), QStringLiteral("title")}));
+                  const QString id = itemIdentifier(item);
+                  if (title.isEmpty() || id.isEmpty()) {
+                    continue;
+                  }
+                  recent.append(QVariantMap{
+                      {QStringLiteral("title"), title},
+                      {QStringLiteral("subtitle"),
+                       normalizedText(firstString(
+                           attributes, {QStringLiteral("artistName"),
+                                        QStringLiteral("curatorName")}))},
+                      {QStringLiteral("id"), id},
+                      {QStringLiteral("type"),
+                       itemPlaybackType(item, QStringLiteral("song"))},
+                      {QStringLiteral("resourceType"), itemType(item)},
+                      {QStringLiteral("href"),
+                       mediaItem(item).value(QStringLiteral("href")).toString()},
+                      {QStringLiteral("artworkUrl"), itemArtworkUrl(item)}});
+                  if (recent.size() >= 8) {
+                    break;
+                  }
+                }
+                m_recentlyPlayed = recent;
+                setBrowserMessage(recent.isEmpty()
+                                      ? QStringLiteral("No listening history")
+                                      : QString());
+                emit changed();
+              });
+  });
+}
+
+void CiderIntegration::playMediaItem(const QString &type, const QString &id,
+                                     const QString &href,
+                                     const QString &resourceType) {
+  static const QRegularExpression safeType(QStringLiteral("^[A-Za-z0-9-]+$"));
+  static const QRegularExpression safeIdentifier(
+      QStringLiteral("^[A-Za-z0-9._-]+$"));
+  const QString playbackType = normalizedPlaybackType(type);
+  if (!m_active || !m_connected ||
+      !safeType.match(playbackType).hasMatch() ||
+      !safeIdentifier.match(id).hasMatch()) {
+    return;
+  }
+
+  const quint64 generation = m_generation;
+  const bool collection = playbackType.contains(QStringLiteral("album"),
+                                                Qt::CaseInsensitive) ||
+                          playbackType.contains(QStringLiteral("playlist"),
+                                                Qt::CaseInsensitive);
+  const bool safeHref = href.startsWith(QLatin1Char('/')) && href.size() <= 2048 &&
+                        !href.contains(QLatin1Char('\r')) &&
+                        !href.contains(QLatin1Char('\n'));
+  const QString collectionType =
+      safeType.match(resourceType).hasMatch()
+          ? resourceType
+          : (playbackType == QStringLiteral("album")
+                 ? QStringLiteral("albums")
+                 : QStringLiteral("playlists"));
+  const QString route =
+      safeHref ? QStringLiteral("/api/v2/playback/play-href")
+               : (collection
+                      ? QStringLiteral("/api/v2/playback/play-collection")
+                      : QStringLiteral("/api/v2/playback/play-id"));
+  const QJsonDocument body(
+      safeHref
+          ? QJsonObject{{QStringLiteral("href"), href}}
+          : QJsonObject{{QStringLiteral("type"),
+                         collection ? collectionType : playbackType},
+                        {QStringLiteral("id"), id}});
+  sendRequest(route,
+              QByteArrayLiteral("POST"),
+              body,
+              [this, generation](NetworkResult result) {
+                if (generation == m_generation &&
+                    (result.statusCode < 200 || result.statusCode >= 300)) {
+                  setBrowserMessage(QStringLiteral("Cider could not play that item"));
+                }
+              });
+}
+
 void CiderIntegration::refreshLyrics() {
   if (!m_active || !m_connected || m_catalogId.isEmpty()) {
     return;
   }
 
   const quint64 generation = m_generation;
-  if (m_storefront.isEmpty()) {
-    requestStorefront(generation);
-  } else {
+  ensureAppleMusicCredentials(generation, [this, generation](bool available) {
+    if (generation != m_generation) {
+      return;
+    }
+    if (!available) {
+      setStatus(QStringLiteral("Cider account access is unavailable"));
+      emit changed();
+      return;
+    }
     requestLyrics(generation);
-  }
+  });
 }
 
 void CiderIntegration::setLyricsVisible(bool visible) {
@@ -630,21 +1249,129 @@ void CiderIntegration::setLyricsVisible(bool visible) {
   }
 }
 
-void CiderIntegration::requestStorefront(quint64 generation) {
-  const QJsonDocument body(QJsonObject{
-      {QStringLiteral("path"), QStringLiteral("/v1/me/storefront?limit=1")}});
-  sendRequest(QStringLiteral("/api/v1/amapi/run-v3"), QByteArrayLiteral("POST"),
-              body, [this, generation](NetworkResult result) {
-                if (generation != m_generation || result.statusCode < 200 ||
-                    result.statusCode >= 300) {
+void CiderIntegration::setAudioPulseVisible(bool visible) {
+  if (m_audioPulseVisible == visible) {
+    return;
+  }
+  m_audioPulseVisible = visible;
+  updateAudioMeterState();
+}
+
+void CiderIntegration::setPanelVisible(bool visible) {
+  if (m_panelVisible == visible) {
+    return;
+  }
+  m_panelVisible = visible;
+  if (m_visualTestMode) {
+    return;
+  }
+  if (visible && !m_ciderMediaActive && !m_foreignMediaActive) {
+    m_idleProbeTimer.start();
+    probeClientAvailability();
+    return;
+  }
+
+  m_idleProbeTimer.stop();
+  if (!visible && !m_ciderMediaActive && m_active) {
+    ++m_generation;
+    m_active = false;
+    m_connected = false;
+    m_pairingRequired = false;
+    m_apiVersion = ApiVersion::Unknown;
+    clearContent();
+    setBrowserMessage({});
+    emit changed();
+    releaseNetworkIfIdle();
+  }
+}
+
+void CiderIntegration::probeClientAvailability() {
+  if (m_visualTestMode || !m_panelVisible || m_ciderMediaActive ||
+      m_foreignMediaActive ||
+      m_idleProbeInFlight) {
+    return;
+  }
+
+  m_idleProbeInFlight = true;
+  sendRequest(QStringLiteral("/api/v2/client/info"),
+              [this](NetworkResult result) {
+                m_idleProbeInFlight = false;
+                if (!m_panelVisible || m_ciderMediaActive ||
+                    m_foreignMediaActive) {
                   return;
                 }
-                m_storefront = findString(
-                    unwrappedData(parseJson(result.body)),
-                    {QStringLiteral("storefront"), QStringLiteral("id")});
-                if (!m_storefront.isEmpty()) {
-                  requestLyrics(generation);
+                if (isAuthenticationFailure(result.statusCode)) {
+                  m_active = true;
+                  handleAuthenticationFailure(result);
+                  return;
                 }
+                if (result.statusCode < 200 || result.statusCode >= 300) {
+                  if (!m_active && !m_connected) {
+                    return;
+                  }
+                  ++m_generation;
+                  m_active = false;
+                  m_connected = false;
+                  m_pairingRequired = false;
+                  m_apiVersion = ApiVersion::Unknown;
+                  clearContent();
+                  setBrowserMessage({});
+                  emit changed();
+                  return;
+                }
+
+                const bool becameAvailable = !m_active || !m_connected ||
+                                             m_apiVersion != ApiVersion::V2;
+                m_active = true;
+                m_connected = true;
+                m_pairingRequired = false;
+                m_apiVersion = ApiVersion::V2;
+                validateAndPersistPendingToken();
+                if (becameAvailable) {
+                  setStatus({});
+                  emit changed();
+                  refreshQueue();
+                }
+              });
+}
+
+void CiderIntegration::ensureAppleMusicCredentials(
+    quint64 generation, std::function<void(bool)> continuation) {
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  if (!m_appleDeveloperToken.isEmpty() && !m_appleUserToken.isEmpty() &&
+      !m_storefront.isEmpty() && m_appleCredentialsExpireAt > now) {
+    continuation(true);
+    return;
+  }
+
+  sendRequest(QStringLiteral("/api/v2/client/tokens"),
+              [this, generation,
+               continuation = std::move(continuation)](NetworkResult result) {
+                if (generation != m_generation) {
+                  return;
+                }
+                if (result.statusCode < 200 || result.statusCode >= 300) {
+                  continuation(false);
+                  return;
+                }
+
+                const QJsonObject tokens =
+                    unwrappedData(parseJson(result.body)).toObject();
+                m_appleDeveloperToken =
+                    tokens.value(QStringLiteral("developerToken"))
+                        .toString()
+                        .toUtf8();
+                m_appleUserToken =
+                    tokens.value(QStringLiteral("userToken")).toString().toUtf8();
+                m_storefront =
+                    tokens.value(QStringLiteral("storefront")).toString();
+                const bool valid = !m_appleDeveloperToken.isEmpty() &&
+                                   !m_appleUserToken.isEmpty() &&
+                                   !m_storefront.isEmpty();
+                m_appleCredentialsExpireAt =
+                    valid ? QDateTime::currentMSecsSinceEpoch() + 5 * 60 * 1000
+                          : 0;
+                continuation(valid);
               });
 }
 
@@ -659,9 +1386,9 @@ void CiderIntegration::requestLyrics(quint64 generation) {
   const QString path =
       QStringLiteral("/v1/catalog/%1/songs/%2/lyrics?l=en-US&platform=web")
           .arg(m_storefront, m_catalogId);
-  const QJsonDocument body(QJsonObject{{QStringLiteral("path"), path}});
-  sendRequest(QStringLiteral("/api/v1/amapi/run-v3"), QByteArrayLiteral("POST"),
-              body, [this, generation](NetworkResult result) {
+  sendAppleMusicRequest(path, QByteArrayLiteral("GET"), {},
+                        m_appleDeveloperToken, m_appleUserToken,
+                        [this, generation](NetworkResult result) {
                 if (generation != m_generation) {
                   return;
                 }
@@ -798,6 +1525,34 @@ void CiderIntegration::clearContent() {
   m_currentLyric.clear();
   m_nextLyric.clear();
   m_upcomingLyrics.clear();
+  m_browserBusy = false;
+  ++m_searchGeneration;
+}
+
+void CiderIntegration::setBrowserBusy(bool busy) {
+  if (m_browserBusy == busy) {
+    return;
+  }
+  m_browserBusy = busy;
+  emit changed();
+}
+
+void CiderIntegration::setBrowserMessage(const QString &message) {
+  if (m_browserMessage == message) {
+    return;
+  }
+  m_browserMessage = message;
+  emit changed();
+}
+
+void CiderIntegration::updateAudioMeterState() {
+  const bool active = !m_visualTestMode && m_active && m_mediaPlaying &&
+                      m_audioPulseVisible;
+  m_audioMeter->setActive(active);
+  if (!active && !qFuzzyIsNull(m_audioLevel)) {
+    m_audioLevel = 0.0;
+    emit audioLevelChanged();
+  }
 }
 
 void CiderIntegration::setStatus(const QString &message) {
@@ -821,6 +1576,10 @@ void CiderIntegration::handleAuthenticationFailure(const NetworkResult &) {
   m_pairingRequired = true;
   m_apiVersion = ApiVersion::Unknown;
   m_pendingCredentialSave = false;
+  m_storefront.clear();
+  m_appleDeveloperToken.clear();
+  m_appleUserToken.clear();
+  m_appleCredentialsExpireAt = 0;
   setBusy(false);
   clearContent();
   setStatus(QStringLiteral("Copy a scoped Cider API token to connect"));
@@ -847,18 +1606,49 @@ void CiderIntegration::sendRequest(const QString &path,
                                    const QByteArray &method,
                                    const QJsonDocument &body,
                                    NetworkHandler handler) {
+  QNetworkRequest request(endpoint(path));
+  request.setRawHeader("Accept", "application/json");
+  if (!m_token.isEmpty()) {
+    request.setRawHeader("apptoken", m_token.toUtf8());
+  }
+  sendNetworkRequest(std::move(request), method, body, std::move(handler));
+}
+
+void CiderIntegration::sendAppleMusicRequest(
+    const QString &path, const QByteArray &method, const QJsonDocument &body,
+    const QByteArray &developerToken, const QByteArray &userToken,
+    NetworkHandler handler) {
+  QUrl url = m_appleMusicBaseUrl;
+  const int queryIndex = path.indexOf(QLatin1Char('?'));
+  url.setPath(queryIndex >= 0 ? path.left(queryIndex) : path);
+  if (queryIndex >= 0) {
+    url.setQuery(path.mid(queryIndex + 1));
+  }
+
+  QNetworkRequest request(url);
+  request.setRawHeader("Accept", "application/json");
+  request.setRawHeader("Authorization", "Bearer " + developerToken);
+  request.setRawHeader("Music-User-Token", userToken);
+  request.setRawHeader("Media-User-Token", userToken);
+  request.setRawHeader("Origin", "https://beta.music.apple.com");
+  request.setRawHeader("Referer", "https://beta.music.apple.com/");
+  request.setHeader(
+      QNetworkRequest::UserAgentHeader,
+      QStringLiteral("AppleMusic/1.0 Windows/0.0 model/Win32 build/1978.4.1"));
+  sendNetworkRequest(std::move(request), method, body, std::move(handler));
+}
+
+void CiderIntegration::sendNetworkRequest(QNetworkRequest request,
+                                          const QByteArray &method,
+                                          const QJsonDocument &body,
+                                          NetworkHandler handler) {
   if (!m_network) {
     m_network = std::make_unique<QNetworkAccessManager>(this);
   }
 
-  QNetworkRequest request(endpoint(path));
-  request.setRawHeader("Accept", "application/json");
   request.setTransferTimeout(2500);
   request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                        QNetworkRequest::ManualRedirectPolicy);
-  if (!m_token.isEmpty()) {
-    request.setRawHeader("apptoken", m_token.toUtf8());
-  }
 
   QByteArray payload;
   if (!body.isNull()) {
@@ -926,8 +1716,8 @@ void CiderIntegration::releaseNetworkIfIdle() {
     if (!m_network || m_inFlightRequests != 0) {
       return;
     }
-    m_network->clearConnectionCache();
     if (!m_connected) {
+      m_network->clearConnectionCache();
       m_network.reset();
     }
   });

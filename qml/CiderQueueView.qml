@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick 6.5
-import QtQuick.Effects 6.5
 import Ava 1.0
 
 Item {
@@ -18,6 +17,9 @@ Item {
     property var incomingQueue: []
     property string displayedSignature: ""
     property bool ready: false
+    property bool editing: false
+    property int dragSourceRow: -1
+    property int dragTargetRow: -1
 
     clip: true
 
@@ -33,9 +35,42 @@ Item {
         const parts = []
         for (let index = 0; index < entries.length; ++index) {
             const entry = entries[index]
-            parts.push(entry.index + "\u001f" + entry.title + "\u001f" + entry.artist)
+            parts.push(entry.index + "\u001f" + entry.id + "\u001f"
+                       + entry.title + "\u001f" + entry.artist + "\u001f"
+                       + entry.artworkUrl)
         }
         return parts.join("\u001e")
+    }
+
+    function reorderPreviewOffset(row) {
+        if (!editing || dragSourceRow < 0 || dragTargetRow < 0
+                || dragSourceRow === dragTargetRow || row === dragSourceRow)
+            return 0
+        if (dragTargetRow > dragSourceRow
+                && row > dragSourceRow && row <= dragTargetRow)
+            return -20
+        if (dragTargetRow < dragSourceRow
+                && row >= dragTargetRow && row < dragSourceRow)
+            return 20
+        return 0
+    }
+
+    function finishReorder(sourceIndex, targetIndex) {
+        provider.moveQueueIndex(sourceIndex, targetIndex)
+        const snapshot = queueSnapshot()
+        dragSourceRow = -1
+        dragTargetRow = -1
+        editing = false
+        displayedSignature = queueSignature(snapshot)
+        displayedQueue = snapshot
+        incomingQueue = []
+        resetLayers()
+    }
+
+    function cancelReorder() {
+        dragSourceRow = -1
+        dragTargetRow = -1
+        editing = false
     }
 
     function resetLayers() {
@@ -55,6 +90,8 @@ Item {
     }
 
     function syncQueue() {
+        if (editing)
+            return
         const snapshot = queueSnapshot()
         const signature = queueSignature(snapshot)
         if (ready && signature === displayedSignature)
@@ -186,16 +223,36 @@ Item {
                 readonly property real reelReveal: Math.min(topReveal, bottomReveal)
                 readonly property bool emphasized: queueLineHover.hovered || activeFocus
                 property real clarity: emphasized ? 1 : 0
+                property real dragOffset: 0
+                property real reorderOffset: root.reorderPreviewOffset(index)
+                property int settleSourceIndex: -1
+                property int settleTargetIndex: -1
                 readonly property real restingOpacity: 0.94 * reelReveal
                 opacity: restingOpacity + (1 - restingOpacity) * clarity
                 scale: 0.995 + clarity * 0.005
+                z: reorderDrag.active ? 2 : 0
                 transformOrigin: Item.Center
-                Accessible.name: "Play " + modelData.title + " by " + modelData.artist
+                transform: Translate {
+                    y: queueLine.dragOffset + queueLine.reorderOffset
+                }
+                Accessible.name: "Play " + modelData.title + " by "
+                                 + modelData.artist
+                                 + (root.provider.queueEditable
+                                    ? ". Delete removes it; Alt plus arrow moves it"
+                                    : "")
                 Accessible.role: Accessible.Button
 
                 Behavior on clarity {
                     NumberAnimation {
                         duration: root.reducedMotion ? 0 : MotionTokens.hover
+                        easing.type: MotionTokens.easeOut
+                    }
+                }
+
+                Behavior on reorderOffset {
+                    NumberAnimation {
+                        duration: root.reducedMotion ? 0
+                                                    : MotionTokens.directSettle
                         easing.type: MotionTokens.easeOut
                     }
                 }
@@ -212,38 +269,50 @@ Item {
                 Keys.onReturnPressed: root.provider.playQueueIndex(queueLine.modelData.index)
                 Keys.onEnterPressed: root.provider.playQueueIndex(queueLine.modelData.index)
                 Keys.onSpacePressed: root.provider.playQueueIndex(queueLine.modelData.index)
-
-                layer.enabled: root.active && !root.reducedMotion
-                layer.smooth: true
-                layer.effect: MultiEffect {
-                    blurEnabled: true
-                    blurMax: 12
-                    blur: (1 - queueLine.reelReveal) * 0.32
-                          * (1 - queueLine.clarity)
-                    autoPaddingEnabled: false
+                Keys.onDeletePressed: {
+                    if (root.provider.queueEditable)
+                        root.provider.removeQueueIndex(modelData.index)
+                }
+                Keys.onPressed: function(event) {
+                    if (!root.provider.queueEditable
+                            || !(event.modifiers & Qt.AltModifier))
+                        return
+                    if (event.key === Qt.Key_Up && index > 0) {
+                        root.provider.moveQueueIndex(modelData.index,
+                            queueReel.model[index - 1].index)
+                        event.accepted = true
+                    } else if (event.key === Qt.Key_Down
+                               && index + 1 < queueReel.count) {
+                        root.provider.moveQueueIndex(modelData.index,
+                            queueReel.model[index + 1].index)
+                        event.accepted = true
+                    }
                 }
 
-                Text {
+                Rectangle {
                     x: 1
-                    y: 7
-                    width: 10
-                    text: queueLine.index + 1
-                    color: queueLineHover.hovered || queueLine.activeFocus
-                           ? root.accentColor : root.colors.tertiary
-                    font.family: root.monoFont
-                    font.pixelSize: 7
-                    font.features: { "tnum": 1 }
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 14
+                    height: 14
+                    radius: 3
+                    color: Qt.rgba(root.accentColor.r, root.accentColor.g,
+                                   root.accentColor.b, 0.22)
 
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: root.reducedMotion ? 0 : MotionTokens.hover
-                        }
+                    Image {
+                        anchors.fill: parent
+                        visible: source.toString().length > 0
+                        source: queueLine.modelData.artworkUrl ?? ""
+                        sourceSize: Qt.size(28, 28)
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                        cache: true
+                        smooth: true
                     }
                 }
                 Text {
-                    x: 15
+                    x: 21
                     y: 1
-                    width: parent.width - 17
+                    width: parent.width - (root.provider.queueEditable ? 49 : 23)
                     text: queueLine.modelData.title
                     color: root.colors.text
                     elide: Text.ElideRight
@@ -253,15 +322,129 @@ Item {
                     font.weight: Font.Medium
                 }
                 Text {
-                    x: 15
+                    x: 21
                     y: 11
-                    width: parent.width - 17
+                    width: parent.width - (root.provider.queueEditable ? 49 : 23)
                     text: queueLine.modelData.artist
                     color: root.colors.tertiary
                     elide: Text.ElideRight
                     maximumLineCount: 1
                     font.family: root.uiFont
                     font.pixelSize: 6
+                }
+
+                Item {
+                    id: reorderHandle
+                    visible: root.provider.queueEditable
+                    anchors.right: removeHandle.left
+                    anchors.rightMargin: 1
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 14
+                    height: 18
+                    opacity: reorderDrag.active ? 1
+                             : (queueLineHover.hovered || queueLine.activeFocus
+                                ? 0.68 : 0.20)
+                    Accessible.name: "Move " + queueLine.modelData.title
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: root.reducedMotion ? 0 : MotionTokens.hover
+                        }
+                    }
+
+                    Image {
+                        anchors.centerIn: parent
+                        width: 11
+                        height: 11
+                        source: Qt.resolvedUrl("../assets/icons/fluent-media/reorder-regular.svg")
+                        sourceSize: Qt.size(22, 22)
+                    }
+
+                    DragHandler {
+                        id: reorderDrag
+                        target: null
+                        xAxis.enabled: false
+                        yAxis.enabled: true
+
+                        onActiveTranslationChanged: {
+                            queueLine.dragOffset = activeTranslation.y
+                            root.dragTargetRow = Math.max(0, Math.min(
+                                queueReel.count - 1,
+                                Math.round((queueLine.y
+                                            + activeTranslation.y) / 20)))
+                        }
+                        onActiveChanged: {
+                            if (active) {
+                                root.editing = true
+                                root.dragSourceRow = queueLine.index
+                                root.dragTargetRow = queueLine.index
+                                queueLine.forceActiveFocus()
+                                return
+                            }
+                            const destination = root.dragTargetRow
+                            const targetEntry = queueReel.model[destination]
+                            const sourceIndex = queueLine.modelData.index
+                            queueLine.settleSourceIndex = sourceIndex
+                            queueLine.settleTargetIndex = targetEntry
+                                    ? targetEntry.index : sourceIndex
+                            dragSettle.to = (destination - queueLine.index) * 20
+                            dragSettle.restart()
+                        }
+                    }
+
+                    NumberAnimation {
+                        id: dragSettle
+                        target: queueLine
+                        property: "dragOffset"
+                        duration: root.reducedMotion ? 0
+                                                    : MotionTokens.directSettle
+                        easing.type: MotionTokens.easeOut
+                        onFinished: {
+                            const sourceIndex = queueLine.settleSourceIndex
+                            const targetIndex = queueLine.settleTargetIndex
+                            queueLine.dragOffset = 0
+                            queueLine.settleSourceIndex = -1
+                            queueLine.settleTargetIndex = -1
+                            if (sourceIndex >= 0 && targetIndex >= 0
+                                    && sourceIndex !== targetIndex) {
+                                root.finishReorder(sourceIndex, targetIndex)
+                            } else {
+                                root.cancelReorder()
+                            }
+                        }
+                    }
+                }
+
+                Item {
+                    id: removeHandle
+                    visible: root.provider.queueEditable
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 14
+                    height: 18
+                    opacity: removeHover.hovered || queueLine.activeFocus
+                             ? 0.74 : 0
+                    Accessible.name: "Remove " + queueLine.modelData.title
+                    Accessible.role: Accessible.Button
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: root.reducedMotion ? 0 : MotionTokens.hover
+                        }
+                    }
+
+                    HoverHandler { id: removeHover }
+                    TapHandler {
+                        onTapped: root.provider.removeQueueIndex(
+                                      queueLine.modelData.index)
+                    }
+                    Image {
+                        anchors.centerIn: parent
+                        width: 10
+                        height: 10
+                        source: Qt.resolvedUrl("../assets/icons/fluent-media/delete-regular.svg")
+                        sourceSize: Qt.size(20, 20)
+                    }
                 }
             }
         }

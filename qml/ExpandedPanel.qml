@@ -51,11 +51,19 @@ Item {
     property int utilityMenuIndex: 2
     property int ciderContextMode: qaCiderOpen === "lyrics" || qaCiderState === "lyrics" ? 1
                                    : (qaCiderOpen === "queue" || qaCiderState === "queue" ? 2
-                                      : (qaCiderState === "connect" ? 3 : 0))
+                                      : (qaCiderState === "connect" ? 3
+                                         : (qaCiderOpen === "playlists" || qaCiderState === "playlists" ? 4
+                                            : (qaCiderOpen === "search" || qaCiderState === "search" ? 5
+                                               : (qaCiderOpen === "recent" || qaCiderState === "recent" ? 6 : 0)))))
     readonly property bool ciderContextActive: cider.active && ciderContextMode !== 0
+    readonly property bool ciderBrowserContextActive: cider.active
+                                                      && (ciderContextMode === 2
+                                                          || ciderContextMode === 4
+                                                          || ciderContextMode === 5
+                                                          || ciderContextMode === 6)
     readonly property bool ciderMediaContextActive: cider.active
                                                     && (ciderContextMode === 1
-                                                        || ciderContextMode === 2)
+                                                        || ciderBrowserContextActive)
     readonly property real calendarHandoffProgress: Math.min(1,
         utilityRevealProgress * 1.14)
     readonly property real utilityMenuProgress: Math.max(0, Math.min(1,
@@ -91,6 +99,9 @@ Item {
     onExpandedChanged: {
         if (!expanded && qaCiderState.length === 0)
             ciderContextMode = 0
+        cider.setPanelVisible(expanded)
+        cider.setAudioPulseVisible(expanded && cider.active
+                                   && controller.mediaPlaying)
     }
 
     onCiderContextModeChanged: {
@@ -241,11 +252,16 @@ Item {
         displayedArtworkAccent = controller.mediaArtworkAccent
         mediaMotionReady = true
         cider.setLyricsVisible(cider.active && ciderContextMode === 1)
+        cider.setPanelVisible(expanded)
+        cider.setAudioPulseVisible(expanded && cider.active
+                                   && controller.mediaPlaying)
     }
 
     Connections {
         target: controller
         function onMediaChanged() {
+            cider.setAudioPulseVisible(root.expanded && cider.active
+                                       && controller.mediaPlaying)
             const accentChanged = root.observedArtworkAccent !== controller.mediaArtworkAccent
             const artworkChanged = controller.mediaArtworkUrl !== root.displayedArtwork.toString()
             root.observedArtworkAccent = controller.mediaArtworkAccent
@@ -339,6 +355,8 @@ Item {
                 root.ciderContextMode = 0
             else if (root.ciderContextMode === 3 && cider.connected)
                 root.ciderContextMode = 0
+            cider.setAudioPulseVisible(root.expanded && cider.active
+                                       && controller.mediaPlaying)
         }
     }
 
@@ -583,7 +601,8 @@ Item {
                     Text {
                         anchors.left: mediaAppIcon.visible ? mediaAppIcon.right : parent.left
                         anchors.leftMargin: mediaAppIcon.visible ? 4 : 0
-                        anchors.right: parent.right
+                        anchors.right: ciderPulse.visible ? ciderPulse.left : parent.right
+                        anchors.rightMargin: ciderPulse.visible ? 5 : 0
                         anchors.verticalCenter: parent.verticalCenter
                         text: root.displayedMediaSource
                         color: root.colors.tertiary
@@ -591,6 +610,22 @@ Item {
                         maximumLineCount: 1
                         font.family: root.uiFont
                         font.pixelSize: 8
+                    }
+
+                    CiderAudioPulse {
+                        id: ciderPulse
+                        anchors.right: parent.right
+                        anchors.rightMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        provider: cider
+                        accentColor: root.displayedArtworkAccent.length > 0
+                                     ? root.displayedArtworkAccent
+                                     : root.colors.text
+                        reducedMotion: root.reducedMotion
+                        active: cider.active
+                                && (controller.mediaPlaying
+                                    || qaCiderState === "audio")
+                                && root.expanded
                     }
                 }
             }
@@ -767,12 +802,13 @@ Item {
                     iconOnly: true
                     bare: true
                     transportKind: "queue"
-                    mediaIconActive: root.ciderContextMode === 2
+                    mediaIconActive: root.ciderBrowserContextActive
                     iconSize: 14
-                    accessibleName: root.ciderContextMode === 2
-                                    ? "Close Cider queue" : "Show Cider queue"
+                    accessibleName: root.ciderBrowserContextActive
+                                    ? "Close Cider music tools"
+                                    : "Show Cider music tools"
                     onClicked: {
-                        root.ciderContextMode = root.ciderContextMode === 2 ? 0 : 2
+                        root.ciderContextMode = root.ciderBrowserContextActive ? 0 : 2
                         if (root.ciderContextMode === 2)
                             cider.refreshQueue()
                     }
@@ -990,9 +1026,15 @@ Item {
                          + (root.ciderContextMode === 1
                             ? ". Cider lyrics. " + cider.currentLyric + ". " + cider.nextLyric
                             : (root.ciderContextMode === 2
-                               ? ". Cider upcoming queue"
+                               ? ". Cider editable queue"
                                : (root.ciderContextMode === 3
-                                  ? ". Cider connection help" : "")))
+                                  ? ". Cider connection help"
+                                  : (root.ciderContextMode === 4
+                                     ? ". Add the current track to a Cider playlist"
+                                     : (root.ciderContextMode === 5
+                                        ? ". Search and play in Cider"
+                                        : (root.ciderContextMode === 6
+                                           ? ". Cider recently played" : ""))))))
 
         RollingDigits {
             id: expandedClockDigits
@@ -1119,10 +1161,10 @@ Item {
 
         Item {
             id: ciderContextView
-            y: root.ciderContextMode === 2 ? 2
+            y: root.ciderBrowserContextActive ? 2
                : (root.ciderContextMode === 1 ? 12 : 48)
             width: parent.width
-            height: root.ciderContextMode === 2 ? 102
+            height: root.ciderBrowserContextActive ? 102
                     : (root.ciderContextMode === 1 ? 90 : 62)
             visible: opacity > 0.001
             enabled: opacity > 0.5
@@ -1167,9 +1209,9 @@ Item {
 
             Item {
                 anchors.fill: parent
-                visible: root.ciderContextMode === 2
+                visible: root.ciderBrowserContextActive
 
-                CiderQueueView {
+                CiderBrowserView {
                     anchors.fill: parent
                     provider: cider
                     colors: root.colors
@@ -1177,7 +1219,12 @@ Item {
                     uiFont: root.uiFont
                     monoFont: root.monoFont
                     reducedMotion: root.reducedMotion
-                    active: root.ciderContextMode === 2
+                    active: root.ciderBrowserContextActive
+                    mode: root.ciderContextMode
+                    initialSearchQuery: qaCiderSearchQuery
+                    onModeRequested: function(mode) {
+                        root.ciderContextMode = mode
+                    }
                 }
             }
 

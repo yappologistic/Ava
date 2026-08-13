@@ -310,8 +310,12 @@ int main(int argc, char *argv[])
         QStringLiteral("state"));
     const QCommandLineOption ciderOpenOption(
         QStringLiteral("cider-open"),
-        QStringLiteral("Open live Cider queue or lyrics for screenshot QA."),
+        QStringLiteral("Open a live Cider view for screenshot QA."),
         QStringLiteral("view"));
+    const QCommandLineOption ciderSearchQueryOption(
+        QStringLiteral("cider-search-query"),
+        QStringLiteral("Populate live Cider search during screenshot QA."),
+        QStringLiteral("query"));
     const QCommandLineOption startTimerOption(
         QStringLiteral("start-timer"),
         QStringLiteral("Start a timer for the given number of seconds."),
@@ -341,6 +345,7 @@ int main(int argc, char *argv[])
     parser.addOption(mediaPeekOption);
     parser.addOption(ciderVisualStateOption);
     parser.addOption(ciderOpenOption);
+    parser.addOption(ciderSearchQueryOption);
     parser.addOption(startTimerOption);
     parser.addOption(tilingProcessOption);
     parser.process(app);
@@ -458,6 +463,11 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty(
         QStringLiteral("qaCiderOpen"),
         parser.isSet(screenshotOption) ? parser.value(ciderOpenOption) : QString());
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("qaCiderSearchQuery"),
+        parser.isSet(screenshotOption)
+            ? parser.value(ciderSearchQueryOption)
+            : QString());
     engine.loadFromModule(QStringLiteral("Ava"), QStringLiteral("Main"));
 
     if (engine.rootObjects().isEmpty()) {
@@ -468,6 +478,11 @@ int main(int argc, char *argv[])
     auto *rootWindow = qobject_cast<QQuickWindow *>(rootObject);
     if (!rootWindow) {
         return -2;
+    }
+    if (parser.isSet(screenshotOption) &&
+        parser.value(ciderOpenOption) == QStringLiteral("recent")) {
+        QTimer::singleShot(1000, &cider,
+                           [&cider]() { cider.refreshRecentlyPlayed(); });
     }
     liquidGlassBackdrop.attachWindow(rootWindow, rootObject);
     if (parser.isSet(mediaPeekOption) && parser.isSet(screenshotOption)) {
@@ -671,6 +686,8 @@ int main(int argc, char *argv[])
                                       || parser.isSet(emojiOption)
                                       || parser.isSet(monitorDetailsOption)
                                       || controller.monitorEnabled() ? 2400
+                                  : parser.value(ciderOpenOption)
+                                            == QStringLiteral("recent") ? 3600
                                   : parser.isSet(ciderOpenOption) ? 2200
                                   : (parser.isSet(mediaPeekOption) ? 1600 : 1000);
         QTimer::singleShot(screenshotDelay,

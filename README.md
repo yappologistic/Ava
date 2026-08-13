@@ -228,7 +228,8 @@ ctest --test-dir build -C Release -R codex_live_e2e --output-on-failure
 .\build\Release\Ava.exe --codex --codex-workspace D:\path\to\project
 .\build\Release\Ava.exe --screenshot compact.png
 .\build\Release\Ava.exe --expanded --screenshot expanded.png
-.\build\Release\Ava.exe --expanded --cider-visual-state queue --screenshot cider-queue.png
+.\build\Release\Ava.exe --expanded --cider-visual-state playlists --cider-open playlists --screenshot cider-playlists.png
+.\build\Release\Ava.exe --expanded --cider-open search --cider-search-query "afterglow" --screenshot cider-search.png
 .\build\Release\Ava.exe --expanded --cider-open lyrics --screenshot cider-live-lyrics.png
 .\build\Release\Ava.exe --motion-report motion-report.csv
 .\build\Release\AvaChat.exe --workspace D:\path\to\project
@@ -240,8 +241,9 @@ excluded by `.gitignore`.
 
 For local visual-regression capture,
 `--codex-visual-state ready|running|approval|completed|error|compact` and
-`--media-peek`, `--cider-visual-state connect|queue|lyrics`, and the authenticated
-`--cider-open queue|lyrics` are accepted only together with `--screenshot`. These states
+`--media-peek`, `--cider-visual-state connect|queue|lyrics|playlists|search|recent|audio`,
+and the authenticated `--cider-open queue|lyrics|playlists|search|recent` are accepted
+only together with `--screenshot`. These states
 exercise the shipping QML layout without replacing the real runtime integration.
 
 ## Project layout
@@ -249,8 +251,10 @@ exercise the shipping QML layout without replacing the real runtime integration.
 - `src/main.cpp` and `src/islandcontroller.*`: Ava startup, command-line
   options, native window behavior, timers, media, audio, power, clock, file
   drops, and persisted appearance state.
-- `src/ciderintegration.*`: scoped local Cider enrichment for favorite, queue,
-  and timed lyrics, with Windows media controls as the fallback.
+- `src/ciderintegration.*` and `src/cideraudiometer.*`: scoped local Cider
+  enrichment for favorite, editable queue, playlists, search, listening
+  history, timed lyrics, and a session-level audio pulse, with Windows media
+  controls as the fallback.
 - `src/applauncher.*`: installed-app discovery, `Ctrl+K`, ranked search,
   icons, launch history, and direct URL or filesystem targets.
 - `src/systemmonitor.*`: asynchronous CPU, memory, disk, and process sampling.

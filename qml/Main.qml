@@ -150,6 +150,9 @@ Window {
                                                 + islandVisualHeight + 8
     readonly property bool nativeInputMaskEnabled: !qaMode && !automationMode
     readonly property bool keyboardCaptureArmed: appLauncher.open
+                                                  || (controller.expanded
+                                                      && cider.active
+                                                      && expandedPanel.ciderContextMode === 5)
                                                   || (codexBridge.panelOpen
                                                   && codexBridge.connected
                                                   && !codexBridge.active
