@@ -188,6 +188,7 @@ void CiderIntegration::setVisualTestState(const QString &state) {
   m_lyricsSynchronized = false;
   m_queue.clear();
   m_lyrics.clear();
+  m_previousLyric.clear();
   m_currentLyric.clear();
   m_nextLyric.clear();
   m_upcomingLyrics.clear();
@@ -199,7 +200,19 @@ void CiderIntegration::setVisualTestState(const QString &state) {
                     {QStringLiteral("index"), 1}},
         QVariantMap{{QStringLiteral("title"), QStringLiteral("Violet Lines")},
                     {QStringLiteral("artist"), QStringLiteral("Common Static")},
-                    {QStringLiteral("index"), 2}}};
+                    {QStringLiteral("index"), 2}},
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Glass Signals")},
+                    {QStringLiteral("artist"), QStringLiteral("Mira Vale")},
+                    {QStringLiteral("index"), 3}},
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Night Current")},
+                    {QStringLiteral("artist"), QStringLiteral("Juniper")},
+                    {QStringLiteral("index"), 4}},
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Parallel Sky")},
+                    {QStringLiteral("artist"), QStringLiteral("North Arcade")},
+                    {QStringLiteral("index"), 5}},
+        QVariantMap{{QStringLiteral("title"), QStringLiteral("Soft Static")},
+                    {QStringLiteral("artist"), QStringLiteral("Hana Field")},
+                    {QStringLiteral("index"), 6}}};
   } else if (state == QStringLiteral("lyrics")) {
     m_lyrics = {
         {0, 8000, QStringLiteral("The city settles into light")},
@@ -207,7 +220,7 @@ void CiderIntegration::setVisualTestState(const QString &state) {
         {16000, 24000, QStringLiteral("Every window holds a story")},
         {24000, 32000, QStringLiteral("Every shadow learns to glow")}};
     m_lyricsSynchronized = true;
-    m_positionMilliseconds = 4000;
+    m_positionMilliseconds = 9000;
     updateLyricsForPosition();
   }
 
@@ -410,7 +423,7 @@ void CiderIntegration::requestQueueWindow(quint64 generation, int offset,
                                           bool skipCurrent) {
   const QString path = QStringLiteral("/api/v2/queue?offset=%1&limit=%2")
                            .arg(offset)
-                           .arg(skipCurrent ? 3 : 2);
+                           .arg(skipCurrent ? 7 : 6);
   sendRequest(
       path, [this, generation, offset, skipCurrent](NetworkResult result) {
         applyQueueResult(std::move(result), generation, offset, skipCurrent);
@@ -467,7 +480,7 @@ void CiderIntegration::applyQueueResult(NetworkResult result,
   }
 
   QVariantList queue;
-  for (int index = start; index < items.size() && queue.size() < 2; ++index) {
+  for (int index = start; index < items.size() && queue.size() < 6; ++index) {
     const QJsonObject attributes = itemAttributes(items.at(index));
     const QString title = normalizedText(firstString(
         attributes, {QStringLiteral("name"), QStringLiteral("title")}));
@@ -680,6 +693,7 @@ void CiderIntegration::requestLyrics(quint64 generation) {
 
 void CiderIntegration::updateLyricsForPosition() {
   const qint64 playbackPosition = effectivePositionMilliseconds();
+  QString previous;
   QString current;
   QString next;
   QStringList upcoming;
@@ -707,6 +721,9 @@ void CiderIntegration::updateLyricsForPosition() {
         }
       }
       if (activeIndex >= 0) {
+        if (activeIndex > 0) {
+          previous = m_lyrics.at(activeIndex - 1).text;
+        }
         current = m_lyrics.at(activeIndex).text;
         for (qsizetype index = activeIndex + 1;
              index < m_lyrics.size() && upcoming.size() < 3; ++index) {
@@ -722,10 +739,11 @@ void CiderIntegration::updateLyricsForPosition() {
     }
   }
 
-  if (m_currentLyric == current && m_nextLyric == next &&
-      m_upcomingLyrics == upcoming) {
+  if (m_previousLyric == previous && m_currentLyric == current &&
+      m_nextLyric == next && m_upcomingLyrics == upcoming) {
     return;
   }
+  m_previousLyric = previous;
   m_currentLyric = current;
   m_nextLyric = next;
   m_upcomingLyrics = upcoming;
@@ -776,6 +794,7 @@ void CiderIntegration::clearContent() {
   m_queue.clear();
   m_lyrics.clear();
   m_lyricsSynchronized = false;
+  m_previousLyric.clear();
   m_currentLyric.clear();
   m_nextLyric.clear();
   m_upcomingLyrics.clear();

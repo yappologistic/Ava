@@ -58,7 +58,7 @@ public:
                   R"({"data":{"items":[{"track":{"id":"unrelated","attributes":{"name":"Earlier","artistName":"Artist","playParams":{"id":"unrelated"}}}}],"position":46},"meta":{"offset":0,"limit":1,"total":99}})";
             } else {
               response =
-                  R"({"data":{"items":[{"track":{"id":"123","attributes":{"name":"Current","artistName":"Artist","playParams":{"id":"123"}}}},{"track":{"id":"456","attributes":{"name":"Next One","artistName":"First Artist","playParams":{"id":"456"}}}},{"track":{"id":"789","attributes":{"name":"Next Two","artistName":"Second Artist","playParams":{"id":"789"}}}}],"position":46},"meta":{"offset":46,"limit":3,"total":99}})";
+                  R"({"data":{"items":[{"track":{"id":"123","attributes":{"name":"Current","artistName":"Artist","playParams":{"id":"123"}}}},{"track":{"id":"456","attributes":{"name":"Next One","artistName":"First Artist","playParams":{"id":"456"}}}},{"track":{"id":"789","attributes":{"name":"Next Two","artistName":"Second Artist","playParams":{"id":"789"}}}},{"track":{"id":"101","attributes":{"name":"Next Three","artistName":"Third Artist","playParams":{"id":"101"}}}},{"track":{"id":"102","attributes":{"name":"Next Four","artistName":"Fourth Artist","playParams":{"id":"102"}}}},{"track":{"id":"103","attributes":{"name":"Next Five","artistName":"Fifth Artist","playParams":{"id":"103"}}}},{"track":{"id":"104","attributes":{"name":"Next Six","artistName":"Sixth Artist","playParams":{"id":"104"}}}}],"position":46},"meta":{"offset":46,"limit":7,"total":99}})";
             }
           } else if (path == "/api/v2/library/now-playing/status") {
             response = R"({"data":{"inLibrary":true,"rating":1}})";
@@ -165,7 +165,7 @@ private slots:
     integration.setLyricsVisible(true);
     QTRY_VERIFY_WITH_TIMEOUT(integration.favoriteAvailable(), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(integration.queueAvailable(), 3000);
-    QTRY_COMPARE_WITH_TIMEOUT(integration.queue().size(), 2, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(integration.queue().size(), 6, 3000);
     QTRY_VERIFY_WITH_TIMEOUT(integration.lyricsAvailable(), 3000);
     QVERIFY(integration.lyricsSynchronized());
 
@@ -182,12 +182,26 @@ private slots:
                  .value(QStringLiteral("index"))
                  .toInt(),
              47);
+    QCOMPARE(integration.queue()
+                 .at(5)
+                 .toMap()
+                 .value(QStringLiteral("title"))
+                 .toString(),
+             QStringLiteral("Next Six"));
+    QCOMPARE(integration.queue()
+                 .at(5)
+                 .toMap()
+                 .value(QStringLiteral("index"))
+                 .toInt(),
+             52);
     QCOMPARE(integration.currentLyric(), QStringLiteral("First line"));
+    QVERIFY(integration.previousLyric().isEmpty());
     QCOMPARE(integration.nextLyric(), QStringLiteral("Second line"));
     QCOMPARE(integration.upcomingLyrics(),
              QStringList{QStringLiteral("Second line")});
     QTRY_COMPARE_WITH_TIMEOUT(integration.currentLyric(),
                               QStringLiteral("Second line"), 1200);
+    QCOMPARE(integration.previousLyric(), QStringLiteral("First line"));
     QVERIFY(integration.upcomingLyrics().isEmpty());
 
     integration.setMediaSession(QStringLiteral("CiderCollective.Cider"),
@@ -199,7 +213,7 @@ private slots:
     QVERIFY(server.requestedPaths.contains(
         QStringLiteral("GET /api/v2/queue?offset=0&limit=1")));
     QVERIFY(server.requestedPaths.contains(
-        QStringLiteral("GET /api/v2/queue?offset=46&limit=3")));
+        QStringLiteral("GET /api/v2/queue?offset=46&limit=7")));
 
     integration.playQueueIndex(47);
     integration.toggleFavorite();
@@ -250,6 +264,7 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(integration.lyricsAvailable(), 3000);
     QVERIFY(!integration.lyricsSynchronized());
     QCOMPARE(integration.currentLyric(), QStringLiteral("First static line"));
+    QVERIFY(integration.previousLyric().isEmpty());
     QCOMPARE(integration.nextLyric(), QStringLiteral("Second static line"));
     QVERIFY(integration.upcomingLyrics().isEmpty());
   }

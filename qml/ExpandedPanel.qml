@@ -1119,10 +1119,11 @@ Item {
 
         Item {
             id: ciderContextView
-            y: root.ciderContextMode === 2 ? 24
-               : (root.ciderContextMode === 1 ? 30 : 48)
+            y: root.ciderContextMode === 2 ? 2
+               : (root.ciderContextMode === 1 ? 12 : 48)
             width: parent.width
-            height: 62
+            height: root.ciderContextMode === 2 ? 102
+                    : (root.ciderContextMode === 1 ? 90 : 62)
             visible: opacity > 0.001
             enabled: opacity > 0.5
             opacity: root.ciderContextActive
@@ -1153,82 +1154,14 @@ Item {
             Item {
                 anchors.fill: parent
                 visible: root.ciderContextMode === 1
-                clip: true
 
-                MorphingLabel {
-                    x: 4
-                    y: 0
-                    width: parent.width - 8
-                    text: cider.currentLyric.length > 0
-                          ? cider.currentLyric
-                          : (cider.lyricsAvailable && cider.lyricsSynchronized
-                             ? cider.nextLyric
-                             : "Lyrics unavailable for this track")
-                    color: root.colors.text
-                    elide: Text.ElideRight
-                    fontFamily: root.uiFont
-                    fontPixelSize: 10
-                    fontWeight: Font.DemiBold
-                    motionOffset: 7
+                CiderLyricsView {
+                    anchors.fill: parent
+                    provider: cider
+                    colors: root.colors
+                    uiFont: root.uiFont
                     reducedMotion: root.reducedMotion
-                }
-
-                Repeater {
-                    model: root.ciderContextMode === 1 && cider.lyricsSynchronized
-                           ? cider.upcomingLyrics : []
-
-                    delegate: Text {
-                        id: upcomingLyric
-                        required property int index
-                        required property string modelData
-                        x: 4
-                        y: 20 + index * 15
-                        width: parent.width - 8
-                        text: modelData
-                        color: root.colors.text
-                        opacity: index === 0 ? 0.42 : (index === 1 ? 0.22 : 0.10)
-                        elide: Text.ElideRight
-                        font.family: root.uiFont
-                        font.pixelSize: index === 0 ? 8 : 7
-                        font.weight: Font.Medium
-                        layer.enabled: !root.reducedMotion
-                        layer.smooth: true
-                        layer.effect: MultiEffect {
-                            blurEnabled: true
-                            blurMax: 12
-                            blur: upcomingLyric.index === 0
-                                  ? 0.14 : (upcomingLyric.index === 1 ? 0.25 : 0.38)
-                            autoPaddingEnabled: false
-                        }
-
-                        NumberAnimation on opacity {
-                            from: 0
-                            to: upcomingLyric.index === 0
-                                ? 0.42 : (upcomingLyric.index === 1 ? 0.22 : 0.10)
-                            duration: root.reducedMotion ? 0 : MotionTokens.content
-                            easing.type: MotionTokens.easeOut
-                        }
-                        NumberAnimation on y {
-                            from: 25 + upcomingLyric.index * 15
-                            to: 20 + upcomingLyric.index * 15
-                            duration: root.reducedMotion ? 0 : MotionTokens.content
-                            easing.type: MotionTokens.easeOut
-                        }
-                    }
-                }
-
-                Text {
-                    x: 4
-                    y: 23
-                    width: parent.width - 8
-                    text: cider.lyricsAvailable && !cider.lyricsSynchronized
-                          ? "Lyrics aren't time-synced for this track" : ""
-                    visible: text.length > 0
-                    color: root.colors.tertiary
-                    elide: Text.ElideRight
-                    font.family: root.uiFont
-                    font.pixelSize: 8
-                    font.weight: Font.Normal
+                    active: root.ciderContextMode === 1
                 }
             }
 

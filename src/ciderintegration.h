@@ -28,6 +28,7 @@ class CiderIntegration final : public QObject {
   Q_PROPERTY(QVariantList queue READ queue NOTIFY changed)
   Q_PROPERTY(bool lyricsAvailable READ lyricsAvailable NOTIFY changed)
   Q_PROPERTY(bool lyricsSynchronized READ lyricsSynchronized NOTIFY changed)
+  Q_PROPERTY(QString previousLyric READ previousLyric NOTIFY changed)
   Q_PROPERTY(QString currentLyric READ currentLyric NOTIFY changed)
   Q_PROPERTY(QString nextLyric READ nextLyric NOTIFY changed)
   Q_PROPERTY(QStringList upcomingLyrics READ upcomingLyrics NOTIFY changed)
@@ -56,6 +57,7 @@ public:
   QVariantList queue() const { return m_queue; }
   bool lyricsAvailable() const { return !m_lyrics.isEmpty(); }
   bool lyricsSynchronized() const { return m_lyricsSynchronized; }
+  QString previousLyric() const { return m_previousLyric; }
   QString currentLyric() const { return m_currentLyric; }
   QString nextLyric() const { return m_nextLyric; }
   QStringList upcomingLyrics() const { return m_upcomingLyrics; }
@@ -153,6 +155,7 @@ private:
   QString m_statusMessage;
   QVariantList m_queue;
   QVector<LyricLine> m_lyrics;
+  QString m_previousLyric;
   QString m_currentLyric;
   QString m_nextLyric;
   QStringList m_upcomingLyrics;

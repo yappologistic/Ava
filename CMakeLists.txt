@@ -170,6 +170,7 @@ qt_add_qml_module(Ava
         qml/MorphingIcon.qml
         qml/MorphingArtwork.qml
         qml/PlaybackMorphIcon.qml
+        qml/CiderLyricsView.qml
         qml/CiderQueueView.qml
         qml/DwindleMorphIcon.qml
         qml/CodexPanel.qml
