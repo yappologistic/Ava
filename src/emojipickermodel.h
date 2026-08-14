@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QStringList>
 #include <QTimer>
 #include <QVector>
@@ -107,6 +108,7 @@ private:
     struct CatalogResult
     {
         QVector<Entry> entries;
+        QVector<int> initialIndices;
         QString error;
     };
 
@@ -115,9 +117,16 @@ private:
                       const QString &derivedAnnotationsPath);
     static CatalogResult loadCatalog(const QString &emojiTestPath,
                                      const QString &annotationsPath,
-                                     const QString &derivedAnnotationsPath);
+                                     const QString &derivedAnnotationsPath,
+                                     const QHash<QString, QString> &customKeywords,
+                                     const QStringList &pinnedKeys,
+                                     const QStringList &recentKeys);
+    static QVector<int> defaultResultIndices(const QVector<Entry> &entries,
+                                             const QStringList &pinnedKeys,
+                                             const QStringList &recentKeys);
     void rebuildResults();
-    void updateSearchText(Entry &entry);
+    static void updateSearchText(Entry &entry,
+                                 const QHash<QString, QString> &customKeywords);
     const Entry *entryAt(int row) const;
     Entry *entryAt(int row);
     QString glyphForTone(const Entry &entry, int toneIndex) const;

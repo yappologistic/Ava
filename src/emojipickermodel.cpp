@@ -377,7 +377,7 @@ void EmojiPickerModel::setCustomKeywords(int row, const QString &keywords)
         m_customKeywords.remove(entry->key);
     else
         m_customKeywords.insert(entry->key, normalized);
-    updateSearchText(*entry);
+    updateSearchText(*entry, m_customKeywords);
     saveCustomKeywords();
     rebuildResults();
     emit statusMessageRequested(QStringLiteral("Updated keywords for %1").arg(entry->name));
@@ -427,38 +427,44 @@ void EmojiPickerModel::startLoading(const QString &emojiTestPath,
         watcher->deleteLater();
         beginResetModel();
         m_entries = std::move(result.entries);
-        m_filteredIndices.clear();
+        m_filteredIndices = std::move(result.initialIndices);
         endResetModel();
-        for (Entry &entry : m_entries)
-            updateSearchText(entry);
         setErrorMessage(result.error);
         setLoading(false);
-        rebuildResults();
+        if (m_query.isEmpty() && m_category == QStringLiteral("All"))
+            emit resultsChanged();
+        else
+            rebuildResults();
     });
     watcher->setFuture(QtConcurrent::run(&EmojiPickerModel::loadCatalog,
-                                          emojiTestPath,
-                                          annotationsPath,
-                                          derivedAnnotationsPath));
+                                         emojiTestPath,
+                                         annotationsPath,
+                                         derivedAnnotationsPath,
+                                         m_customKeywords,
+                                         m_pinnedKeys,
+                                         m_recentKeys));
 }
 
 EmojiPickerModel::CatalogResult EmojiPickerModel::loadCatalog(
     const QString &emojiTestPath,
     const QString &annotationsPath,
-    const QString &derivedAnnotationsPath)
+    const QString &derivedAnnotationsPath,
+    const QHash<QString, QString> &customKeywords,
+    const QStringList &pinnedKeys,
+    const QStringList &recentKeys)
 {
     CatalogResult result;
     const QString emojiText = readTextFile(emojiTestPath, &result.error);
-    const QByteArray annotationsJson = readBytes(annotationsPath, &result.error);
-    const QByteArray derivedJson = readBytes(derivedAnnotationsPath, &result.error);
     if (!result.error.isEmpty())
         return result;
 
     QHash<QString, Annotation> annotations;
-    mergeAnnotations(annotationsJson,
+    annotations.reserve(4096);
+    mergeAnnotations(readBytes(annotationsPath, &result.error),
                      QStringLiteral("annotations"),
                      &annotations,
                      &result.error);
-    mergeAnnotations(derivedJson,
+    mergeAnnotations(readBytes(derivedAnnotationsPath, &result.error),
                      QStringLiteral("annotationsDerived"),
                      &annotations,
                      &result.error);
@@ -568,14 +574,63 @@ EmojiPickerModel::CatalogResult EmojiPickerModel::loadCatalog(
         symbol.catalogOrder = order++;
         result.entries.append(std::move(symbol));
     }
+    for (Entry &entry : result.entries)
+        updateSearchText(entry, customKeywords);
+    result.initialIndices = defaultResultIndices(result.entries,
+                                                 pinnedKeys,
+                                                 recentKeys);
     if (result.entries.isEmpty())
         result.error = QStringLiteral("No Unicode characters were loaded.");
     return result;
 }
 
+QVector<int> EmojiPickerModel::defaultResultIndices(
+    const QVector<Entry> &entries,
+    const QStringList &pinnedKeys,
+    const QStringList &recentKeys)
+{
+    QVector<QPair<int, int>> prioritized;
+    QVector<int> remaining;
+    prioritized.reserve(pinnedKeys.size() + recentKeys.size());
+    remaining.reserve(entries.size());
+    for (int index = 0; index < entries.size(); ++index) {
+        int score = pinnedKeys.contains(entries.at(index).key) ? 2000 : 0;
+        const int recentPosition = recentKeys.indexOf(entries.at(index).key);
+        if (recentPosition >= 0)
+            score += 1000 - qMin(recentPosition, 31) * 20;
+        if (score > 0)
+            prioritized.append({score, index});
+        else
+            remaining.append(index);
+    }
+    std::sort(prioritized.begin(), prioritized.end(), [&entries](const auto &first,
+                                                                  const auto &second) {
+        if (first.first != second.first)
+            return first.first > second.first;
+        return entries.at(first.second).catalogOrder
+            < entries.at(second.second).catalogOrder;
+    });
+
+    QVector<int> indices;
+    indices.reserve(entries.size());
+    for (const auto &entry : std::as_const(prioritized))
+        indices.append(entry.second);
+    indices.append(remaining);
+    return indices;
+}
+
 void EmojiPickerModel::rebuildResults()
 {
     const QString normalizedQuery = m_query.simplified().toCaseFolded();
+    if (normalizedQuery.isEmpty() && m_category == QStringLiteral("All")) {
+        beginResetModel();
+        m_filteredIndices = defaultResultIndices(m_entries,
+                                                 m_pinnedKeys,
+                                                 m_recentKeys);
+        endResetModel();
+        emit resultsChanged();
+        return;
+    }
     const QStringList terms = normalizedQuery.split(QLatin1Char(' '), Qt::SkipEmptyParts);
     QVector<QPair<int, int>> matches;
     matches.reserve(m_entries.size());
@@ -638,7 +693,9 @@ void EmojiPickerModel::rebuildResults()
     emit resultsChanged();
 }
 
-void EmojiPickerModel::updateSearchText(Entry &entry)
+void EmojiPickerModel::updateSearchText(
+    Entry &entry,
+    const QHash<QString, QString> &customKeywords)
 {
     entry.searchText = QStringList({entry.glyph,
                                     entry.name,
@@ -646,7 +703,7 @@ void EmojiPickerModel::updateSearchText(Entry &entry)
                                     entry.subgroup,
                                     entry.codePoints,
                                     entry.keywords.join(QLatin1Char(' ')),
-                                    m_customKeywords.value(entry.key)})
+                                    customKeywords.value(entry.key)})
                            .join(QLatin1Char(' '))
                            .toCaseFolded();
 }

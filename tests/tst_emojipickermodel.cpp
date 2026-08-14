@@ -16,6 +16,7 @@ private slots:
     void loadsOfficialCatalogAndSearchesAnnotations();
     void filtersUnicodeSymbolCategories();
     void exposesSkinToneVariants();
+    void publishesCatalogOnceInDefaultOrder();
     void persistsPinsRecentsAndCustomKeywords();
     void pasteKeepsVisibleGridStable();
     void boundsColumnAndSkinTonePreferences();
@@ -108,6 +109,30 @@ void EmojiPickerModelTest::exposesSkinToneVariants()
     for (const QString &variant : variants)
         QVERIFY(!variant.isEmpty());
     QVERIFY(model->data(model->index(row), EmojiPickerModel::SupportsSkinToneRole).toBool());
+}
+
+void EmojiPickerModelTest::publishesCatalogOnceInDefaultOrder()
+{
+    QSettings().clear();
+    QSettings().setValue(QStringLiteral("emojiPicker/recents"),
+                         QStringList{QStringLiteral("1F680")});
+    auto model = std::make_unique<EmojiPickerModel>(
+        QStringLiteral(AVA_SOURCE_DIR "/assets/emoji/emoji-test.txt"),
+        QStringLiteral(AVA_SOURCE_DIR "/assets/emoji/annotations-en.json"),
+        QStringLiteral(AVA_SOURCE_DIR "/assets/emoji/annotations-derived-en.json"));
+    QSignalSpy resetSpy(model.get(), &QAbstractItemModel::modelReset);
+    QElapsedTimer timer;
+    timer.start();
+    while (model->loading() && timer.elapsed() < 10000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QTest::qWait(10);
+    }
+
+    QVERIFY(!model->loading());
+    QCOMPARE(resetSpy.size(), 1);
+    QVERIFY(model->rowCount() > 0);
+    QCOMPARE(model->data(model->index(0), EmojiPickerModel::NameRole).toString(),
+             QStringLiteral("rocket"));
 }
 
 void EmojiPickerModelTest::persistsPinsRecentsAndCustomKeywords()

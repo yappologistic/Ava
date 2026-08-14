@@ -17,142 +17,181 @@
 # Ava
 
 Ava is a native Windows 11 productivity project built with Qt 6, QML, C++, and
-Win32. It ships two executables:
+Win32. It combines a compact live-activity island with a separate native Codex
+workspace. Shipping features use real Windows, Cider, and Codex state;
+deterministic visual states exist only for explicit screenshot QA.
 
-- **Ava** is the live-activity island, launcher, system monitor, media and timer
-  surface, wallpaper controller, and optional Dwindle tiling workspace.
-- **AvaChat** is a separate native Codex workspace for persistent conversations,
-  approvals, attachments, diffs, and Git workflows.
+## At a glance
 
-Shipping features read real Windows and Codex state. Deterministic visual states
-exist only for explicit screenshot QA.
+| Application | Purpose |
+| --- | --- |
+| **Ava** | The island, app launcher, system monitor, media and Cider controls, timer, wallpaper controller, Liquid Glass shell, and optional Dwindle workspace. |
+| **AvaChat** | A separate native Codex workspace for persistent conversations, approvals, attachments, diffs, and Git workflows. |
 
-## Features
+## Build and run
+
+You need:
+
+- Windows 11 and a current Windows SDK with C++/WinRT headers
+- Qt 6.5+ with `Concurrent`, `Core`, `Gui`, `Network`, `Qml`, `Quick`,
+  `QuickControls2`, `QuickDialogs2`, `QuickLayouts`, `ShaderTools`, and `Test`
+- CMake 3.21+
+- Visual Studio 2022 with the C++20 MSVC toolchain
+
+From a Qt-enabled developer shell:
+
+```powershell
+cmake -S . -B build
+cmake --build build --config Release
+.\build\Release\Ava.exe
+.\build\Release\AvaChat.exe
+```
+
+Before running tests, place the active Qt `bin` directory and `build/Release`
+on `PATH`. A repository-local Qt installation may use:
+
+```powershell
+$env:PATH = "$PWD\.qt\6.8.3\msvc2022_64\bin;$PWD\build\Release;$env:PATH"
+ctest --test-dir build -C Release -R "system_monitor|app_launcher|enhanced_tabs|window_motion|emoji_picker|codex_models|chat_text_styler|codex_git_manager|attachment_ui|cider_integration" --output-on-failure
+```
+
+The authenticated live Codex test is opt-in because it uses the current account
+and workspace:
+
+```powershell
+$env:AVA_RUN_LIVE_CODEX_TEST = "1"
+ctest --test-dir build -C Release -R codex_live_e2e --output-on-failure
+```
+
+## What Ava includes
 
 ### Ava island
 
-- Compact always-on-top clock with switchable Notch and floating Pill shells.
-- Optional native Liquid Glass mode with live refraction, light bending,
-  chromatic dispersion, adaptive legibility, and persistent on/off state.
-- `Ctrl+K` application launcher with installed-app search, launch history, an
-  AvaChat entry, and direct opening of valid web addresses, files, and folders.
-- Optional Monitor mode with live time, GPU and CPU utilization, battery level,
-  and charging state. Selecting CPU opens CPU, memory, disk, and the five most
-  active processes without exposing process IDs.
-- Timer with a snapping minute ruler, compact countdown, progress ring,
+- A compact always-on-top clock with switchable Notch and floating Pill shells.
+- Optional native Liquid Glass with live refraction, light bending, chromatic
+  dispersion, adaptive legibility, and a persistent on/off state.
+- A `Ctrl+K` launcher for installed apps, AvaChat, valid web addresses, and
+  existing files or folders. Results include ranked search and launch history.
+- Optional Monitor mode with live time, GPU and CPU use, battery level, and
+  charging state. Selecting CPU opens memory, disk, and the five most active
+  processes without exposing process IDs.
+- A timer with a snapping minute ruler, compact countdown, progress ring,
   pause/resume, cancel, add-one-minute, a Windows completion alert, and a
   separate quick-action satellite while active.
-- Live media title, artist, artwork, source-app icon, playback state, seekable
+- Live media title, artist, artwork, source icon, playback state, seekable
   timeline, transport controls, directional track handoffs, and a five-bar
-  Windows output-level indicator colored from the current artwork.
-- Windows Core Audio volume and mute control plus current network, battery,
+  output-level indicator colored from the current artwork.
+- Cider enrichment for favorites, editable queue, playlists, search, listening
+  history, timed lyrics, and a session-level audio pulse. Windows media controls
+  remain the fallback.
+- Windows Core Audio volume and mute controls, plus current network, battery,
   date, time, and week-calendar state.
-- Local file-drop shelf with File Explorer reveal and a built-in wallpaper
-  chooser using the bundled runtime wallpapers.
+- A local file-drop shelf with File Explorer reveal and a wallpaper chooser for
+  the bundled runtime wallpapers.
 - Optional native Dwindle tiling with adjustable splits, live resize and swap
   feedback, title-bar drag swapping, application minimum-size handling,
   animated placement, and exact window restoration.
 - Reduced-motion-aware transitions synchronized with the active display rather
-  than fixed to a specific refresh rate.
+  than fixed to one refresh rate.
 
 ### AvaChat
 
-- Native Codex app-server client with persistent thread history, thread search,
-  incremental streaming, plans, reasoning and tool activity, and explicit
-  command or file-change approvals.
+- A native Codex app-server client with persistent thread history, thread
+  search, incremental streaming, plans, reasoning and tool activity, and
+  explicit command or file-change approvals.
 - Model and reasoning-effort controls populated from the active Codex account,
   plus Fast mode when the selected model supports it.
 - File and image attachments, clipboard image paste, image inspection, rich
   Markdown, syntax-aware code blocks, and a dedicated diff inspector.
-- Git change center for reviewing files, staging and unstaging, discarding with
-  confirmation, committing, pushing, and creating pull requests.
+- A Git change center for reviewing files, staging and unstaging, discarding
+  with confirmation, committing, pushing, and creating pull requests.
 - Optional isolated Git worktrees for new conversations.
 - Single-instance activation and local IPC so Ava can surface live AvaChat
   activity in the compact island.
 
-## Native Liquid Glass
-
-Liquid Glass is optional and can be toggled from Ava's utility carousel. It is
-applied to the island, launcher, monitor, timer, wallpaper, and related shell
-surfaces. Codex surfaces remain opaque, and the separate AvaChat window stays
-outside the glass rendering path.
-
-The effect is native rather than a web or blur layer. Windows Graphics Capture
-feeds live desktop content into a Direct3D 11 optical shader that performs
-refraction, edge bending, dispersion, Fresnel highlights, and caustics. Shared
-triple-buffered GPU textures and timeline fences keep frames off the CPU readback
-path. When Explorer cannot provide usable desktop pixels, Ava resolves the
-current per-monitor wallpaper instead of showing a black surface.
-
-## Performance and fluidity
-
-Ava keeps rendering and input work bounded without reducing the fidelity of its
-features. Windows system-state queries and monitor sampling run away from the UI
-thread, repeated refresh requests are coalesced, inactive audio metering sleeps,
-the native silhouette hit region is reused until its geometry changes, and media
-state follows Windows session events with a bounded recovery poll instead of a
-permanent one-second full query. Window-style updates are applied only when the
-requested state differs, avoiding unnecessary Desktop Window Manager frame
-recalculation.
-
-Liquid Glass remains a live GPU effect: capture, optical processing, and display
-stay on D3D11 resources with no per-frame CPU readback. Performance work must
-preserve the same shader output, capture continuity, and interaction latency.
-The capture target scan also reuses its validated DWM bounds rather than asking
-the compositor for the same rectangle twice per candidate.
-The measurement procedure, invariants, confirmed findings, and official source
-links are documented in [docs/performance.md](docs/performance.md).
-
-## Interaction
+## Using Ava
 
 - Hover over Ava for 280 ms or click it to expand.
-- Move away for 560 ms to collapse, unless it is pinned.
+- Move away for 560 ms to collapse, unless the island is pinned.
 - Open the utility carousel to switch shells, toggle Liquid Glass or Monitor
   mode, control sound and pinning, open wallpapers or the timer, start Codex,
   and enable Dwindle. Persistent appearance choices survive restarts.
 - Press `Ctrl+K` to open the launcher. Type an application name, a valid web
   address, or an existing absolute file or folder path, then press `Enter`.
 - Select the CPU percentage in compact Monitor mode to open the System Monitor
-  drill-down. The click is handled without triggering the normal island
-  expansion first.
-- Open the timer, select a duration on the ruler, and choose **Start Timer**.
-- Enable or disable Dwindle tiling from the utility controls or press `Win+Alt+T`.
-- Resize a tiled window along an internal edge to adjust its split.
+  drill-down without triggering normal island expansion first.
+- Open the timer, choose a duration on the ruler, and select **Start Timer**.
+- Enable or disable Dwindle from the utility controls or press `Win+Alt+T`.
+- Resize a tiled window along an internal edge to change its split.
 - Drag one tiled window by its title bar and release it over another to swap
   their positions.
 - Drop a local file over Ava to add it to the temporary local file shelf.
 - Hover or drag the media timeline to preview and seek when the active Windows
   media session supports playback-position changes.
-- Open Codex from the utility carousel to run a focused task in the island, or
-  open **AI Chat** from the launcher for the full AvaChat workspace.
+- Open Codex from the utility carousel for a focused island task, or open
+  **AI Chat** from the launcher for the full AvaChat workspace.
 - Review every requested command or file-change escalation with **Deny** or
   **Allow**. Island tasks start in `workspace-write` with approvals on request;
   Ava never bypasses the Codex sandbox.
 
+## Native Liquid Glass
+
+Liquid Glass is optional and can be toggled from Ava's utility carousel. It
+applies to the island, launcher, monitor, timer, wallpaper, and related shell
+surfaces. Codex surfaces remain opaque, and the separate AvaChat window stays
+outside the glass rendering path.
+
+This is a native effect, not a web or blur layer. Windows Graphics Capture feeds
+live desktop content into a Direct3D 11 optical shader for refraction, edge
+bending, dispersion, Fresnel highlights, and caustics. Shared triple-buffered
+GPU textures and timeline fences keep frames off the CPU readback path. When
+Explorer cannot provide usable desktop pixels, Ava resolves the current
+per-monitor wallpaper instead of showing a black surface.
+
+## Performance and fluidity
+
+Ava keeps rendering and input work bounded without reducing feature fidelity.
+Windows system-state queries and monitor sampling run away from the UI thread,
+repeated refresh requests are coalesced, inactive audio metering sleeps, and the
+native silhouette hit region is reused until its geometry changes. Media state
+follows Windows session events with a bounded recovery poll instead of a
+permanent one-second full query. Window-style updates run only when the requested
+state changes, which avoids unnecessary Desktop Window Manager frame
+recalculation.
+
+Liquid Glass remains a live GPU effect: capture, optical processing, and display
+stay on D3D11 resources with no per-frame CPU readback. Performance work must
+preserve shader output, capture continuity, and interaction latency. Capture
+target scans also reuse validated DWM bounds instead of asking the compositor
+for the same rectangle twice per candidate.
+
+The measurement process, invariants, confirmed findings, and official sources
+are documented in [docs/performance.md](docs/performance.md).
+
 ## Codex integration
 
 Ava and AvaChat use the installed Codex app-server over newline-delimited
-JSON-RPC. Tasks are real persisted Codex threads, and both clients consume
+JSON-RPC. Tasks are real persisted Codex threads. Both clients consume
 authoritative thread, turn, item, plan, approval, error, and completion events
 instead of inferring activity from terminal output.
 
-The island intentionally stays glanceable. It can start a focused task, show the
+The island stays deliberately glanceable. It can start a focused task, show the
 current action and elapsed time, request approvals, interrupt work, and display
 completion. **Open** launches the bundled AvaChat executable for the current
-workspace when it is available. AvaChat provides the full conversation,
-attachment, model, diff, and Git experience. Local IPC mirrors active AvaChat
-status back to the compact island without coupling the two presentation models.
+workspace when available. AvaChat provides the full conversation, attachment,
+model, diff, and Git experience. Local IPC mirrors active AvaChat status back to
+the compact island without coupling the two presentation models.
 
-Requirements:
+Codex features require:
 
-- Codex CLI installed and signed in.
-- A Codex version that provides `codex app-server`.
-- Git available on `PATH` for worktrees and the Git change center.
+- Codex CLI installed and signed in
+- A Codex version that provides `codex app-server`
+- Git on `PATH` for worktrees and the Git change center
 - An authenticated GitHub CLI (`gh`) only when creating pull requests from
-  AvaChat.
+  AvaChat
 
-By default, island tasks use Ava's current working directory or the last saved
-workspace. Use `--codex-workspace` for Ava or `--workspace` for AvaChat when
+Island tasks use Ava's current working directory or the last saved workspace by
+default. Use `--codex-workspace` for Ava or `--workspace` for AvaChat when
 launching from another directory.
 
 ## Native window behavior
@@ -176,46 +215,12 @@ preserves the taskbar and island clearance while excluding minimized, tool,
 owned, cloaked, topmost, fullscreen-style, and unresponsive windows.
 
 Window placement uses short smoothstep transitions, atomic multi-window updates,
-and Desktop Window Manager synchronization. Every original placement is captured
+and Desktop Window Manager synchronization. Ava records every original placement
 before a window moves. Disabling tiling, pressing `Win+Alt+T` again, or closing
 Ava restores surviving windows to their original normal, maximized, or minimized
 state.
 
-## Build on Windows
-
-Requirements:
-
-- Windows 11 and a current Windows SDK with C++/WinRT headers
-- Qt 6.5+ with `Concurrent`, `Core`, `Gui`, `Network`, `Qml`, `Quick`,
-  `QuickControls2`, `QuickDialogs2`, `QuickLayouts`, `ShaderTools`, and `Test`
-- CMake 3.21+
-- Visual Studio 2022 with the C++20 MSVC toolchain
-
-From a Qt-enabled developer shell:
-
-```powershell
-cmake -S . -B build
-cmake --build build --config Release
-.\build\Release\Ava.exe
-.\build\Release\AvaChat.exe
-```
-
-Run the focused native suite after placing the active Qt `bin` directory and
-`build/Release` on `PATH`:
-
-```powershell
-ctest --test-dir build -C Release -R "system_monitor|app_launcher|codex_models|chat_text_styler|codex_git_manager|attachment_ui" --output-on-failure
-```
-
-The authenticated live Codex test is opt-in because it uses the current account
-and workspace:
-
-```powershell
-$env:AVA_RUN_LIVE_CODEX_TEST = "1"
-ctest --test-dir build -C Release -R codex_live_e2e --output-on-failure
-```
-
-## Useful launch options
+## Launch and QA options
 
 ```powershell
 .\build\Release\Ava.exe --pinned
@@ -239,12 +244,17 @@ ctest --test-dir build -C Release -R codex_live_e2e --output-on-failure
 Generated screenshots, videos, reports, logs, build products, and IDE files are
 excluded by `.gitignore`.
 
-For local visual-regression capture,
-`--codex-visual-state ready|running|approval|completed|error|compact` and
-`--media-peek`, `--cider-visual-state connect|queue|lyrics|playlists|search|recent|audio`,
-and the authenticated `--cider-open queue|lyrics|playlists|search|recent` are accepted
-only together with `--screenshot`. These states
-exercise the shipping QML layout without replacing the real runtime integration.
+For local visual-regression capture, the following options are accepted only
+when used with `--screenshot`:
+
+- `--codex-visual-state ready|running|approval|completed|error|compact`
+- `--media-peek`
+- `--cider-visual-state connect|queue|lyrics|playlists|search|recent|audio`
+- `--cider-open queue|lyrics|playlists|search|recent`
+
+These deterministic states exercise the shipping QML layout without replacing
+the real runtime integration. Authenticated `--cider-open` captures use the real
+Cider connection.
 
 ## Project layout
 
@@ -252,11 +262,11 @@ exercise the shipping QML layout without replacing the real runtime integration.
   options, native window behavior, timers, media, audio, power, clock, file
   drops, and persisted appearance state.
 - `src/ciderintegration.*` and `src/cideraudiometer.*`: scoped local Cider
-  enrichment for favorite, editable queue, playlists, search, listening
+  enrichment for favorites, editable queue, playlists, search, listening
   history, timed lyrics, and a session-level audio pulse, with Windows media
   controls as the fallback.
-- `src/applauncher.*`: installed-app discovery, `Ctrl+K`, ranked search,
-  icons, launch history, and direct URL or filesystem targets.
+- `src/applauncher.*`: installed-app discovery, `Ctrl+K`, ranked search, icons,
+  launch history, and direct URL or filesystem targets.
 - `src/systemmonitor.*`: asynchronous CPU, memory, disk, and process sampling.
 - `src/liquidglassbackdrop.*`, `src/liquidglasscaptureworker.*`, and
   `src/liquidglasstextureitem.*`: Windows capture, native D3D11 optics,
@@ -267,8 +277,8 @@ exercise the shipping QML layout without replacing the real runtime integration.
   activity IPC.
 - `src/codexappserverclient.*`, `src/codexchatcontroller.*`,
   `src/codexmodels.*`, `src/codexthreadsnapshotstore.*`, and
-  `src/codexgitmanager.*`: AvaChat transport, orchestration, incremental
-  models, bounded persistence, and Git operations.
+  `src/codexgitmanager.*`: AvaChat transport, orchestration, incremental models,
+  bounded persistence, and Git operations.
 - Root `qml/`: the island shell, launcher, expanded utilities, Monitor views,
   timer, wallpaper chooser, and compact Codex activity.
 - `qml/chat/`: the separate AvaChat window, composer, conversation timeline,
@@ -290,11 +300,13 @@ permission from the project owner.
 
 Because it restricts commercial use, Ava is source-available software rather
 than OSI-approved open-source software. Third-party assets remain under their
-own licenses listed below and are not relicensed by Ava's project license.
+own licenses and are not relicensed by Ava's project license.
 
 ## Third-party assets
 
-- Inter is distributed under the SIL Open Font License 1.1. See `assets/fonts/OFL-Inter.txt`.
-- Geist Mono is distributed under the SIL Open Font License 1.1. See `assets/fonts/OFL-Geist.txt`.
+- Inter is distributed under the SIL Open Font License 1.1. See
+  `assets/fonts/OFL-Inter.txt`.
+- Geist Mono is distributed under the SIL Open Font License 1.1. See
+  `assets/fonts/OFL-Geist.txt`.
 - Microsoft Fluent UI System Icons are distributed under the MIT License. See
   `assets/icons/LICENSE`.

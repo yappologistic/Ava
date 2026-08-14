@@ -9,6 +9,10 @@ application with two executables:
 
 Both applications are built with Qt 6, C++20, and QML.
 
+Keep this file as a concise map of durable repository rules. Put measurement
+records and detailed procedures in `docs/performance.md`, and Cider contracts in
+`docs/cider-integration.md`, so agents can load deeper context only when needed.
+
 ## Working agreements
 
 - Be concise and candid. Distinguish verified behavior from assumptions.
@@ -36,6 +40,9 @@ Both applications are built with Qt 6, C++20, and QML.
   path with two independent forms of evidence, such as a trace plus source
   inspection, or timings plus an authoritative API contract. Do not optimize a
   plausible-looking path that has not been verified.
+- Separate initialization and warm-up from steady state using the observed
+  stabilization point. Compare distributions from repeated equivalent runs;
+  do not base a conclusion on one sample or an unexplained outlier.
 - Define the user-visible invariants before implementation, then compare the
   same scenario before and after. Treat unchanged visuals, behavior, focus,
   input, accessibility, and feature availability as requirements rather than
@@ -43,6 +50,9 @@ Both applications are built with Qt 6, C++20, and QML.
 - Prefer removing redundant work, coalescing updates, pausing inactive timers,
   and moving blocking work off the UI thread. Do not trade latency or correctness
   for a lower aggregate CPU number without explicit product approval.
+- Treat result publication as part of the hot path. Prepare search text, ordering,
+  and other derived model state in the existing worker when safe, then publish a
+  complete result with the fewest observable model resets.
 - For Liquid Glass, preserve the live GPU pipeline and optical output. Validate
   capture continuity, latency, GPU synchronization, high-DPI behavior, and
   fallback imagery in the running Release build. Revert an optimization if it
@@ -50,6 +60,8 @@ Both applications are built with Qt 6, C++20, and QML.
 - Keep before/after evidence reproducible and machine context explicit. If a
   result is within measurement noise, report it as inconclusive and leave the
   code unchanged.
+- Keep temporary probes, traces, captures, and reports outside the repository,
+  and remove instrumentation from the shipping source after measuring.
 
 ## Product boundary
 
@@ -100,6 +112,9 @@ Both applications are built with Qt 6, C++20, and QML.
   token.
 - Keep blocking file, process, Git, image, and JSON work off the UI thread when
   it can exceed a frame budget. Preserve event ordering when work moves off-thread.
+- Batch persistent-setting reads. Reuse one grouped `QSettings` instance for a
+  batch, and perform large read-only batches in an existing worker when the Qt
+  thread-safety contract permits it.
 
 ## Motion and layout
 
@@ -129,7 +144,7 @@ Both applications are built with Qt 6, C++20, and QML.
 - Fast native suite:
 
   ```powershell
-  ctest --test-dir build -C Release -R "system_monitor|app_launcher|codex_models|chat_text_styler|codex_git_manager|attachment_ui" --output-on-failure
+  ctest --test-dir build -C Release -R "system_monitor|app_launcher|enhanced_tabs|window_motion|emoji_picker|codex_models|chat_text_styler|codex_git_manager|attachment_ui|cider_integration" --output-on-failure
   ```
 
 - Live Codex E2E is opt-in because it uses the real account and workspace. Set

@@ -592,6 +592,23 @@ QString usageKey(const QString &id)
             .left(24));
 }
 
+void loadUsage(AppLauncher::AppEntry &entry, QSettings &settings)
+{
+    const QString key = usageKey(entry.id);
+    entry.lastLaunched = settings.value(key + QStringLiteral("/last"), 0).toLongLong();
+    entry.launchCount = settings.value(key + QStringLiteral("/count"), 0).toInt();
+}
+
+void loadUsageHistory(QVector<AppLauncher::AppEntry> &entries)
+{
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("launcherHistory"));
+    for (AppLauncher::AppEntry &entry : entries) {
+        loadUsage(entry, settings);
+    }
+    settings.endGroup();
+}
+
 } // namespace
 
 std::optional<AppLauncher::AppEntry> AppLauncher::directEntryForQuery(
@@ -819,6 +836,7 @@ void AppLauncher::refresh()
     QThreadPool::globalInstance()->start([self]() {
 #ifdef Q_OS_WIN
         ScanResult result = scanInstalledApplications();
+        loadUsageHistory(result.entries);
 #else
         ScanResult result;
         result.error = QStringLiteral("Application discovery is available on Windows.");
@@ -1011,10 +1029,13 @@ void AppLauncher::applyEntries(QVector<AppEntry> entries)
         "qrc:/qt/qml/Ava/assets/icons/fluent-emoji.svg");
     emojiPicker.searchText = QStringLiteral(
         "emoji emojis symbol symbols unicode character characters glyph smiley flag math currency arrow");
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("launcherHistory"));
+    loadUsage(aiChat, settings);
+    loadUsage(emojiPicker, settings);
+    settings.endGroup();
+    entries.prepend(std::move(aiChat));
     entries.prepend(std::move(emojiPicker));
-    for (AppEntry &entry : entries) {
-        loadUsage(entry);
-    }
     beginResetModel();
     m_entries = std::move(entries);
     m_iconRequests.clear();
@@ -1274,16 +1295,6 @@ int AppLauncher::matchScore(const AppEntry &entry,
         return 5000 + bestConsecutive * 45 - qMin(gapCost * 9, 1800);
     }
     return -1;
-}
-
-void AppLauncher::loadUsage(AppEntry &entry) const
-{
-    QSettings settings;
-    settings.beginGroup(QStringLiteral("launcherHistory"));
-    const QString key = usageKey(entry.id);
-    entry.lastLaunched = settings.value(key + QStringLiteral("/last"), 0).toLongLong();
-    entry.launchCount = settings.value(key + QStringLiteral("/count"), 0).toInt();
-    settings.endGroup();
 }
 
 void AppLauncher::recordUsage(AppEntry &entry)

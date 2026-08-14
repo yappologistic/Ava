@@ -101,7 +101,6 @@ private:
     void registerShortcut();
     void unregisterShortcut();
     int matchScore(const AppEntry &entry, const QString &normalizedQuery) const;
-    void loadUsage(AppEntry &entry) const;
     void recordUsage(AppEntry &entry);
 
     QVector<AppEntry> m_entries;
