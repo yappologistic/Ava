@@ -215,6 +215,10 @@ void LiquidGlassBackdrop::updateNativeGeometry()
             0.0,
             m_root->property("liquidGlassEdgeStrength").toReal(),
             1.0));
+        optics.blurStrength = float(qBound<qreal>(
+            0.0,
+            m_root->property("liquidGlassBlurStrength").toReal(),
+            1.0));
         optics.pointer = QPointF(
             m_root->property("liquidGlassPointerX").toReal() * scale,
             m_root->property("liquidGlassPointerY").toReal() * scale);

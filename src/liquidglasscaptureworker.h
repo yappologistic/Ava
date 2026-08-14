@@ -40,6 +40,7 @@ struct NativeLiquidGlassOptics
     float thickness = 0.7f;
     float intensity = 1.0f;
     float edgeStrength = 1.0f;
+    float blurStrength = 1.0f;
     QPointF pointer;
     bool pill = true;
     bool pointerActive = false;

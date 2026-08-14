@@ -358,6 +358,13 @@ int main(int argc, char *argv[])
     const bool automationMode = qEnvironmentVariableIntValue("AVA_AUTOMATION_MODE") == 1;
 #endif
     const bool liveGlassQa = qEnvironmentVariableIntValue("AVA_LIQUID_GLASS_QA") == 1;
+    bool blurStrengthValid = false;
+    const double requestedBlurStrength =
+        QString::fromUtf8(qgetenv("AVA_LIQUID_GLASS_BLUR_STRENGTH"))
+            .toDouble(&blurStrengthValid);
+    const double liquidGlassBlurStrength = blurStrengthValid
+        ? qBound(0.0, requestedBlurStrength, 1.0)
+        : 1.0;
 
     IslandController controller;
     CiderIntegration cider;
@@ -455,6 +462,8 @@ int main(int argc, char *argv[])
         parser.isSet(screenshotOption) || parser.isSet(motionReportOption));
     engine.rootContext()->setContextProperty(QStringLiteral("automationMode"), automationMode);
     engine.rootContext()->setContextProperty(QStringLiteral("liveGlassQa"), liveGlassQa);
+    engine.rootContext()->setContextProperty(
+        QStringLiteral("qaLiquidGlassBlurStrength"), liquidGlassBlurStrength);
     engine.rootContext()->setContextProperty(QStringLiteral("qaUtilityMenu"),
                                              parser.isSet(utilityMenuOption));
     engine.rootContext()->setContextProperty(

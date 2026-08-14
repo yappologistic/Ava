@@ -687,6 +687,8 @@ IslandController::IslandController(QObject *parent)
     m_pillMode = QSettings().value(QStringLiteral("appearance/pillMode"), false).toBool();
     m_liquidGlassEnabled = QSettings().value(
         QStringLiteral("appearance/liquidGlassEnabled"), false).toBool();
+    m_liquidGlassBlurred = QSettings().value(
+        QStringLiteral("appearance/liquidGlassBlurred"), true).toBool();
     m_monitorEnabled = QSettings().value(QStringLiteral("appearance/monitorEnabled"), false).toBool();
     m_wallpaperIndex = qBound(0,
                               QSettings().value(QStringLiteral("wallpaper/index"), 0).toInt(),
@@ -806,6 +808,28 @@ void IslandController::setLiquidGlassEnabled(bool enabled)
 void IslandController::toggleLiquidGlassEnabled()
 {
     setLiquidGlassEnabled(!m_liquidGlassEnabled);
+}
+
+void IslandController::setLiquidGlassBlurred(bool blurred)
+{
+    if (blurred && !m_liquidGlassEnabled) {
+        return;
+    }
+    if (m_liquidGlassBlurred == blurred) {
+        return;
+    }
+    m_liquidGlassBlurred = blurred;
+    QSettings().setValue(QStringLiteral("appearance/liquidGlassBlurred"),
+                         m_liquidGlassBlurred);
+    emit liquidGlassBlurredChanged();
+}
+
+void IslandController::toggleLiquidGlassBlurred()
+{
+    if (!m_liquidGlassEnabled) {
+        return;
+    }
+    setLiquidGlassBlurred(!m_liquidGlassBlurred);
 }
 
 void IslandController::setMonitorEnabled(bool enabled)

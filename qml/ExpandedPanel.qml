@@ -48,7 +48,7 @@ Item {
     property string observedArtworkAccent: ""
     property real utilityRevealProgress: qaUtilityMenu
                                          ? 1 : (actionHover.hovered ? 1 : 0)
-    property int utilityMenuIndex: 2
+    property int utilityMenuIndex: qaUtilityMenu ? 9 : 2
     property int ciderContextMode: qaCiderOpen === "lyrics" || qaCiderState === "lyrics" ? 1
                                    : (qaCiderOpen === "queue" || qaCiderState === "queue" ? 2
                                       : (qaCiderState === "connect" ? 3
@@ -164,7 +164,9 @@ Item {
     function utilityMenuName(index) {
         const names = ["Codex", "Timer", "Dwindle", "Sound", "Pin", "Wallpaper",
                        controller.pillMode ? "Pill Mode" : "Notch Mode", "Monitor",
-                       "Liquid Glass", "Enhanced Alt-Tab"]
+                       "Liquid Glass",
+                       controller.liquidGlassBlurred ? "Blurred Glass" : "Clear Glass",
+                       "Enhanced Alt-Tab"]
         return names[Math.max(0, Math.min(names.length - 1, index))]
     }
 
@@ -186,8 +188,14 @@ Item {
         if (index === 8)
             return controller.liquidGlassEnabled
         if (index === 9)
+            return controller.liquidGlassEnabled && controller.liquidGlassBlurred
+        if (index === 10)
             return enhancedTabsManager.enabled
         return false
+    }
+
+    function utilityMenuIsEnabled(index) {
+        return index !== 9 || controller.liquidGlassEnabled
     }
 
     function activateUtility(index) {
@@ -210,6 +218,8 @@ Item {
         else if (index === 8)
             controller.toggleLiquidGlassEnabled()
         else if (index === 9)
+            controller.toggleLiquidGlassBlurred()
+        else if (index === 10)
             enhancedTabsManager.toggleEnabled()
     }
 
@@ -1566,8 +1576,9 @@ Item {
                 ListElement { utilityIndex: 5; iconPath: "../assets/icons/wallpaper-light.svg"; invertedPath: "../assets/icons/wallpaper-dark.svg"; usesDwindle: false; usesShellMode: false }
                 ListElement { utilityIndex: 6; iconPath: ""; invertedPath: ""; usesDwindle: false; usesShellMode: true }
                 ListElement { utilityIndex: 7; iconPath: "../assets/icons/monitor-light.svg"; invertedPath: "../assets/icons/monitor-dark.svg"; usesDwindle: false; usesShellMode: false }
-                ListElement { utilityIndex: 8; iconPath: "../assets/icons/liquid-glass-light.svg"; invertedPath: "../assets/icons/liquid-glass-dark.svg"; usesDwindle: false; usesShellMode: false }
-                ListElement { utilityIndex: 9; iconPath: "../assets/icons/enhanced-tabs-light.svg"; invertedPath: "../assets/icons/enhanced-tabs-dark.svg"; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 8; iconPath: "../assets/icons/liquid-drop-light.svg"; invertedPath: "../assets/icons/liquid-drop-dark.svg"; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 9; iconPath: "../assets/icons/liquid-glass-light.svg"; invertedPath: "../assets/icons/liquid-glass-dark.svg"; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 10; iconPath: "../assets/icons/enhanced-tabs-light.svg"; invertedPath: "../assets/icons/enhanced-tabs-dark.svg"; usesDwindle: false; usesShellMode: false }
             }
 
             Item {
@@ -1648,6 +1659,7 @@ Item {
                                                              : "../assets/icons/shell-notch-dark.svg")
                                             : (invertedPath.length > 0 ? Qt.resolvedUrl(invertedPath) : "")
                         iconSize: usesDwindle ? 15 : 14
+                        enabled: root.utilityMenuIsEnabled(utilityIndex)
                         selected: root.utilityMenuIsActive(utilityIndex)
                         baseScale: root.utilityIconScale(menuDistance)
                                    * (0.92 + root.utilityItemReveal(index) * 0.08)

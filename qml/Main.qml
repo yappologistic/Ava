@@ -134,6 +134,8 @@ Window {
     readonly property bool liquidGlassPointerActive: islandHover.hovered
     readonly property bool liquidGlassReducedMotion: controller.reducedMotion
     readonly property real liquidGlassEdgeStrength: appLauncher.open ? 0.18 : 1.0
+    property real liquidGlassBlurStrength: controller.liquidGlassBlurred
+                                            ? qaLiquidGlassBlurStrength : 0
     readonly property bool timerSatelliteVisible: controller.monitorEnabled
                                                    && controller.timerActive
                                                    && !shellExpandedVisual
@@ -195,6 +197,14 @@ Window {
     onLiquidGlassPointerXChanged: requestGlassRefresh()
     onLiquidGlassPointerYChanged: requestGlassRefresh()
     onLiquidGlassPointerActiveChanged: requestGlassRefresh()
+    onLiquidGlassBlurStrengthChanged: requestGlassRefresh()
+
+    Behavior on liquidGlassBlurStrength {
+        NumberAnimation {
+            duration: controller.reducedMotion ? 0 : MotionTokens.content
+            easing.type: MotionTokens.easeOut
+        }
+    }
 
     property QtObject colors: QtObject {
         readonly property color black: window.liquidGlassVisualActive

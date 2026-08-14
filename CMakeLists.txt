@@ -241,6 +241,8 @@ qt_add_qml_module(Ava
         assets/icons/monitor-battery-charging.svg
         assets/icons/liquid-glass-light.svg
         assets/icons/liquid-glass-dark.svg
+        assets/icons/liquid-drop-light.svg
+        assets/icons/liquid-drop-dark.svg
         assets/icons/enhanced-tabs-light.svg
         assets/icons/enhanced-tabs-dark.svg
         assets/icons/launcher-link.svg

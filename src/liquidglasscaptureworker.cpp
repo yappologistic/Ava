@@ -119,6 +119,7 @@ VertexOutput main(uint vertexId : SV_VertexID)
         static constexpr char pixelShaderSource[] = R"(
 Texture2D<float4> wallpaperTexture : register(t0);
 Texture2D<float4> windowTexture : register(t1);
+Texture2D<float4> blurredWindowTexture : register(t2);
 SamplerState linearSampler : register(s0);
 
 cbuffer OpticalData : register(b0)
@@ -130,7 +131,7 @@ cbuffer OpticalData : register(b0)
     float4 shapeData;      // radius, side inset, ear depth, lens band
     float4 materialData;   // thickness, intensity, pill mode, desktop surface
     float4 interactionData; // pointer-local position, active, reduced motion
-    float4 finishData;     // optical edge strength, reserved
+    float4 finishData;     // optical edge strength, blur strength, reserved
 };
 
 float roundedBoxDistance(float2 samplePoint, float2 halfSize, float radius)
@@ -215,6 +216,44 @@ float3 sampleBackdrop(float2 screenPosition)
     return background;
 }
 
+float3 sampleBlurredBackdrop(float2 screenPosition, float mipLevel)
+{
+    float2 wallpaperUv = (screenPosition - wallpaperRect.xy + 0.5)
+                         / max(wallpaperRect.zw, float2(1.0, 1.0));
+    float3 background = wallpaperTexture.SampleLevel(linearSampler,
+                                                       saturate(wallpaperUv),
+                                                       mipLevel).rgb;
+    float2 windowLocal = screenPosition - windowRect.xy;
+    if (windowLocal.x >= 0.0 && windowLocal.y >= 0.0
+        && windowLocal.x < windowRect.z && windowLocal.y < windowRect.w) {
+        float2 windowUv = (windowLocal + 0.5) / max(windowRect.zw,
+                                                    float2(1.0, 1.0));
+        float4 foreground = blurredWindowTexture.SampleLevel(
+            linearSampler, saturate(windowUv), mipLevel);
+        if (materialData.w > 0.5) {
+            const float3 centerProbe = windowTexture.SampleLevel(
+                linearSampler, float2(0.5, 0.5), 0.0).rgb;
+            const float3 upperProbe = windowTexture.SampleLevel(
+                linearSampler, float2(0.33, 0.28), 0.0).rgb;
+            const float captureEnergy = max(max(max(foreground.r, foreground.g),
+                                                foreground.b),
+                                            max(max(centerProbe.r, centerProbe.g),
+                                                max(centerProbe.b,
+                                                    max(max(upperProbe.r, upperProbe.g),
+                                                        upperProbe.b))));
+            const float capturedDesktopVisible = smoothstep(0.004, 0.025,
+                                                             captureEnergy)
+                                                 * foreground.a;
+            background = lerp(background,
+                              foreground.rgb,
+                              capturedDesktopVisible);
+        } else {
+            background = foreground.rgb + background * (1.0 - foreground.a);
+        }
+    }
+    return background;
+}
+
 float gaussian(float value, float center, float width)
 {
     float x = (value - center) / max(width, 0.0001);
@@ -232,7 +271,6 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     const float glassChromaticAberration = 0.09;
     const float glassAnisotropy = 0.08;
     const float glassTransmission = 1.0;
-    const float glassRoughness = 0.0;
     const float2 local = position.xy - contentRect.xy;
     const float distance = glassDistance(local);
     const float alpha = smoothstep(-1.1, 1.1, distance);
@@ -322,22 +360,58 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
     const float2 samplePosition = requestRect.xy + position.xy
                                   + anisotropicBend + centerBend + pointerFlex;
 
-    // Larger surfaces behave like a thicker regular material: preserve broad
-    // color and motion from the environment while scattering fine text and
-    // texture that would otherwise compete with foreground controls.
-    const float scatter = lerp(0.45, 3.35, panel) * glassRoughness;
-    const float2 anisotropicScatter = float2(
-        scatter * (1.0 + glassAnisotropy),
-        scatter * (1.0 - glassAnisotropy));
+    // Reduce the live capture into a persistent mip chain before this optical
+    // draw. Sampling the reduced image removes high-frequency detail as a
+    // continuous field; a sparse wide kernel leaves visible stippling because
+    // it averages isolated sharp pixels. The nine samples below shape the
+    // already-smooth mip into a broad Gaussian-like diffusion while preserving
+    // the single optical material pass and live refraction.
+    const float blurStrength = saturate(finishData.y);
+    // Tie the radius to the physical lens band so the blur scales with DPI,
+    // while panel keeps compact and expanded surfaces optically consistent.
+    const float dpiScale = shapeData.w / lerp(9.0, 19.0, panel);
+    const float blurMix = lerp(0.90, 1.0, panel) * blurStrength;
+    const float blurRadius = lerp(9.0, 32.0, panel) * dpiScale;
+    const float blurMipLevel = clamp(log2(max(blurRadius, 2.0)) + 0.65,
+                                     1.75,
+                                     7.0);
+    const float centerMipLevel = min(7.0, blurMipLevel + 0.40);
+    const float crossMipLevel = min(7.0, blurMipLevel + 0.18);
+    const float2 blurStep = float2(blurRadius * 0.38, blurRadius * 0.38);
     float3 clearColor = sampleBackdrop(samplePosition);
-    float3 softened = clearColor * 0.36;
-    softened += sampleBackdrop(samplePosition + float2(anisotropicScatter.x, 0.0)) * 0.16;
-    softened += sampleBackdrop(samplePosition - float2(anisotropicScatter.x, 0.0)) * 0.16;
-    softened += sampleBackdrop(samplePosition + float2(0.0, anisotropicScatter.y)) * 0.16;
-    softened += sampleBackdrop(samplePosition - float2(0.0, anisotropicScatter.y)) * 0.16;
+    float3 softened = clearColor;
+    if (blurStrength > 0.001) {
+        softened = sampleBlurredBackdrop(samplePosition, centerMipLevel) * 0.40;
+        softened += sampleBlurredBackdrop(samplePosition
+                                           + float2(blurStep.x, 0.0),
+                                           crossMipLevel) * 0.09;
+        softened += sampleBlurredBackdrop(samplePosition
+                                           - float2(blurStep.x, 0.0),
+                                           crossMipLevel) * 0.09;
+        softened += sampleBlurredBackdrop(samplePosition
+                                           + float2(0.0, blurStep.y),
+                                           crossMipLevel) * 0.09;
+        softened += sampleBlurredBackdrop(samplePosition
+                                           - float2(0.0, blurStep.y),
+                                           crossMipLevel) * 0.09;
+        softened += sampleBlurredBackdrop(samplePosition + blurStep,
+                                           blurMipLevel) * 0.06;
+        softened += sampleBlurredBackdrop(samplePosition - blurStep,
+                                           blurMipLevel) * 0.06;
+        softened += sampleBlurredBackdrop(samplePosition
+                                           + float2(blurStep.x, -blurStep.y),
+                                           blurMipLevel) * 0.06;
+        softened += sampleBlurredBackdrop(samplePosition
+                                           + float2(-blurStep.x, blurStep.y),
+                                           blurMipLevel) * 0.06;
+        const float softenedLuminance = dot(softened,
+                                             float3(0.2126, 0.7152, 0.0722));
+        softened = lerp(softenedLuminance.xxx,
+                        softened,
+                        lerp(1.14, 1.20, panel));
+    }
     const float detailEnergy = length(clearColor - softened);
-    const float roughnessMix = lerp(0.025, 0.42, panel) * glassRoughness;
-    float3 color = lerp(clearColor, softened, roughnessMix);
+    float3 color = lerp(clearColor, softened, blurMix);
     color = lerp(float3(0.010, 0.014, 0.022),
                  color,
                  glassTransmission);
@@ -350,22 +424,35 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
                              * (1.0 + outerMeniscus * 0.12
                                 + cornerConvergence * 0.30)
                              * intensity;
-    const float3 redSample = sampleBackdrop(samplePosition + inward * dispersion);
-    const float3 blueSample = sampleBackdrop(samplePosition - inward * dispersion);
+    float3 redSample = sampleBackdrop(samplePosition + inward * dispersion);
+    float3 blueSample = sampleBackdrop(samplePosition - inward * dispersion);
+    if (blurStrength > 0.001) {
+        const float edgeBlurMix = blurStrength;
+        const float edgeMipLevel = blurMipLevel;
+        redSample = lerp(redSample,
+                         sampleBlurredBackdrop(samplePosition
+                                                + inward * dispersion,
+                                               edgeMipLevel),
+                         edgeBlurMix);
+        blueSample = lerp(blueSample,
+                          sampleBlurredBackdrop(samplePosition
+                                                 - inward * dispersion,
+                                                edgeMipLevel),
+                          edgeBlurMix);
+    }
     color.r = lerp(color.r, redSample.r, chromaticBand * 0.22);
     color.b = lerp(color.b, blueSample.b, chromaticBand * 0.22);
 
     // Keep the compact island transparent. Larger information surfaces retain
-    // only a faint adaptive veil; text contrast is handled independently so
-    // the refracted environment remains crystal clear.
+    // a faint adaptive veil after the background has been softened.
     const float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
     const float brightBackdrop = smoothstep(0.48, 0.88, luminance);
     const float busyBackdrop = smoothstep(0.035, 0.19, detailEnergy);
     const float compactVeil = saturate(brightBackdrop * 0.17
                                        + busyBackdrop * 0.06);
-    const float panelVeil = saturate(0.08
-                                     + brightBackdrop * 0.08
-                                     + busyBackdrop * 0.03);
+    const float panelVeil = saturate(0.27
+                                     + brightBackdrop * 0.10
+                                     + busyBackdrop * 0.04);
     const float legibilityVeil = lerp(compactVeil, panelVeil, panel);
     color = lerp(color, float3(0.010, 0.014, 0.022), legibilityVeil);
 
@@ -468,9 +555,9 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
             return false;
         }
         if (FAILED(device->CreateVertexShader(vertexBytecode->GetBufferPointer(),
-                                                  vertexBytecode->GetBufferSize(),
-                                                  nullptr,
-                                                  &m_vertexShader))
+                                               vertexBytecode->GetBufferSize(),
+                                               nullptr,
+                                               &m_vertexShader))
             || FAILED(device->CreatePixelShader(pixelBytecode->GetBufferPointer(),
                                                  pixelBytecode->GetBufferSize(),
                                                  nullptr,
@@ -574,6 +661,7 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
         ID3D11ShaderResourceView *backgroundView,
         const QRect &backgroundBounds,
         ID3D11ShaderResourceView *desktopView,
+        ID3D11ShaderResourceView *blurredDesktopView,
         const QRect &requestedRect,
         const QRect &outputRect,
         const NativeLiquidGlassOptics &optics,
@@ -641,7 +729,7 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
             {float(optics.pointer.x()), float(optics.pointer.y()),
              optics.pointerActive ? 1.0f : 0.0f,
              optics.reducedMotion ? 1.0f : 0.0f},
-            {optics.edgeStrength, 0.0f, 0.0f, 0.0f}
+            {optics.edgeStrength, optics.blurStrength, 0.0f, 0.0f}
         };
         D3D11_MAPPED_SUBRESOURCE mappedConstants{};
         if (FAILED(context->Map(constantBuffer,
@@ -662,13 +750,17 @@ float4 main(float4 position : SV_POSITION) : SV_TARGET
             LONG(contentLocal.right() + 1),
             LONG(contentLocal.bottom() + 1)};
         context->RSSetScissorRects(1, &scissor);
-        ID3D11ShaderResourceView *views[2] = {backgroundView, desktopView};
+        ID3D11ShaderResourceView *views[3] = {
+            backgroundView,
+            desktopView,
+            blurredDesktopView ? blurredDesktopView : desktopView
+        };
         ID3D11SamplerState *samplers[1] = {m_sampler.Get()};
-        context->PSSetShaderResources(0, 2, views);
+        context->PSSetShaderResources(0, 3, views);
         context->PSSetSamplers(0, 1, samplers);
         context->Draw(3, 0);
-        ID3D11ShaderResourceView *noViews[2] = {nullptr, nullptr};
-        context->PSSetShaderResources(0, 2, noViews);
+        ID3D11ShaderResourceView *noViews[3] = {nullptr, nullptr, nullptr};
+        context->PSSetShaderResources(0, 3, noViews);
         const quint64 producerFenceValue = buffer.nextFenceValue++;
         const quint64 consumerFenceValue = buffer.nextFenceValue++;
         if (FAILED(m_context4->Signal(buffer.fence.Get(), producerFenceValue))) {
@@ -1130,6 +1222,10 @@ public:
         m_winrtDevice = nullptr;
         m_latestFrame = nullptr;
         m_latestCaptureView.Reset();
+        m_latestBlurredCaptureView.Reset();
+        m_blurredCaptureView.Reset();
+        m_blurredCaptureTexture.Reset();
+        m_blurredCaptureSize = {};
         m_latestSourceBounds = {};
         m_wallpaperView.Reset();
         m_wallpaperTexture.Reset();
@@ -1247,6 +1343,13 @@ public:
                 frame.Close();
                 return output;
             }
+            ID3D11ShaderResourceView *blurredSourceView = sourceView;
+            if (geometry.optics.blurStrength > 0.001f) {
+                if (ID3D11ShaderResourceView *generatedView =
+                        blurredCaptureViewFor(sourceTexture.Get())) {
+                    blurredSourceView = generatedView;
+                }
+            }
 
             const QRect sourceBounds = captureBoundsFor(m_targetWindow, contentSize);
             if (sourceBounds.isEmpty()) {
@@ -1259,12 +1362,17 @@ public:
             }
             m_latestFrame = std::move(frame);
             m_latestCaptureView = sourceView;
+            m_latestBlurredCaptureView = blurredSourceView;
             m_latestSourceBounds = sourceBounds;
             output = renderLatest(geometry);
             if (sizeChanged && contentSize.width() > 0 && contentSize.height() > 0) {
                 m_latestFrame.Close();
                 m_latestFrame = nullptr;
                 m_latestCaptureView.Reset();
+                m_latestBlurredCaptureView.Reset();
+                m_blurredCaptureView.Reset();
+                m_blurredCaptureTexture.Reset();
+                m_blurredCaptureSize = {};
                 m_latestSourceBounds = {};
                 for (CaptureViewEntry &entry : m_captureViews) {
                     entry = {};
@@ -1305,6 +1413,7 @@ public:
                                                      m_wallpaperView.Get(),
                                                      m_wallpaperBounds,
                                                      m_latestCaptureView.Get(),
+                                                     m_latestBlurredCaptureView.Get(),
                                                      geometry.surface,
                                                      m_latestSourceBounds,
                                                      geometry.optics,
@@ -1333,11 +1442,13 @@ public:
                 timerOptics.lensBand = qMax(6.0f, diameter * 0.26f);
                 timerOptics.thickness = 0.62f;
                 timerOptics.intensity = 0.92f;
+                timerOptics.blurStrength = geometry.optics.blurStrength;
                 timerOptics.pill = true;
                 output.timerTexture = m_timerPool->write(m_context.Get(),
                                                           m_wallpaperView.Get(),
                                                           m_wallpaperBounds,
                                                           m_latestCaptureView.Get(),
+                                                          m_latestBlurredCaptureView.Get(),
                                                           geometry.timer,
                                                           m_latestSourceBounds,
                                                           timerOptics,
@@ -1358,6 +1469,63 @@ private:
         ComPtr<ID3D11Texture2D> texture;
         ComPtr<ID3D11ShaderResourceView> view;
     };
+
+    ID3D11ShaderResourceView *blurredCaptureViewFor(ID3D11Texture2D *source)
+    {
+        if (!source || !m_device || !m_context) {
+            return nullptr;
+        }
+
+        D3D11_TEXTURE2D_DESC sourceDescription{};
+        source->GetDesc(&sourceDescription);
+        const QSize sourceSize(int(sourceDescription.Width),
+                               int(sourceDescription.Height));
+        if (sourceSize.isEmpty()) {
+            return nullptr;
+        }
+
+        if (!m_blurredCaptureTexture || !m_blurredCaptureView
+            || m_blurredCaptureSize != sourceSize) {
+            m_blurredCaptureView.Reset();
+            m_blurredCaptureTexture.Reset();
+            m_blurredCaptureSize = {};
+
+            D3D11_TEXTURE2D_DESC description{};
+            description.Width = sourceDescription.Width;
+            description.Height = sourceDescription.Height;
+            description.MipLevels = 0;
+            description.ArraySize = 1;
+            description.Format = sourceDescription.Format;
+            description.SampleDesc.Count = 1;
+            description.Usage = D3D11_USAGE_DEFAULT;
+            description.BindFlags = D3D11_BIND_SHADER_RESOURCE
+                | D3D11_BIND_RENDER_TARGET;
+            description.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+            if (FAILED(m_device->CreateTexture2D(&description,
+                                                  nullptr,
+                                                  &m_blurredCaptureTexture))
+                || FAILED(m_device->CreateShaderResourceView(
+                    m_blurredCaptureTexture.Get(),
+                    nullptr,
+                    &m_blurredCaptureView))) {
+                m_blurredCaptureView.Reset();
+                m_blurredCaptureTexture.Reset();
+                return nullptr;
+            }
+            m_blurredCaptureSize = sourceSize;
+        }
+
+        m_context->CopySubresourceRegion(m_blurredCaptureTexture.Get(),
+                                         0,
+                                         0,
+                                         0,
+                                         0,
+                                         source,
+                                         0,
+                                         nullptr);
+        m_context->GenerateMips(m_blurredCaptureView.Get());
+        return m_blurredCaptureView.Get();
+    }
 
     ID3D11ShaderResourceView *sourceViewFor(ID3D11Texture2D *texture)
     {
@@ -1428,17 +1596,16 @@ private:
         D3D11_TEXTURE2D_DESC description{};
         description.Width = UINT(wallpaper.width());
         description.Height = UINT(wallpaper.height());
-        description.MipLevels = 1;
+        description.MipLevels = 0;
         description.ArraySize = 1;
         description.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         description.SampleDesc.Count = 1;
-        description.Usage = D3D11_USAGE_IMMUTABLE;
-        description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-        D3D11_SUBRESOURCE_DATA initialData{};
-        initialData.pSysMem = wallpaper.constBits();
-        initialData.SysMemPitch = UINT(wallpaper.bytesPerLine());
+        description.Usage = D3D11_USAGE_DEFAULT;
+        description.BindFlags = D3D11_BIND_SHADER_RESOURCE
+            | D3D11_BIND_RENDER_TARGET;
+        description.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
         if (FAILED(m_device->CreateTexture2D(&description,
-                                             &initialData,
+                                             nullptr,
                                              &m_wallpaperTexture))
             || FAILED(m_device->CreateShaderResourceView(m_wallpaperTexture.Get(),
                                                           nullptr,
@@ -1447,6 +1614,13 @@ private:
             m_wallpaperView.Reset();
             return false;
         }
+        m_context->UpdateSubresource(m_wallpaperTexture.Get(),
+                                     0,
+                                     nullptr,
+                                     wallpaper.constBits(),
+                                     UINT(wallpaper.bytesPerLine()),
+                                     0);
+        m_context->GenerateMips(m_wallpaperView.Get());
         m_wallpaperBounds = QRect(info.rcMonitor.left,
                                   info.rcMonitor.top,
                                   monitorSize.width(),
@@ -1537,6 +1711,9 @@ private:
     ComPtr<ID3D11Texture2D> m_wallpaperTexture;
     ComPtr<ID3D11ShaderResourceView> m_wallpaperView;
     ComPtr<ID3D11ShaderResourceView> m_latestCaptureView;
+    ComPtr<ID3D11Texture2D> m_blurredCaptureTexture;
+    ComPtr<ID3D11ShaderResourceView> m_blurredCaptureView;
+    ComPtr<ID3D11ShaderResourceView> m_latestBlurredCaptureView;
     std::array<CaptureViewEntry, 4> m_captureViews;
     std::shared_ptr<SharedSurfacePool> m_surfacePool;
     std::shared_ptr<SharedSurfacePool> m_timerPool;
@@ -1556,6 +1733,7 @@ private:
     QSize m_surfacePoolSize;
     QSize m_timerPoolSize;
     QSize m_lastSize;
+    QSize m_blurredCaptureSize;
     HWND m_targetWindow = nullptr;
     bool m_wallpaperOnly = false;
     bool m_standaloneWallpaper = false;
@@ -1681,6 +1859,7 @@ private:
             && qFuzzyCompare(left.optics.thickness, right.optics.thickness)
             && qFuzzyCompare(left.optics.intensity, right.optics.intensity)
             && qFuzzyCompare(left.optics.edgeStrength, right.optics.edgeStrength)
+            && qFuzzyCompare(left.optics.blurStrength, right.optics.blurStrength)
             && left.optics.pointer == right.optics.pointer
             && left.optics.pointerActive == right.optics.pointerActive
             && left.optics.reducedMotion == right.optics.reducedMotion
