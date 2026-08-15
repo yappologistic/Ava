@@ -17,6 +17,18 @@ class IslandController final : public QObject
     Q_PROPERTY(bool liquidGlassEnabled READ liquidGlassEnabled WRITE setLiquidGlassEnabled NOTIFY liquidGlassEnabledChanged)
     Q_PROPERTY(bool liquidGlassBlurred READ liquidGlassBlurred WRITE setLiquidGlassBlurred NOTIFY liquidGlassBlurredChanged)
     Q_PROPERTY(bool monitorEnabled READ monitorEnabled WRITE setMonitorEnabled NOTIFY monitorEnabledChanged)
+    Q_PROPERTY(bool settingsOpen READ settingsOpen WRITE setSettingsOpen NOTIFY settingsOpenChanged)
+    Q_PROPERTY(int compactWidth READ compactWidth WRITE setCompactWidth NOTIFY compactWidthChanged)
+    Q_PROPERTY(bool mediaArtworkAccentEnabled READ mediaArtworkAccentEnabled WRITE setMediaArtworkAccentEnabled NOTIFY mediaArtworkAccentEnabledChanged)
+    Q_PROPERTY(bool audioPulseEnabled READ audioPulseEnabled WRITE setAudioPulseEnabled NOTIFY audioPulseEnabledChanged)
+    Q_PROPERTY(bool mediaPeekEnabled READ mediaPeekEnabled WRITE setMediaPeekEnabled NOTIFY mediaPeekEnabledChanged)
+    Q_PROPERTY(bool timerSatelliteEnabled READ timerSatelliteEnabled WRITE setTimerSatelliteEnabled NOTIFY timerSatelliteEnabledChanged)
+    Q_PROPERTY(QString weekStartMode READ weekStartMode WRITE setWeekStartMode NOTIFY weekStartModeChanged)
+    Q_PROPERTY(int calendarWeekStartDay READ calendarWeekStartDay NOTIFY weekStartModeChanged)
+    Q_PROPERTY(bool respectFullscreenApps READ respectFullscreenApps WRITE setRespectFullscreenApps NOTIFY respectFullscreenAppsChanged)
+    Q_PROPERTY(QString motionMode READ motionMode WRITE setMotionMode NOTIFY motionModeChanged)
+    Q_PROPERTY(int hoverOpenDelay READ hoverOpenDelay WRITE setHoverOpenDelay NOTIFY hoverOpenDelayChanged)
+    Q_PROPERTY(int leaveCloseDelay READ leaveCloseDelay WRITE setLeaveCloseDelay NOTIFY leaveCloseDelayChanged)
     Q_PROPERTY(bool reducedMotion READ reducedMotion NOTIFY reducedMotionChanged)
 
     Q_PROPERTY(QString timeText READ timeText NOTIFY clockChanged)
@@ -84,7 +96,34 @@ public:
     bool liquidGlassEnabled() const { return m_liquidGlassEnabled; }
     bool liquidGlassBlurred() const { return m_liquidGlassBlurred; }
     bool monitorEnabled() const { return m_monitorEnabled; }
+    bool settingsOpen() const { return m_settingsOpen; }
+    int compactWidth() const { return m_compactWidth; }
+    bool mediaArtworkAccentEnabled() const { return m_mediaArtworkAccentEnabled; }
+    bool audioPulseEnabled() const { return m_audioPulseEnabled; }
+    bool mediaPeekEnabled() const { return m_mediaPeekEnabled; }
+    bool timerSatelliteEnabled() const { return m_timerSatelliteEnabled; }
+    QString weekStartMode() const { return m_weekStartMode; }
+    int calendarWeekStartDay() const;
+    bool respectFullscreenApps() const { return m_respectFullscreenApps; }
+    QString motionMode() const { return m_motionMode; }
+    int hoverOpenDelay() const { return m_hoverOpenDelay; }
+    int leaveCloseDelay() const { return m_leaveCloseDelay; }
     bool reducedMotion() const { return m_reducedMotion; }
+#ifdef AVA_TESTING
+    bool audioMeterPollingForTest() const { return m_audioMeterTimer.isActive(); }
+    bool foregroundFullscreenPollingForTest() const { return m_foregroundTimer.isActive(); }
+    int foregroundFullscreenPollIntervalForTest() const { return m_foregroundTimer.interval(); }
+    static bool fullscreenGeometryForTest(int windowLeft,
+                                          int windowTop,
+                                          int windowRight,
+                                          int windowBottom,
+                                          int monitorLeft,
+                                          int monitorTop,
+                                          int monitorRight,
+                                          int monitorBottom);
+    void setMediaStateForTest(bool available, bool playing, bool muted);
+    void setForegroundFullscreenForTest(bool fullscreen);
+#endif
 
     QString timeText() const { return m_timeText; }
     QString compactDateText() const { return m_compactDateText; }
@@ -154,6 +193,19 @@ public slots:
     void toggleLiquidGlassBlurred();
     void setMonitorEnabled(bool enabled);
     void toggleMonitorEnabled();
+    void setSettingsOpen(bool open);
+    void openSettings();
+    void closeSettings();
+    void setCompactWidth(int width);
+    void setMediaArtworkAccentEnabled(bool enabled);
+    void setAudioPulseEnabled(bool enabled);
+    void setMediaPeekEnabled(bool enabled);
+    void setTimerSatelliteEnabled(bool enabled);
+    void setWeekStartMode(const QString &mode);
+    void setRespectFullscreenApps(bool enabled);
+    void setMotionMode(const QString &mode);
+    void setHoverOpenDelay(int milliseconds);
+    void setLeaveCloseDelay(int milliseconds);
     void openMonitorDetails();
     void closeMonitorDetails();
 
@@ -187,6 +239,17 @@ signals:
     void liquidGlassEnabledChanged();
     void liquidGlassBlurredChanged();
     void monitorEnabledChanged();
+    void settingsOpenChanged();
+    void compactWidthChanged();
+    void mediaArtworkAccentEnabledChanged();
+    void audioPulseEnabledChanged();
+    void mediaPeekEnabledChanged();
+    void timerSatelliteEnabledChanged();
+    void weekStartModeChanged();
+    void respectFullscreenAppsChanged();
+    void motionModeChanged();
+    void hoverOpenDelayChanged();
+    void leaveCloseDelayChanged();
     void monitorDetailsChanged();
     void reducedMotionChanged();
     void clockChanged();
@@ -213,10 +276,12 @@ private:
     void updateClock();
     void updateMediaTimeline();
     void syncAudioMeterTimer();
+    void updateReducedMotion();
     void refreshMedia();
     void refreshSystemState();
     void refreshPerformanceState();
     void refreshForegroundFullscreen();
+    void updateForegroundFullscreen(bool fullscreen);
     QString formatDuration(qint64 totalMilliseconds) const;
     QString formatTimerDuration(qint64 totalMilliseconds) const;
     void finishTimer();
@@ -226,6 +291,7 @@ private:
     QTimer m_countdownTimer;
     QTimer m_audioMeterTimer;
     QTimer m_alarmTimer;
+    QTimer m_foregroundTimer;
     int m_slowRefreshCounter = 0;
     int m_mediaFallbackCounter = 0;
 
@@ -235,6 +301,18 @@ private:
     bool m_liquidGlassEnabled = false;
     bool m_liquidGlassBlurred = true;
     bool m_monitorEnabled = false;
+    bool m_settingsOpen = false;
+    int m_compactWidth = 170;
+    bool m_mediaArtworkAccentEnabled = true;
+    bool m_audioPulseEnabled = true;
+    bool m_mediaPeekEnabled = true;
+    bool m_timerSatelliteEnabled = true;
+    QString m_weekStartMode = QStringLiteral("system");
+    bool m_respectFullscreenApps = true;
+    QString m_motionMode = QStringLiteral("system");
+    int m_hoverOpenDelay = 280;
+    int m_leaveCloseDelay = 560;
+    bool m_systemReducedMotion = false;
     bool m_monitorDetailsOpen = false;
     bool m_reducedMotion = false;
 

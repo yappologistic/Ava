@@ -120,6 +120,7 @@ private:
     QElapsedTimer m_animationClock;
     QElapsedTimer m_focusClock;
     bool m_enabled = false;
+    bool m_shuttingDown = false;
     bool m_adjusting = false;
     int m_tiledWindowCount = 0;
     QString m_interactionKind;

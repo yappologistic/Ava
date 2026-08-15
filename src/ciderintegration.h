@@ -89,6 +89,9 @@ public:
                        const QString &artist, qint64 positionMilliseconds,
                        qint64 durationMilliseconds, bool playing = true);
   void setVisualTestState(const QString &state);
+#ifdef AVA_TESTING
+  bool audioMeterActiveForTest();
+#endif
 
   static QVector<LyricLine> parseTtml(const QByteArray &ttml);
 

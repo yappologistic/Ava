@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QImage>
+#include <QLocale>
 #include <QPointer>
 #include <QSaveFile>
 #include <QSettings>
@@ -35,6 +36,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <dwmapi.h>
 #include <audioclient.h>
 #include <endpointvolume.h>
 #include <mmdeviceapi.h>
@@ -52,6 +54,23 @@
 #endif
 
 namespace {
+
+constexpr int fullscreenBoundsTolerance = 2;
+
+bool rectangleCoversMonitor(int windowLeft,
+                            int windowTop,
+                            int windowRight,
+                            int windowBottom,
+                            int monitorLeft,
+                            int monitorTop,
+                            int monitorRight,
+                            int monitorBottom)
+{
+    return windowLeft <= monitorLeft + fullscreenBoundsTolerance
+        && windowTop <= monitorTop + fullscreenBoundsTolerance
+        && windowRight >= monitorRight - fullscreenBoundsTolerance
+        && windowBottom >= monitorBottom - fullscreenBoundsTolerance;
+}
 
 struct WallpaperDefinition {
     const char *resourcePath;
@@ -103,6 +122,82 @@ QString materializeWallpaper(int index)
 }
 
 #ifdef Q_OS_WIN
+bool isDesktopShellWindow(HWND window)
+{
+    wchar_t className[128]{};
+    const int length = GetClassNameW(window,
+                                     className,
+                                     static_cast<int>(std::size(className)));
+    const QString windowClass = length > 0
+        ? QString::fromWCharArray(className, length) : QString();
+    return windowClass == QStringLiteral("Shell_TrayWnd")
+        || windowClass == QStringLiteral("Progman")
+        || windowClass == QStringLiteral("WorkerW");
+}
+
+bool isCloakedWindow(HWND window)
+{
+    DWORD cloaked = 0;
+    return SUCCEEDED(DwmGetWindowAttribute(window,
+                                           DWMWA_CLOAKED,
+                                           &cloaked,
+                                           sizeof(cloaked)))
+        && cloaked != 0;
+}
+
+bool windowCoversItsMonitor(HWND window)
+{
+    if (!window || !IsWindowVisible(window) || IsIconic(window)
+        || isDesktopShellWindow(window) || isCloakedWindow(window)) {
+        return false;
+    }
+
+    RECT frame{};
+    if (FAILED(DwmGetWindowAttribute(window,
+                                     DWMWA_EXTENDED_FRAME_BOUNDS,
+                                     &frame,
+                                     sizeof(frame)))
+        && !GetWindowRect(window, &frame)) {
+        return false;
+    }
+
+    const HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    return monitor && GetMonitorInfoW(monitor, &monitorInfo)
+        && rectangleCoversMonitor(frame.left,
+                                  frame.top,
+                                  frame.right,
+                                  frame.bottom,
+                                  monitorInfo.rcMonitor.left,
+                                  monitorInfo.rcMonitor.top,
+                                  monitorInfo.rcMonitor.right,
+                                  monitorInfo.rcMonitor.bottom);
+}
+
+bool currentForegroundIsFullscreen()
+{
+    HWND foreground = GetForegroundWindow();
+    if (foreground) {
+        if (HWND root = GetAncestor(foreground, GA_ROOT)) {
+            foreground = root;
+        }
+
+        DWORD processId = 0;
+        GetWindowThreadProcessId(foreground, &processId);
+        if (processId == GetCurrentProcessId()) {
+            return false;
+        }
+        if (windowCoversItsMonitor(foreground)) {
+            return true;
+        }
+    }
+
+    QUERY_USER_NOTIFICATION_STATE notificationState = QUNS_ACCEPTS_NOTIFICATIONS;
+    return SUCCEEDED(SHQueryUserNotificationState(&notificationState))
+        && notificationState == QUNS_RUNNING_D3D_FULL_SCREEN;
+}
+
 bool applyDesktopWallpaper(const QString &path)
 {
     Microsoft::WRL::ComPtr<IDesktopWallpaper> desktopWallpaper;
@@ -684,21 +779,52 @@ struct IslandController::PlatformState
 IslandController::IslandController(QObject *parent)
     : QObject(parent), m_platform(std::make_shared<PlatformState>())
 {
-    m_pillMode = QSettings().value(QStringLiteral("appearance/pillMode"), false).toBool();
-    m_liquidGlassEnabled = QSettings().value(
+    QSettings settings;
+    m_pillMode = settings.value(QStringLiteral("appearance/pillMode"), false).toBool();
+    m_liquidGlassEnabled = settings.value(
         QStringLiteral("appearance/liquidGlassEnabled"), false).toBool();
-    m_liquidGlassBlurred = QSettings().value(
+    m_liquidGlassBlurred = settings.value(
         QStringLiteral("appearance/liquidGlassBlurred"), true).toBool();
-    m_monitorEnabled = QSettings().value(QStringLiteral("appearance/monitorEnabled"), false).toBool();
+    m_monitorEnabled = settings.value(
+        QStringLiteral("appearance/monitorEnabled"), false).toBool();
+    m_compactWidth = qBound(
+        150, settings.value(QStringLiteral("appearance/compactWidth"), 170).toInt(), 210);
+    m_mediaArtworkAccentEnabled = settings.value(
+        QStringLiteral("media/artworkAccentEnabled"), true).toBool();
+    m_audioPulseEnabled = settings.value(
+        QStringLiteral("media/audioPulseEnabled"), true).toBool();
+    m_mediaPeekEnabled = settings.value(
+        QStringLiteral("media/automaticPeekEnabled"), true).toBool();
+    m_timerSatelliteEnabled = settings.value(
+        QStringLiteral("utilities/timerSatelliteEnabled"), true).toBool();
+    m_weekStartMode = settings.value(
+        QStringLiteral("calendar/weekStart"), QStringLiteral("system")).toString();
+    if (m_weekStartMode != QStringLiteral("monday")
+        && m_weekStartMode != QStringLiteral("sunday")) {
+        m_weekStartMode = QStringLiteral("system");
+    }
+    m_respectFullscreenApps = settings.value(
+        QStringLiteral("windows/respectFullscreenApps"), true).toBool();
+    m_motionMode = settings.value(
+        QStringLiteral("motion/mode"), QStringLiteral("system")).toString();
+    if (m_motionMode != QStringLiteral("reduced")
+        && m_motionMode != QStringLiteral("full")) {
+        m_motionMode = QStringLiteral("system");
+    }
+    m_hoverOpenDelay = qBound(
+        120, settings.value(QStringLiteral("motion/hoverOpenDelay"), 280).toInt(), 480);
+    m_leaveCloseDelay = qBound(
+        240, settings.value(QStringLiteral("motion/leaveCloseDelay"), 560).toInt(), 900);
     m_wallpaperIndex = qBound(0,
-                              QSettings().value(QStringLiteral("wallpaper/index"), 0).toInt(),
+                              settings.value(QStringLiteral("wallpaper/index"), 0).toInt(),
                               static_cast<int>(wallpaperDefinitions.size()) - 1);
 #ifdef Q_OS_WIN
     BOOL animationsEnabled = TRUE;
     if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animationsEnabled, 0)) {
-        m_reducedMotion = animationsEnabled == FALSE;
+        m_systemReducedMotion = animationsEnabled == FALSE;
     }
 #endif
+    updateReducedMotion();
 
     connect(&m_timer, &QTimer::timeout, this, &IslandController::tick);
     m_countdownTimer.setTimerType(Qt::PreciseTimer);
@@ -710,10 +836,20 @@ IslandController::IslandController(QObject *parent)
     m_alarmTimer.setTimerType(Qt::CoarseTimer);
     m_alarmTimer.setInterval(1100);
     connect(&m_alarmTimer, &QTimer::timeout, this, &IslandController::soundTimerAlert);
+    m_foregroundTimer.setTimerType(Qt::CoarseTimer);
+    m_foregroundTimer.setInterval(250);
+    connect(&m_foregroundTimer,
+            &QTimer::timeout,
+            this,
+            &IslandController::refreshForegroundFullscreen);
     updateClock();
     refreshSystemState();
     QTimer::singleShot(0, this, &IslandController::refreshMedia);
     m_timer.start(1000);
+    if (m_respectFullscreenApps) {
+        refreshForegroundFullscreen();
+        m_foregroundTimer.start();
+    }
     if (m_monitorEnabled) {
         QTimer::singleShot(0, this, &IslandController::refreshPerformanceState);
     }
@@ -850,6 +986,168 @@ void IslandController::setMonitorEnabled(bool enabled)
 void IslandController::toggleMonitorEnabled()
 {
     setMonitorEnabled(!m_monitorEnabled);
+}
+
+void IslandController::setSettingsOpen(bool open)
+{
+    if (m_settingsOpen == open) {
+        return;
+    }
+    m_settingsOpen = open;
+    emit settingsOpenChanged();
+}
+
+void IslandController::openSettings()
+{
+    setSettingsOpen(true);
+}
+
+void IslandController::closeSettings()
+{
+    setSettingsOpen(false);
+}
+
+void IslandController::setCompactWidth(int width)
+{
+    const int bounded = qBound(150, width, 210);
+    if (m_compactWidth == bounded) {
+        return;
+    }
+    m_compactWidth = bounded;
+    QSettings().setValue(QStringLiteral("appearance/compactWidth"), bounded);
+    emit compactWidthChanged();
+}
+
+void IslandController::setMediaArtworkAccentEnabled(bool enabled)
+{
+    if (m_mediaArtworkAccentEnabled == enabled) {
+        return;
+    }
+    m_mediaArtworkAccentEnabled = enabled;
+    QSettings().setValue(QStringLiteral("media/artworkAccentEnabled"), enabled);
+    emit mediaArtworkAccentEnabledChanged();
+}
+
+void IslandController::setAudioPulseEnabled(bool enabled)
+{
+    if (m_audioPulseEnabled == enabled) {
+        return;
+    }
+    m_audioPulseEnabled = enabled;
+    QSettings().setValue(QStringLiteral("media/audioPulseEnabled"), enabled);
+    syncAudioMeterTimer();
+    emit audioPulseEnabledChanged();
+}
+
+void IslandController::setMediaPeekEnabled(bool enabled)
+{
+    if (m_mediaPeekEnabled == enabled) {
+        return;
+    }
+    m_mediaPeekEnabled = enabled;
+    QSettings().setValue(QStringLiteral("media/automaticPeekEnabled"), enabled);
+    emit mediaPeekEnabledChanged();
+}
+
+void IslandController::setTimerSatelliteEnabled(bool enabled)
+{
+    if (m_timerSatelliteEnabled == enabled) {
+        return;
+    }
+    m_timerSatelliteEnabled = enabled;
+    QSettings().setValue(QStringLiteral("utilities/timerSatelliteEnabled"), enabled);
+    emit timerSatelliteEnabledChanged();
+}
+
+void IslandController::setWeekStartMode(const QString &mode)
+{
+    const QString normalized = mode == QStringLiteral("monday")
+            || mode == QStringLiteral("sunday")
+        ? mode : QStringLiteral("system");
+    if (m_weekStartMode == normalized) {
+        return;
+    }
+    m_weekStartMode = normalized;
+    QSettings().setValue(QStringLiteral("calendar/weekStart"), normalized);
+    emit weekStartModeChanged();
+}
+
+int IslandController::calendarWeekStartDay() const
+{
+    if (m_weekStartMode == QStringLiteral("monday")) {
+        return 1;
+    }
+    if (m_weekStartMode == QStringLiteral("sunday")) {
+        return 0;
+    }
+    return static_cast<int>(QLocale().firstDayOfWeek()) % 7;
+}
+
+void IslandController::setRespectFullscreenApps(bool enabled)
+{
+    if (m_respectFullscreenApps == enabled) {
+        return;
+    }
+    m_respectFullscreenApps = enabled;
+    QSettings().setValue(QStringLiteral("windows/respectFullscreenApps"), enabled);
+    emit respectFullscreenAppsChanged();
+    if (enabled) {
+        refreshForegroundFullscreen();
+        m_foregroundTimer.start();
+        if (m_foregroundFullscreen) {
+            setExpanded(false);
+        }
+    } else {
+        m_foregroundTimer.stop();
+        updateForegroundFullscreen(false);
+    }
+}
+
+void IslandController::setMotionMode(const QString &mode)
+{
+    const QString normalized = mode == QStringLiteral("reduced")
+            || mode == QStringLiteral("full")
+        ? mode : QStringLiteral("system");
+    if (m_motionMode == normalized) {
+        return;
+    }
+    m_motionMode = normalized;
+    QSettings().setValue(QStringLiteral("motion/mode"), normalized);
+    emit motionModeChanged();
+    updateReducedMotion();
+}
+
+void IslandController::setHoverOpenDelay(int milliseconds)
+{
+    const int bounded = qBound(120, milliseconds, 480);
+    if (m_hoverOpenDelay == bounded) {
+        return;
+    }
+    m_hoverOpenDelay = bounded;
+    QSettings().setValue(QStringLiteral("motion/hoverOpenDelay"), bounded);
+    emit hoverOpenDelayChanged();
+}
+
+void IslandController::setLeaveCloseDelay(int milliseconds)
+{
+    const int bounded = qBound(240, milliseconds, 900);
+    if (m_leaveCloseDelay == bounded) {
+        return;
+    }
+    m_leaveCloseDelay = bounded;
+    QSettings().setValue(QStringLiteral("motion/leaveCloseDelay"), bounded);
+    emit leaveCloseDelayChanged();
+}
+
+void IslandController::updateReducedMotion()
+{
+    const bool reduced = m_motionMode == QStringLiteral("reduced")
+        || (m_motionMode == QStringLiteral("system") && m_systemReducedMotion);
+    if (m_reducedMotion == reduced) {
+        return;
+    }
+    m_reducedMotion = reduced;
+    emit reducedMotionChanged();
 }
 
 void IslandController::openMonitorDetails()
@@ -1224,7 +1522,6 @@ void IslandController::revealLastDroppedFile()
 void IslandController::tick()
 {
     updateClock();
-    refreshForegroundFullscreen();
 #ifdef Q_OS_WIN
     updateMediaTimeline();
     const int mediaFallbackTicks = m_platform->mediaEventsReady ? 30 : 1;
@@ -1320,34 +1617,47 @@ void IslandController::refreshPerformanceState()
 void IslandController::refreshForegroundFullscreen()
 {
 #ifdef Q_OS_WIN
-    bool fullscreen = false;
-    const HWND foreground = GetForegroundWindow();
-    if (foreground && IsWindowVisible(foreground) && !IsIconic(foreground)) {
-        wchar_t className[128]{};
-        GetClassNameW(foreground, className, static_cast<int>(std::size(className)));
-        const QString windowClass = QString::fromWCharArray(className);
-        if (windowClass != QStringLiteral("Shell_TrayWnd")
-            && windowClass != QStringLiteral("Progman")
-            && windowClass != QStringLiteral("WorkerW")) {
-            RECT frame{};
-            const HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
-            MONITORINFO monitorInfo{};
-            monitorInfo.cbSize = sizeof(monitorInfo);
-            if (GetWindowRect(foreground, &frame) && GetMonitorInfoW(monitor, &monitorInfo)) {
-                constexpr int tolerance = 2;
-                fullscreen = frame.left <= monitorInfo.rcMonitor.left + tolerance
-                    && frame.top <= monitorInfo.rcMonitor.top + tolerance
-                    && frame.right >= monitorInfo.rcMonitor.right - tolerance
-                    && frame.bottom >= monitorInfo.rcMonitor.bottom - tolerance;
-            }
-        }
-    }
-    if (m_foregroundFullscreen != fullscreen) {
-        m_foregroundFullscreen = fullscreen;
-        emit foregroundFullscreenChanged();
-    }
+    updateForegroundFullscreen(currentForegroundIsFullscreen());
 #endif
 }
+
+void IslandController::updateForegroundFullscreen(bool fullscreen)
+{
+    if (m_foregroundFullscreen == fullscreen) {
+        return;
+    }
+    m_foregroundFullscreen = fullscreen;
+    if (fullscreen && m_respectFullscreenApps && !m_timerRinging) {
+        setExpanded(false);
+    }
+    emit foregroundFullscreenChanged();
+}
+
+#ifdef AVA_TESTING
+bool IslandController::fullscreenGeometryForTest(int windowLeft,
+                                                 int windowTop,
+                                                 int windowRight,
+                                                 int windowBottom,
+                                                 int monitorLeft,
+                                                 int monitorTop,
+                                                 int monitorRight,
+                                                 int monitorBottom)
+{
+    return rectangleCoversMonitor(windowLeft,
+                                  windowTop,
+                                  windowRight,
+                                  windowBottom,
+                                  monitorLeft,
+                                  monitorTop,
+                                  monitorRight,
+                                  monitorBottom);
+}
+
+void IslandController::setForegroundFullscreenForTest(bool fullscreen)
+{
+    updateForegroundFullscreen(fullscreen);
+}
+#endif
 
 void IslandController::updateClock()
 {
@@ -1556,7 +1866,8 @@ void IslandController::updateMediaTimeline()
 void IslandController::syncAudioMeterTimer()
 {
 #ifdef Q_OS_WIN
-    const bool shouldRun = m_mediaAvailable && m_mediaPlaying && !m_muted;
+    const bool shouldRun = m_audioPulseEnabled
+        && m_mediaAvailable && m_mediaPlaying && !m_muted;
     if (shouldRun) {
         if (!m_audioMeterTimer.isActive()) {
             m_audioMeterTimer.start();
@@ -1565,6 +1876,9 @@ void IslandController::syncAudioMeterTimer()
     }
 
     m_audioMeterTimer.stop();
+    if (!m_audioPulseEnabled) {
+        m_platform->audioMeter.Reset();
+    }
     const QVariantList silentLevels{0.0, 0.0, 0.0, 0.0, 0.0};
     if (m_audioPeakLevels != silentLevels) {
         m_audioPeakLevels = silentLevels;
@@ -1572,6 +1886,16 @@ void IslandController::syncAudioMeterTimer()
     }
 #endif
 }
+
+#ifdef AVA_TESTING
+void IslandController::setMediaStateForTest(bool available, bool playing, bool muted)
+{
+    m_mediaAvailable = available;
+    m_mediaPlaying = playing;
+    m_muted = muted;
+    syncAudioMeterTimer();
+}
+#endif
 
 void IslandController::refreshMedia()
 {

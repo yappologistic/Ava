@@ -17,6 +17,9 @@ public:
   ~CiderAudioMeter() override;
 
   void setActive(bool active);
+#ifdef AVA_TESTING
+  bool activeForTest();
+#endif
 
 signals:
   void levelChanged(qreal level);

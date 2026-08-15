@@ -8,6 +8,8 @@ reference_frames/
 CMakeUserPresets.json
 *.png
 !docs/ava-hero.png
+!assets/icons/ava-app-icon.png
+!assets/icons/ava-app-icon-light.png
 *.jpg
 *.jpeg
 *.gif

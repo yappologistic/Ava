@@ -1,16 +1,18 @@
 #include <QAbstractNativeEventFilter>
-#include <QGuiApplication>
+#include <QApplication>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFontDatabase>
+#include <QIcon>
 #include <QPainterPath>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QScreen>
+#include <QSettings>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QPointer>
@@ -23,6 +25,7 @@
 #include <cmath>
 
 #include "applauncher.h"
+#include "avatrayicon.h"
 #include "ciderintegration.h"
 #include "codexbridge.h"
 #include "emojipickermodel.h"
@@ -213,11 +216,13 @@ int main(int argc, char *argv[])
     surfaceFormat.setSwapInterval(1);
     QSurfaceFormat::setDefaultFormat(surfaceFormat);
 
-    QGuiApplication app(argc, argv);
+    QApplication app(argc, argv);
+    app.setQuitOnLastWindowClosed(false);
     app.setApplicationName(QStringLiteral("Ava"));
     app.setApplicationDisplayName(QStringLiteral("Ava"));
     app.setOrganizationName(QStringLiteral("Ava"));
     app.setApplicationVersion(QStringLiteral("0.1.0"));
+    app.setWindowIcon(QIcon(QStringLiteral(":/qt/qml/Ava/assets/icons/ava-app-icon.png")));
     const int interFontId = QFontDatabase::addApplicationFont(
         QStringLiteral(":/qt/qml/Ava/assets/fonts/Inter[opsz,wght].ttf"));
     if (interFontId >= 0) {
@@ -247,6 +252,24 @@ int main(int argc, char *argv[])
                                             QStringLiteral("Start with the expanded island."));
     const QCommandLineOption pinnedOption(QStringLiteral("pinned"),
                                           QStringLiteral("Start expanded and pinned."));
+    const QCommandLineOption settingsOption(QStringLiteral("settings"),
+                                            QStringLiteral("Open Ava Settings."));
+    const QCommandLineOption settingsSectionOption(
+        QStringLiteral("settings-section"),
+        QStringLiteral("Open a Settings section for screenshot QA."),
+        QStringLiteral("section"));
+    const QCommandLineOption settingsQueryOption(
+        QStringLiteral("settings-query"),
+        QStringLiteral("Populate Settings search for screenshot QA."),
+        QStringLiteral("query"));
+    const QCommandLineOption qaShellModeOption(
+        QStringLiteral("qa-shell"),
+        QStringLiteral("Override the shell with notch or pill for screenshot QA."),
+        QStringLiteral("mode"));
+    const QCommandLineOption qaAppearanceModeOption(
+        QStringLiteral("qa-appearance"),
+        QStringLiteral("Override appearance with opaque, clear, or blurred for screenshot QA."),
+        QStringLiteral("mode"));
     const QCommandLineOption screenshotOption(
         QStringLiteral("screenshot"),
         QStringLiteral("Save the rendered window to a PNG and exit."),
@@ -326,6 +349,11 @@ int main(int argc, char *argv[])
         QStringLiteral("pid"));
     parser.addOption(expandedOption);
     parser.addOption(pinnedOption);
+    parser.addOption(settingsOption);
+    parser.addOption(settingsSectionOption);
+    parser.addOption(settingsQueryOption);
+    parser.addOption(qaShellModeOption);
+    parser.addOption(qaAppearanceModeOption);
     parser.addOption(screenshotOption);
     parser.addOption(motionReportOption);
     parser.addOption(tilingOption);
@@ -358,6 +386,20 @@ int main(int argc, char *argv[])
     const bool automationMode = qEnvironmentVariableIntValue("AVA_AUTOMATION_MODE") == 1;
 #endif
     const bool liveGlassQa = qEnvironmentVariableIntValue("AVA_LIQUID_GLASS_QA") == 1;
+    const auto qaOptionValue = [&parser, &screenshotOption](
+                                   const QCommandLineOption &option,
+                                   const QStringList &allowed) {
+        if (!parser.isSet(screenshotOption) || !parser.isSet(option)) {
+            return QString();
+        }
+        const QString value = parser.value(option).trimmed().toLower();
+        return allowed.contains(value) ? value : QString();
+    };
+    const QString qaShellMode = qaOptionValue(
+        qaShellModeOption, {QStringLiteral("notch"), QStringLiteral("pill")});
+    const QString qaAppearanceMode = qaOptionValue(
+        qaAppearanceModeOption,
+        {QStringLiteral("opaque"), QStringLiteral("clear"), QStringLiteral("blurred")});
     bool blurStrengthValid = false;
     const double requestedBlurStrength =
         QString::fromUtf8(qgetenv("AVA_LIQUID_GLASS_BLUR_STRENGTH"))
@@ -430,6 +472,12 @@ int main(int argc, char *argv[])
     if (parser.isSet(timerOption)) {
         controller.openTimer();
     }
+    const bool settingsRequested = parser.isSet(settingsOption)
+        || parser.isSet(settingsSectionOption)
+        || parser.isSet(settingsQueryOption);
+    if (settingsRequested) {
+        controller.openSettings();
+    }
     if (parser.isSet(wallpapersOption)) {
         controller.openWallpaperPanel();
     }
@@ -462,6 +510,9 @@ int main(int argc, char *argv[])
         parser.isSet(screenshotOption) || parser.isSet(motionReportOption));
     engine.rootContext()->setContextProperty(QStringLiteral("automationMode"), automationMode);
     engine.rootContext()->setContextProperty(QStringLiteral("liveGlassQa"), liveGlassQa);
+    engine.rootContext()->setContextProperty(QStringLiteral("qaShellMode"), qaShellMode);
+    engine.rootContext()->setContextProperty(QStringLiteral("qaAppearanceMode"),
+                                             qaAppearanceMode);
     engine.rootContext()->setContextProperty(
         QStringLiteral("qaLiquidGlassBlurStrength"), liquidGlassBlurStrength);
     engine.rootContext()->setContextProperty(QStringLiteral("qaUtilityMenu"),
@@ -488,6 +539,27 @@ int main(int argc, char *argv[])
     if (!rootWindow) {
         return -2;
     }
+    auto *settingsWindow = rootObject->findChild<QQuickWindow *>(
+        QStringLiteral("settingsWindow"));
+    if (settingsWindow) {
+        settingsWindow->setPersistentGraphics(true);
+        settingsWindow->setPersistentSceneGraph(true);
+        if (parser.isSet(settingsSectionOption)) {
+            settingsWindow->setProperty("selectedSection",
+                                        parser.value(settingsSectionOption));
+        }
+        if (parser.isSet(settingsQueryOption)) {
+            if (auto *searchField = settingsWindow->findChild<QObject *>(
+                    QStringLiteral("settingsSearch"))) {
+                searchField->setProperty("text", parser.value(settingsQueryOption));
+            }
+        }
+    }
+    AvaTrayIcon trayIcon(&controller,
+                         rootWindow,
+                         !parser.isSet(screenshotOption)
+                             && !parser.isSet(motionReportOption),
+                         &app);
     if (parser.isSet(screenshotOption) &&
         parser.value(ciderOpenOption) == QStringLiteral("recent")) {
         QTimer::singleShot(1000, &cider,
@@ -550,7 +622,10 @@ int main(int argc, char *argv[])
             }
         });
     }
-    if (parser.isSet(tilingOption)) {
+    const bool restoreTiling = !parser.isSet(screenshotOption)
+        && !parser.isSet(motionReportOption)
+        && QSettings().value(QStringLiteral("windows/dwindleEnabled"), false).toBool();
+    if (parser.isSet(tilingOption) || restoreTiling) {
         QTimer::singleShot(300, &tilingManager, [&tilingManager]() {
             tilingManager.setEnabled(true);
         });
@@ -686,11 +761,26 @@ int main(int argc, char *argv[])
     topmostTimer.setInterval(2000);
     QObject::connect(&topmostTimer, &QTimer::timeout, &app, keepTopmost);
     topmostTimer.start();
+    QObject::connect(rootWindow,
+                     &QWindow::visibleChanged,
+                     &app,
+                     [&pointerHitTimer, &topmostTimer, updatePointerPassThrough](bool visible) {
+        if (visible) {
+            pointerHitTimer.start();
+            topmostTimer.start();
+            updatePointerPassThrough();
+        } else {
+            pointerHitTimer.stop();
+            topmostTimer.stop();
+        }
+    });
 #endif
 
     if (parser.isSet(screenshotOption)) {
         const QString screenshotPath = QDir::cleanPath(parser.value(screenshotOption));
-        const int screenshotDelay = parser.isSet(enhancedTabsPreviewOption) ? 2600
+        const bool settingsPreview = settingsRequested;
+        const int screenshotDelay = settingsPreview ? 1000
+                                  : parser.isSet(enhancedTabsPreviewOption) ? 2600
                                   : parser.isSet(launcherOption)
                                       || parser.isSet(emojiOption)
                                       || parser.isSet(monitorDetailsOption)
@@ -703,14 +793,18 @@ int main(int argc, char *argv[])
                            &app,
                            [rootWindow,
                             rootObject,
+                            settingsWindow,
                             enhancedTabsWindow,
                             &enhancedTabsManager,
                             enhancedTabsPreview = parser.isSet(enhancedTabsPreviewOption),
+                            settingsPreview,
                             screenshotPath,
                             &app]() {
             QImage fullImage;
             if (enhancedTabsPreview && enhancedTabsWindow) {
                 fullImage = enhancedTabsWindow->grabWindow();
+            } else if (settingsPreview && settingsWindow) {
+                fullImage = settingsWindow->grabWindow();
             } else if (qEnvironmentVariableIntValue("AVA_COMPOSITE_SCREENSHOT_QA") == 1
                 && rootWindow->screen()) {
                 fullImage = rootWindow->screen()
@@ -723,13 +817,17 @@ int main(int argc, char *argv[])
             } else {
                 fullImage = rootWindow->grabWindow();
             }
-            if (enhancedTabsPreview) {
+            if (enhancedTabsPreview || settingsPreview) {
                 if (fullImage.isNull() || !fullImage.save(screenshotPath)) {
                     app.exit(2);
                     return;
                 }
-                enhancedTabsManager.cancel();
-                QTimer::singleShot(350, &app, &QCoreApplication::quit);
+                if (enhancedTabsPreview) {
+                    enhancedTabsManager.cancel();
+                    QTimer::singleShot(350, &app, &QCoreApplication::quit);
+                } else {
+                    app.quit();
+                }
                 return;
             }
             const qreal scale = qMax<qreal>(1.0, fullImage.devicePixelRatio());
@@ -782,7 +880,13 @@ int main(int argc, char *argv[])
         QTimer::singleShot(1000, &app, [&controller]() {
             controller.setExpanded(false);
         });
-        QTimer::singleShot(2000, &app, [reportFile, reportStream, &app]() {
+        QTimer::singleShot(2000,
+                           &app,
+                           [reportFile, reportStream, rootObject, elapsed, &app]() {
+            *reportStream
+                << elapsed->elapsed() << ','
+                << qRound(rootObject->property("islandVisualWidth").toReal()) << ','
+                << qRound(rootObject->property("islandVisualHeight").toReal()) << '\n';
             reportStream->flush();
             reportFile->close();
             app.quit();

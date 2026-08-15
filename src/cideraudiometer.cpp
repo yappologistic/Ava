@@ -176,6 +176,17 @@ void CiderAudioMeter::setActive(bool active) {
 #endif
 }
 
+#ifdef AVA_TESTING
+bool CiderAudioMeter::activeForTest() {
+#ifdef _WIN32
+  const std::scoped_lock lock(m_mutex);
+  return m_active;
+#else
+  return false;
+#endif
+}
+#endif
+
 #ifdef _WIN32
 void CiderAudioMeter::sampleLoop(std::stop_token stopToken) {
   const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);

@@ -69,13 +69,19 @@ Item {
     readonly property real utilityMenuProgress: Math.max(0, Math.min(1,
         (utilityRevealProgress - 0.08) / 0.92))
     readonly property date currentDate: displayedCalendarDate
-    readonly property int currentDayIndex: 3
+    readonly property int currentDayIndex: (currentDate.getDay()
+                                            - controller.calendarWeekStartDay + 7) % 7
     readonly property int calendarCellWidth: 31
     readonly property int calendarCellGap: 2
     readonly property int calendarSelectionWidth: 29
     readonly property int calendarSelectionHeight: 25
-    readonly property bool calendarUsesMediaAccent: controller.mediaPlaying
+    readonly property bool calendarUsesMediaAccent: controller.mediaArtworkAccentEnabled
+                                                        && controller.mediaPlaying
                                                         && displayedArtworkAccent.length > 0
+    readonly property color mediaVisualAccent: controller.mediaArtworkAccentEnabled
+                                                && displayedArtworkAccent.length > 0
+                                                ? displayedArtworkAccent
+                                                : colors.calendarAccent
     readonly property color calendarActiveAccent: calendarUsesMediaAccent
                                                     ? displayedArtworkAccent
                                                     : colors.calendarAccent
@@ -100,7 +106,8 @@ Item {
         if (!expanded && qaCiderState.length === 0)
             ciderContextMode = 0
         cider.setPanelVisible(expanded)
-        cider.setAudioPulseVisible(expanded && cider.active
+        cider.setAudioPulseVisible(controller.audioPulseEnabled
+                                   && expanded && cider.active
                                    && controller.mediaPlaying)
     }
 
@@ -166,7 +173,7 @@ Item {
                        controller.pillMode ? "Pill Mode" : "Notch Mode", "Monitor",
                        "Liquid Glass",
                        controller.liquidGlassBlurred ? "Blurred Glass" : "Clear Glass",
-                       "Enhanced Alt-Tab"]
+                       "Enhanced Alt-Tab", "Settings"]
         return names[Math.max(0, Math.min(names.length - 1, index))]
     }
 
@@ -191,6 +198,8 @@ Item {
             return controller.liquidGlassEnabled && controller.liquidGlassBlurred
         if (index === 10)
             return enhancedTabsManager.enabled
+        if (index === 11)
+            return controller.settingsOpen
         return false
     }
 
@@ -221,6 +230,8 @@ Item {
             controller.toggleLiquidGlassBlurred()
         else if (index === 10)
             enhancedTabsManager.toggleEnabled()
+        else if (index === 11)
+            controller.openSettings()
     }
 
     function stepUtility(direction) {
@@ -263,14 +274,21 @@ Item {
         mediaMotionReady = true
         cider.setLyricsVisible(cider.active && ciderContextMode === 1)
         cider.setPanelVisible(expanded)
-        cider.setAudioPulseVisible(expanded && cider.active
+        cider.setAudioPulseVisible(controller.audioPulseEnabled
+                                   && expanded && cider.active
                                    && controller.mediaPlaying)
     }
 
     Connections {
         target: controller
+        function onAudioPulseEnabledChanged() {
+            cider.setAudioPulseVisible(controller.audioPulseEnabled
+                                       && root.expanded && cider.active
+                                       && controller.mediaPlaying)
+        }
         function onMediaChanged() {
-            cider.setAudioPulseVisible(root.expanded && cider.active
+            cider.setAudioPulseVisible(controller.audioPulseEnabled
+                                       && root.expanded && cider.active
                                        && controller.mediaPlaying)
             const accentChanged = root.observedArtworkAccent !== controller.mediaArtworkAccent
             const artworkChanged = controller.mediaArtworkUrl !== root.displayedArtwork.toString()
@@ -365,7 +383,8 @@ Item {
                 root.ciderContextMode = 0
             else if (root.ciderContextMode === 3 && cider.connected)
                 root.ciderContextMode = 0
-            cider.setAudioPulseVisible(root.expanded && cider.active
+            cider.setAudioPulseVisible(controller.audioPulseEnabled
+                                       && root.expanded && cider.active
                                        && controller.mediaPlaying)
         }
     }
@@ -628,11 +647,9 @@ Item {
                         anchors.rightMargin: 12
                         anchors.verticalCenter: parent.verticalCenter
                         provider: cider
-                        accentColor: root.displayedArtworkAccent.length > 0
-                                     ? root.displayedArtworkAccent
-                                     : root.colors.text
+                        accentColor: root.mediaVisualAccent
                         reducedMotion: root.reducedMotion
-                        active: cider.active
+                        active: controller.audioPulseEnabled && cider.active
                                 && (controller.mediaPlaying
                                     || qaCiderState === "audio")
                                 && root.expanded
@@ -878,8 +895,7 @@ Item {
                                                : controller.mediaProgress)
                         height: parent.height
                         radius: height / 2
-                        color: root.displayedArtworkAccent.length > 0
-                               ? root.displayedArtworkAccent : root.colors.text
+                        color: root.mediaVisualAccent
                         Behavior on width {
                             enabled: !seekArea.pressed
                             NumberAnimation { duration: root.reducedMotion ? 0 : 130; easing.type: Easing.OutCubic }
@@ -1579,6 +1595,7 @@ Item {
                 ListElement { utilityIndex: 8; iconPath: "../assets/icons/liquid-drop-light.svg"; invertedPath: "../assets/icons/liquid-drop-dark.svg"; usesDwindle: false; usesShellMode: false }
                 ListElement { utilityIndex: 9; iconPath: "../assets/icons/liquid-glass-light.svg"; invertedPath: "../assets/icons/liquid-glass-dark.svg"; usesDwindle: false; usesShellMode: false }
                 ListElement { utilityIndex: 10; iconPath: "../assets/icons/enhanced-tabs-light.svg"; invertedPath: "../assets/icons/enhanced-tabs-dark.svg"; usesDwindle: false; usesShellMode: false }
+                ListElement { utilityIndex: 11; iconPath: "../assets/icons/ava-app-icon.png"; invertedPath: ""; usesDwindle: false; usesShellMode: false }
             }
 
             Item {

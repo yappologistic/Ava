@@ -672,7 +672,16 @@ std::optional<AppLauncher::AppEntry> AppLauncher::directEntryForQuery(
 AppLauncher::AppLauncher(QObject *parent)
     : QAbstractListModel(parent)
 {
+    QSettings settings;
+    m_recentSuggestionsEnabled = settings.value(
+        QStringLiteral("launcher/recentSuggestionsEnabled"), true).toBool();
+    m_directTargetsEnabled = settings.value(
+        QStringLiteral("launcher/directTargetsEnabled"), true).toBool();
+    m_emojiEntryEnabled = settings.value(
+        QStringLiteral("launcher/emojiEntryEnabled"), true).toBool();
+#ifndef AVA_TESTING
     QTimer::singleShot(0, this, &AppLauncher::refresh);
+#endif
 }
 
 AppLauncher::~AppLauncher()
@@ -1047,13 +1056,51 @@ void AppLauncher::applyEntries(QVector<AppEntry> entries)
     rebuildResults();
 }
 
+void AppLauncher::setRecentSuggestionsEnabled(bool enabled)
+{
+    if (m_recentSuggestionsEnabled == enabled) {
+        return;
+    }
+    m_recentSuggestionsEnabled = enabled;
+    QSettings().setValue(QStringLiteral("launcher/recentSuggestionsEnabled"), enabled);
+    emit recentSuggestionsEnabledChanged();
+    rebuildResults();
+}
+
+void AppLauncher::setDirectTargetsEnabled(bool enabled)
+{
+    if (m_directTargetsEnabled == enabled) {
+        return;
+    }
+    m_directTargetsEnabled = enabled;
+    QSettings().setValue(QStringLiteral("launcher/directTargetsEnabled"), enabled);
+    emit directTargetsEnabledChanged();
+    rebuildResults();
+}
+
+void AppLauncher::setEmojiEntryEnabled(bool enabled)
+{
+    if (m_emojiEntryEnabled == enabled) {
+        return;
+    }
+    m_emojiEntryEnabled = enabled;
+    QSettings().setValue(QStringLiteral("launcher/emojiEntryEnabled"), enabled);
+    emit emojiEntryEnabledChanged();
+    rebuildResults();
+}
+
 void AppLauncher::rebuildResults()
 {
     const QString normalizedQuery = m_query.simplified().toCaseFolded();
-    const std::optional<AppEntry> directEntry = directEntryForQuery(m_query);
+    const std::optional<AppEntry> directEntry = m_directTargetsEnabled
+        ? directEntryForQuery(m_query) : std::nullopt;
     QVector<QPair<int, int>> scored;
     scored.reserve(m_entries.size());
     for (int index = 0; index < m_entries.size(); ++index) {
+        if (!m_emojiEntryEnabled
+            && m_entries.at(index).id == QStringLiteral("ava:emoji-symbols")) {
+            continue;
+        }
         const int score = matchScore(m_entries.at(index), normalizedQuery);
         if (score >= 0) {
             scored.append({score, index});
@@ -1068,7 +1115,7 @@ void AppLauncher::rebuildResults()
                   const QPair<int, int> &second) {
         const AppEntry &firstEntry = m_entries.at(first.second);
         const AppEntry &secondEntry = m_entries.at(second.second);
-        if (normalizedQuery.isEmpty()
+        if (m_recentSuggestionsEnabled && normalizedQuery.isEmpty()
             && firstEntry.lastLaunched != secondEntry.lastLaunched
             && (firstEntry.lastLaunched > 0 || secondEntry.lastLaunched > 0)) {
             return firstEntry.lastLaunched > secondEntry.lastLaunched;
@@ -1246,7 +1293,8 @@ int AppLauncher::matchScore(const AppEntry &entry,
                             const QString &normalizedQuery) const
 {
     if (normalizedQuery.isEmpty()) {
-        return entry.launchCount > 0 ? 100 + qMin(entry.launchCount, 20) : 0;
+        return m_recentSuggestionsEnabled && entry.launchCount > 0
+            ? 100 + qMin(entry.launchCount, 20) : 0;
     }
 
     const QString name = entry.name.toCaseFolded();

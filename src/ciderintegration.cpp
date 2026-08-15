@@ -1257,6 +1257,12 @@ void CiderIntegration::setAudioPulseVisible(bool visible) {
   updateAudioMeterState();
 }
 
+#ifdef AVA_TESTING
+bool CiderIntegration::audioMeterActiveForTest() {
+  return m_audioMeter && m_audioMeter->activeForTest();
+}
+#endif
+
 void CiderIntegration::setPanelVisible(bool visible) {
   if (m_panelVisible == visible) {
     return;

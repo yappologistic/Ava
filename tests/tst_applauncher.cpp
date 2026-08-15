@@ -1,11 +1,13 @@
 #include "applauncher.h"
 
 #include <QDir>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QtTest>
 
 #include <iterator>
+#include <memory>
 
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
@@ -18,14 +20,32 @@ class AppLauncherTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void recognizesExplicitWebUrl();
     void infersHttpsForBareDomain();
     void recognizesQuotedExistingFolder();
     void recognizesExistingFile();
     void rejectsAmbiguousAndMissingTargets();
     void exposesDirectResultThroughModel();
+    void appliesAndPersistsLauncherSettings();
     void pastesIntoPreviousWindowsControl();
+
+private:
+    std::unique_ptr<QTemporaryDir> m_settingsDirectory;
 };
+
+void AppLauncherTest::initTestCase()
+{
+    m_settingsDirectory = std::make_unique<QTemporaryDir>();
+    QVERIFY(m_settingsDirectory->isValid());
+    QCoreApplication::setOrganizationName(QStringLiteral("AvaTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("AvaLauncherTest"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat,
+                       QSettings::UserScope,
+                       m_settingsDirectory->path());
+    QSettings().clear();
+}
 
 void AppLauncherTest::recognizesExplicitWebUrl()
 {
@@ -103,9 +123,36 @@ void AppLauncherTest::exposesDirectResultThroughModel()
              QStringLiteral("Open example.com"));
 }
 
+void AppLauncherTest::appliesAndPersistsLauncherSettings()
+{
+    {
+        AppLauncher launcher;
+        QSignalSpy directSpy(&launcher, &AppLauncher::directTargetsEnabledChanged);
+        launcher.setQuery(QStringLiteral("example.com"));
+        QCOMPARE(launcher.rowCount(), 1);
+
+        launcher.setDirectTargetsEnabled(false);
+        QCOMPARE(directSpy.count(), 1);
+        QCOMPARE(launcher.rowCount(), 0);
+        launcher.setRecentSuggestionsEnabled(false);
+        launcher.setEmojiEntryEnabled(false);
+    }
+
+    QSettings().sync();
+    AppLauncher restored;
+    QVERIFY(!restored.directTargetsEnabled());
+    QVERIFY(!restored.recentSuggestionsEnabled());
+    QVERIFY(!restored.emojiEntryEnabled());
+    restored.setQuery(QStringLiteral("example.com"));
+    QCOMPARE(restored.rowCount(), 0);
+}
+
 void AppLauncherTest::pastesIntoPreviousWindowsControl()
 {
 #ifdef Q_OS_WIN
+    if (qEnvironmentVariableIntValue("AVA_SKIP_NATIVE_PASTE_TEST") == 1) {
+        QSKIP("Native foreground and clipboard routing is disabled for the fast suite.");
+    }
     struct NativeWindows
     {
         HWND target = nullptr;

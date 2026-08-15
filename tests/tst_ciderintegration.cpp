@@ -180,6 +180,23 @@ private slots:
     QVERIFY(!integration.busy());
   }
 
+  void disablingAudioPulseStopsExpandedMeter() {
+#ifdef Q_OS_WIN
+    CiderIntegration integration(QUrl(QStringLiteral("http://127.0.0.1:9")),
+                                 false);
+    integration.setMediaSession(QStringLiteral("Cider.exe"),
+                                QStringLiteral("Track"),
+                                QStringLiteral("Artist"), 0, 10000, true);
+    integration.setAudioPulseVisible(true);
+    QVERIFY(integration.audioMeterActiveForTest());
+
+    integration.setAudioPulseVisible(false);
+    QVERIFY(!integration.audioMeterActiveForTest());
+#else
+    QSKIP("Cider audio metering is Windows-only.");
+#endif
+  }
+
   void loadsScopedCiderContext() {
     MockCiderServer server;
     QVERIFY(server.listen(QHostAddress::LocalHost));

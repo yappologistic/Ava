@@ -8,6 +8,7 @@
 #include <QRect>
 #include <QScreen>
 #include <QSet>
+#include <QSettings>
 #include <QSize>
 #include <QVector>
 
@@ -1343,6 +1344,7 @@ WindowTilingManager::WindowTilingManager(QObject *parent)
 
 WindowTilingManager::~WindowTilingManager()
 {
+    m_shuttingDown = true;
     setEnabled(false);
 #ifdef Q_OS_WIN
     gKeyboardTilingEnabled = false;
@@ -1567,6 +1569,9 @@ void WindowTilingManager::setEnabled(bool enabled)
     }
 
     m_enabled = enabled;
+    if (!m_shuttingDown) {
+        QSettings().setValue(QStringLiteral("windows/dwindleEnabled"), enabled);
+    }
     if (m_enabled) {
         updateAnimationCadence();
         if (m_native->restoring) {

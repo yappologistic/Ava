@@ -13,12 +13,14 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS
-    Concurrent Core Gui Network Qml Quick QuickControls2 QuickDialogs2 QuickLayouts ShaderTools Test)
+    Concurrent Core Gui Network Qml Quick QuickControls2 QuickDialogs2 QuickLayouts ShaderTools Test Widgets)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
 qt_add_executable(Ava
     src/main.cpp
+    src/avatrayicon.cpp
+    src/avatrayicon.h
     src/cideraudiometer.cpp
     src/cideraudiometer.h
     src/ciderintegration.cpp
@@ -168,6 +170,12 @@ qt_add_qml_module(Ava
         qml/MonitorDetailsPanel.qml
         qml/NotchSurface.qml
         qml/RollingDigits.qml
+        qml/SettingsComboBox.qml
+        qml/SettingsRow.qml
+        qml/SettingsSegmented.qml
+        qml/SettingsSlider.qml
+        qml/SettingsSwitch.qml
+        qml/SettingsWindow.qml
         qml/MorphingLabel.qml
         qml/MorphingIcon.qml
         qml/MorphingArtwork.qml
@@ -184,7 +192,10 @@ qt_add_qml_module(Ava
         qml/OpenTuiSpinner.qml
         qml/TimerSatellite.qml
         qml/WallpaperPanel.qml
+        qml/WindowResizeArea.qml
     RESOURCES
+        assets/icons/ava-app-icon.png
+        assets/icons/ava-app-icon-light.png
         assets/icons/play-dark.svg
         assets/icons/pause-dark.svg
         assets/icons/play-light.svg
@@ -249,6 +260,8 @@ qt_add_qml_module(Ava
         assets/icons/launcher-folder.svg
         assets/icons/launcher-file.svg
         assets/icons/fluent-emoji.svg
+        assets/icons/fluent-chat/refresh.svg
+        assets/icons/fluent-chat/search.svg
         assets/icons/FLUENT-LICENSE
         assets/emoji/emoji-test.txt
         assets/emoji/annotations-en.json
@@ -283,6 +296,7 @@ target_link_libraries(Ava
         Qt6::Qml
         Qt6::Quick
         Qt6::QuickControls2
+        Qt6::Widgets
 )
 
 if (AVA_FORCE_AUTOMATION_MODE)
@@ -290,6 +304,7 @@ if (AVA_FORCE_AUTOMATION_MODE)
 endif()
 
 if (WIN32)
+    target_sources(Ava PRIVATE src/ava.rc)
     target_link_libraries(Ava PRIVATE user32 gdi32 d3d11 d3dcompiler dxgi shell32 dwmapi ole32 propsys windowsapp pdh psapi advapi32)
     target_link_libraries(AvaChat PRIVATE user32 shell32 dwmapi)
     set_target_properties(Ava PROPERTIES
@@ -335,12 +350,37 @@ if (BUILD_TESTING)
         tests/tst_applauncher.cpp
         src/applauncher.cpp
         src/applauncher.h)
+    target_compile_definitions(tst_applauncher PRIVATE AVA_TESTING=1)
     target_include_directories(tst_applauncher PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(tst_applauncher PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
     if (WIN32)
         target_link_libraries(tst_applauncher PRIVATE user32 shell32 ole32 propsys)
     endif()
     add_test(NAME app_launcher COMMAND tst_applauncher)
+    set_property(TEST app_launcher PROPERTY ENVIRONMENT
+        "AVA_SKIP_NATIVE_PASTE_TEST=1")
+
+    qt_add_executable(tst_islandsettings
+        tests/tst_islandsettings.cpp
+        src/avatrayicon.cpp
+        src/avatrayicon.h
+        src/islandcontroller.cpp
+        src/islandcontroller.h
+        src/systemmonitor.cpp
+        src/systemmonitor.h)
+    target_compile_definitions(tst_islandsettings PRIVATE AVA_TESTING=1)
+    target_include_directories(tst_islandsettings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(tst_islandsettings PRIVATE
+        Qt6::Concurrent Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test Qt6::Widgets)
+    if (WIN32)
+        target_link_libraries(tst_islandsettings PRIVATE
+            user32 gdi32 shell32 dwmapi ole32 propsys windowsapp pdh psapi advapi32)
+    endif()
+    add_test(NAME island_settings COMMAND tst_islandsettings)
+    set_property(TEST island_settings PROPERTY ENVIRONMENT
+        "QT_QPA_PLATFORM=offscreen"
+        "QT_QPA_PLATFORM_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::QOffscreenIntegrationPlugin>"
+        "QT_QUICK_BACKEND=software")
 
     qt_add_executable(tst_enhancedtabslogic tests/tst_enhancedtabslogic.cpp)
     target_include_directories(tst_enhancedtabslogic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -396,6 +436,7 @@ if (BUILD_TESTING)
         src/cideraudiometer.h
         src/ciderintegration.cpp
         src/ciderintegration.h)
+    target_compile_definitions(tst_ciderintegration PRIVATE AVA_TESTING=1)
     target_include_directories(tst_ciderintegration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_link_libraries(tst_ciderintegration PRIVATE
         Qt6::Core Qt6::Gui Qt6::Network Qt6::Test)

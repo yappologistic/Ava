@@ -21,6 +21,9 @@ class AppLauncher final : public QAbstractListModel,
     Q_PROPERTY(QString errorMessage READ errorMessage NOTIFY errorMessageChanged)
     Q_PROPERTY(bool shortcutRegistered READ shortcutRegistered NOTIFY shortcutRegisteredChanged)
     Q_PROPERTY(bool pasteDismissPending READ pasteDismissPending NOTIFY pasteDismissPendingChanged)
+    Q_PROPERTY(bool recentSuggestionsEnabled READ recentSuggestionsEnabled WRITE setRecentSuggestionsEnabled NOTIFY recentSuggestionsEnabledChanged)
+    Q_PROPERTY(bool directTargetsEnabled READ directTargetsEnabled WRITE setDirectTargetsEnabled NOTIFY directTargetsEnabledChanged)
+    Q_PROPERTY(bool emojiEntryEnabled READ emojiEntryEnabled WRITE setEmojiEntryEnabled NOTIFY emojiEntryEnabledChanged)
 
 public:
     struct AppEntry
@@ -60,6 +63,9 @@ public:
     QString errorMessage() const { return m_errorMessage; }
     bool shortcutRegistered() const { return m_shortcutRegistered; }
     bool pasteDismissPending() const { return m_pasteDismissPending; }
+    bool recentSuggestionsEnabled() const { return m_recentSuggestionsEnabled; }
+    bool directTargetsEnabled() const { return m_directTargetsEnabled; }
+    bool emojiEntryEnabled() const { return m_emojiEntryEnabled; }
 
     void setWindowHandle(quintptr nativeHandle);
     bool nativeEventFilter(const QByteArray &eventType,
@@ -76,6 +82,9 @@ public slots:
     void requestIcon(const QString &appId);
     bool launch(int row);
     void pasteText(const QString &text, bool keepOpen);
+    void setRecentSuggestionsEnabled(bool enabled);
+    void setDirectTargetsEnabled(bool enabled);
+    void setEmojiEntryEnabled(bool enabled);
 
 signals:
     void openChanged();
@@ -85,6 +94,9 @@ signals:
     void errorMessageChanged();
     void shortcutRegisteredChanged();
     void pasteDismissPendingChanged();
+    void recentSuggestionsEnabledChanged();
+    void directTargetsEnabledChanged();
+    void emojiEntryEnabledChanged();
     void applicationLaunched(const QString &name);
     void launchFailed(const QString &name, const QString &reason);
     void emojiPickerRequested();
@@ -113,6 +125,9 @@ private:
     bool m_shortcutRegistered = false;
     bool m_refreshInFlight = false;
     bool m_pasteDismissPending = false;
+    bool m_recentSuggestionsEnabled = true;
+    bool m_directTargetsEnabled = true;
+    bool m_emojiEntryEnabled = true;
     QSet<QString> m_iconRequests;
     quintptr m_windowHandle = 0;
     quintptr m_previousForegroundWindow = 0;

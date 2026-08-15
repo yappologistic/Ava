@@ -17,11 +17,27 @@ Window {
         reducedMotion: controller.reducedMotion
     }
 
+    SettingsWindow {
+        id: settingsWindow
+        controller: window.islandController
+        launcher: appLauncher
+        tiling: tilingManager
+        enhancedTabs: enhancedTabsManager
+        uiFont: window.uiFont
+        iconFont: window.iconFont
+    }
+
+    Shortcut {
+        sequence: "Ctrl+,"
+        onActivated: controller.openSettings()
+    }
+
     readonly property string uiFont: "Inter"
     readonly property string monoFont: "Geist Mono"
     readonly property string iconFont: "Segoe Fluent Icons"
     readonly property var islandController: controller
-    readonly property int compactWidth: 150
+    readonly property int compactWidth: controller.compactWidth
+    readonly property int compactWidthDelta: compactWidth - 170
     readonly property int compactHeight: 39
     // Measured from all 48,446 source frames: the stable open shell is about 4.5:1.
     readonly property int expandedWidth: Math.max(520, Math.min(584, Screen.width - 40))
@@ -38,10 +54,10 @@ Window {
                                           : baseExpandedHeight))
     readonly property int dragWidth: Math.min(420, expandedWidth)
     readonly property int dragHeight: 116
-    readonly property int mediaPeekWidth: 230
-    readonly property int codexPeekWidth: 242
+    readonly property int mediaPeekWidth: 230 + compactWidthDelta
+    readonly property int codexPeekWidth: 242 + compactWidthDelta
     // Sized for the widest three-digit readouts without letting live values resize the pill.
-    readonly property int monitorWidth: 288
+    readonly property int monitorWidth: 288 + compactWidthDelta
     readonly property int timerSatelliteDiameter: compactHeight
     readonly property int timerSatelliteGap: 8
     readonly property int canvasWidth: expandedWidth + 40
@@ -99,7 +115,10 @@ Window {
                                                        ? "timer" : "clock")))
     readonly property bool codexSurfaceOpaque: codexBridge.panelOpen
                                                 || compactActivity === "codex"
-    readonly property bool liquidGlassVisualActive: controller.liquidGlassEnabled
+    readonly property bool liquidGlassVisualActive:
+        (qaAppearanceMode.length > 0
+             ? qaAppearanceMode !== "opaque"
+             : controller.liquidGlassEnabled)
                                                      && !codexSurfaceOpaque
     // The shell is a single continuous spring. Height leads while opening and
     // width leads while closing, with enough damping to avoid a rubbery tail.
@@ -113,7 +132,10 @@ Window {
     readonly property real closeHeightDamping: 0.90
 
     readonly property real surfaceHeight: islandVisualHeight
-    readonly property bool pillMode: controller.pillMode
+    readonly property bool pillMode: qaShellMode === "pill"
+                                         ? true
+                                         : (qaShellMode === "notch"
+                                                ? false : controller.pillMode)
     readonly property real islandSurfaceTop: pillMode ? 8 : 0
     readonly property real morphProgress: Math.max(0, Math.min(1,
         (surfaceHeight - compactHeight) / (baseExpandedHeight - compactHeight)))
@@ -134,9 +156,12 @@ Window {
     readonly property bool liquidGlassPointerActive: islandHover.hovered
     readonly property bool liquidGlassReducedMotion: controller.reducedMotion
     readonly property real liquidGlassEdgeStrength: appLauncher.open ? 0.18 : 1.0
-    property real liquidGlassBlurStrength: controller.liquidGlassBlurred
+    property real liquidGlassBlurStrength:
+        (qaAppearanceMode.length > 0
+             ? qaAppearanceMode === "blurred"
+             : controller.liquidGlassBlurred)
                                             ? qaLiquidGlassBlurStrength : 0
-    readonly property bool timerSatelliteVisible: controller.monitorEnabled
+    readonly property bool timerSatelliteVisible: controller.timerSatelliteEnabled
                                                    && controller.timerActive
                                                    && !shellExpandedVisual
                                                    && !dragActive
@@ -245,6 +270,16 @@ Window {
         islandHeightVelocity = 0
     }
 
+    onIslandTargetWidthChanged: {
+        if (motionReady && controller.reducedMotion)
+            Qt.callLater(window.snapMorphToTarget)
+    }
+
+    onIslandTargetHeightChanged: {
+        if (motionReady && controller.reducedMotion)
+            Qt.callLater(window.snapMorphToTarget)
+    }
+
     function advanceMorph(frameTime) {
         if (!motionReady || controller.reducedMotion) {
             snapMorphToTarget()
@@ -306,6 +341,7 @@ Window {
     }
 
     Component.onCompleted: {
+        enforceFullscreenPolicy()
         if (controller.expanded || appLauncher.open)
             retainedExpandedHeight = expandedHeight
         snapMorphToTarget()
@@ -315,6 +351,16 @@ Window {
     onExpandedHeightChanged: {
         if (controller.expanded || appLauncher.open)
             retainedExpandedHeight = expandedHeight
+    }
+
+    function enforceFullscreenPolicy() {
+        if (controller.respectFullscreenApps
+                && controller.foregroundFullscreen
+                && !qaMode && !appLauncher.open) {
+            window.mediaPeekActive = false
+            if (!controller.timerRinging)
+                controller.setExpanded(false)
+        }
     }
 
     Connections {
@@ -340,7 +386,8 @@ Window {
         }
         function onMediaChanged() {
             const mediaKey = controller.mediaTitle + "\n" + controller.mediaArtist
-            if (controller.mediaAvailable && controller.mediaPlaying
+            if (controller.mediaPeekEnabled
+                    && controller.mediaAvailable && controller.mediaPlaying
                     && mediaKey.length > 1 && mediaKey !== window.lastMediaKey
                     && (controller.monitorEnabled
                         || (!controller.timerActive && !controller.timerRinging))
@@ -349,6 +396,12 @@ Window {
                 mediaPeekTimer.restart()
             }
             window.lastMediaKey = mediaKey
+        }
+        function onMediaPeekEnabledChanged() {
+            if (!controller.mediaPeekEnabled) {
+                mediaPeekTimer.stop()
+                window.mediaPeekActive = false
+            }
         }
         function onTimerChanged() {
             if (controller.timerRinging && !window.lastTimerRinging
@@ -367,11 +420,10 @@ Window {
             window.lastDroppedFileCount = controller.droppedFileCount
         }
         function onForegroundFullscreenChanged() {
-            if (controller.foregroundFullscreen && !qaMode && !appLauncher.open) {
-                window.mediaPeekActive = false
-                if (!controller.timerRinging)
-                    controller.setExpanded(false)
-            }
+            window.enforceFullscreenPolicy()
+        }
+        function onRespectFullscreenAppsChanged() {
+            window.enforceFullscreenPolicy()
         }
     }
 
@@ -515,16 +567,17 @@ Window {
 
     Timer {
         id: hoverOpenDelay
-        interval: 240
+        interval: controller.hoverOpenDelay
         repeat: false
         running: islandHover.hovered && !controller.expanded && !window.dragActive
-                 && !controller.foregroundFullscreen && !qaMode
+                 && !(controller.respectFullscreenApps
+                      && controller.foregroundFullscreen) && !qaMode
         onTriggered: controller.setExpanded(true)
     }
 
     Timer {
         id: leaveCloseDelay
-        interval: 480
+        interval: controller.leaveCloseDelay
         repeat: false
         running: controller.expanded && !controller.pinned
                  && !islandHover.hovered && !qaMode
@@ -777,6 +830,7 @@ Window {
                 Row {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2
+                    visible: controller.audioPulseEnabled
 
                     Repeater {
                         model: 5
@@ -792,7 +846,8 @@ Window {
                             width: 3
                             height: 15
                             radius: 1.5
-                            color: controller.mediaArtworkAccent.length > 0
+                            color: controller.mediaArtworkAccentEnabled
+                                   && controller.mediaArtworkAccent.length > 0
                                    ? controller.mediaArtworkAccent : colors.green
                             transformOrigin: Item.Center
                             scale: controller.mediaPlaying && !controller.muted
