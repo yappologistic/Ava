@@ -9,9 +9,9 @@ application with two executables:
 
 Both applications are built with Qt 6, C++20, and QML.
 
-Keep this file as a concise map of durable repository rules. Put measurement
-records and detailed procedures in `docs/performance.md`, and Cider contracts in
-`docs/cider-integration.md`, so agents can load deeper context only when needed.
+Keep this file as a concise map of durable repository rules. Keep temporary
+research, measurements, implementation notes, and handoff material outside the
+repository unless the user explicitly approves a specific tracked document.
 
 ## Working agreements
 
@@ -35,7 +35,7 @@ records and detailed procedures in `docs/performance.md`, and Cider contracts in
 
 - Before changing performance-sensitive code, read the current official
   documentation for every framework or operating-system contract involved.
-  Record the relevant sources in the handoff or performance documentation.
+  Record the relevant sources in the handoff.
 - Establish a Release-build baseline before editing. Confirm a suspected hot
   path with two independent forms of evidence, such as a trace plus source
   inspection, or timings plus an authoritative API contract. Do not optimize a
@@ -182,5 +182,8 @@ records and detailed procedures in `docs/performance.md`, and Cider contracts in
   third-party material are not covered by Ava's project license.
 - Store temporary screenshots and reference captures outside the repository.
   Do not commit generated screenshots, binaries, logs, or caches.
+- Do not create or commit agent-generated Markdown documents, including files
+  under `docs/`, unless the user explicitly approves that specific file. Update
+  an existing required Markdown file only when the task calls for it.
 - Do not push unless the user explicitly asks.
 - Keep secrets and machine-specific absolute paths out of committed files.
