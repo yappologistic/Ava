@@ -1570,8 +1570,39 @@ private:
             return false;
         }
 
-        QImage wallpaper(wallpaperPathForMonitor(monitor));
-        if (!wallpaper.isNull()) {
+        const QString wallpaperPath = wallpaperPathForMonitor(monitor);
+        QString wallpaperCacheKey;
+        if (!wallpaperPath.isEmpty()) {
+            WIN32_FILE_ATTRIBUTE_DATA attributes{};
+            if (GetFileAttributesExW(reinterpret_cast<LPCWSTR>(wallpaperPath.utf16()),
+                                     GetFileExInfoStandard,
+                                     &attributes)) {
+                ULARGE_INTEGER fileSize{};
+                fileSize.HighPart = attributes.nFileSizeHigh;
+                fileSize.LowPart = attributes.nFileSizeLow;
+                ULARGE_INTEGER writeTime{};
+                writeTime.HighPart = attributes.ftLastWriteTime.dwHighDateTime;
+                writeTime.LowPart = attributes.ftLastWriteTime.dwLowDateTime;
+                wallpaperCacheKey = QStringLiteral("file|%1|%2|%3|%4x%5")
+                    .arg(wallpaperPath)
+                    .arg(fileSize.QuadPart)
+                    .arg(writeTime.QuadPart)
+                    .arg(monitorSize.width())
+                    .arg(monitorSize.height());
+            }
+        } else {
+            wallpaperCacheKey = QStringLiteral("color|%1|%2x%3")
+                .arg(GetSysColor(COLOR_BACKGROUND))
+                .arg(monitorSize.width())
+                .arg(monitorSize.height());
+        }
+
+        const bool wallpaperCacheHit = !wallpaperCacheKey.isEmpty()
+            && wallpaperCacheKey == m_cachedWallpaperKey
+            && !m_cachedWallpaper.isNull();
+        QImage wallpaper = wallpaperCacheHit
+            ? m_cachedWallpaper : QImage(wallpaperPath);
+        if (!wallpaperCacheHit && !wallpaper.isNull()) {
             wallpaper = wallpaper.scaled(monitorSize,
                                          Qt::KeepAspectRatioByExpanding,
                                          Qt::SmoothTransformation);
@@ -1582,7 +1613,9 @@ private:
                                        monitorSize.width(),
                                        monitorSize.height())
                             .convertToFormat(QImage::Format_ARGB32);
-        } else {
+            m_cachedWallpaper = wallpaper;
+            m_cachedWallpaperKey = wallpaperCacheKey;
+        } else if (!wallpaperCacheHit) {
             // Solid-color desktops and temporarily unavailable wallpaper files
             // still need a valid optical source; never fall through to QML's
             // black material fallback merely because Explorer has no bitmap.
@@ -1591,6 +1624,10 @@ private:
             wallpaper.fill(qRgb(GetRValue(desktopColor),
                                 GetGValue(desktopColor),
                                 GetBValue(desktopColor)));
+            if (wallpaperPath.isEmpty()) {
+                m_cachedWallpaper = wallpaper;
+                m_cachedWallpaperKey = wallpaperCacheKey;
+            }
         }
 
         D3D11_TEXTURE2D_DESC description{};
@@ -1737,6 +1774,8 @@ private:
     HWND m_targetWindow = nullptr;
     bool m_wallpaperOnly = false;
     bool m_standaloneWallpaper = false;
+    QImage m_cachedWallpaper;
+    QString m_cachedWallpaperKey;
 };
 #endif
 
