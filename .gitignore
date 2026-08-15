@@ -5,6 +5,7 @@ out/
 .reference/
 .tools/
 reference_frames/
+design-qa.md
 CMakeUserPresets.json
 *.png
 !docs/ava-hero.png
