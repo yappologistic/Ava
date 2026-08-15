@@ -6,6 +6,8 @@ out/
 .tools/
 reference_frames/
 design-qa.md
+docs/performance.md
+docs/cider-integration.md
 CMakeUserPresets.json
 *.png
 !docs/ava-hero.png

@@ -1,7 +1,7 @@
 <p align="center">
   <img
     src="docs/ava-hero.png"
-    alt="Ava expanded with live media controls and calendar on Windows 11"
+    alt="Ava media controls above a monochrome abstract sculpture"
     width="100%">
 </p>
 
